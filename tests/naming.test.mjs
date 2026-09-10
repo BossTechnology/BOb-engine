@@ -8,20 +8,28 @@
 
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
-import { join, relative, extname } from 'node:path'
+import { readFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { join, extname } from 'node:path'
 import { REPO_ROOT } from './helpers/db.mjs'
 
-// `public/` was skipped here to avoid scanning build output, and it cost us:
-// public/dashboard.html carried 'bzzzbox' six times, including in the payload
-// its backend bridge POSTs to /api/config/autobotz. D-20 removed the provider
-// CHECK on the argument that this test covered the whole repository. It did
-// not. Skipping a directory is how a guard acquires a hole in exactly the place
-// the defect lives, so `public` is scanned and build output is excluded by
-// extension instead.
-const SKIP_DIRS = new Set([
-  'node_modules', '.git', '.next', 'dist', 'build', 'coverage',
-])
+// This guard has now been wrong three times.
+//
+// First it skipped `public/`, and public/dashboard.html carried 'bzzzbox' six
+// times — while D-20 had removed the provider CHECK on the argument that this
+// test covered the whole repository.
+//
+// Then, with the skip removed, it walked the filesystem and read UNTRACKED
+// files: archived material in a working tree turned it red locally while CI
+// stayed green. A suite that is red locally and green on the branch is one
+// people learn to ignore, which is F-09 wearing different clothes.
+//
+// Then `git ls-files` listed a tracked file that had been deleted locally but
+// not yet staged, and reading it failed — the same inversion again.
+//
+// The fix is the one used for the tenancy tables: do not enumerate, DISCOVER.
+// `git ls-files`, minus what the working tree has deleted, is exactly "what is
+// in the repository" — no directory to forget, no untracked file to trip over.
 const SCAN_EXT = new Set([
   '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.sql', '.json', '.md',
   '.yml', '.yaml', '.toml', '.css', '.html',
@@ -38,9 +46,7 @@ const EXEMPT = new Set([
   'supabase/migrations/20260830100000_autobotz_bindings.sql',
   'supabase/migrations/20260902100000_autobotz_rename_and_align.sql',
   'tests/naming.test.mjs',
-  'tests/service-role-allowlist.json',
   'Documentation/contract-amendments.md',
-  'package-lock.json',
 ])
 
 const FORBIDDEN = [
@@ -53,25 +59,48 @@ const FORBIDDEN = [
   { pattern: /\bAutocomm\b/g, correct: 'AutoComm' },
 ]
 
-function walk(dir, out = []) {
-  for (const entry of readdirSync(dir)) {
-    if (SKIP_DIRS.has(entry)) continue
-    const full = join(dir, entry)
-    if (statSync(full).isDirectory()) walk(full, out)
-    else if (SCAN_EXT.has(extname(entry))) out.push(full)
+// Git is the source of truth. If it is unavailable this FAILS rather than
+// falling back to a filesystem walk — a guard that silently degrades to a
+// weaker check is the same defect in a third costume.
+function git(args) {
+  try {
+    return execFileSync('git', args, {
+      cwd: REPO_ROOT, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024,
+    })
+  } catch (e) {
+    throw new Error(
+      'This test asserts what is in the REPOSITORY and needs a git checkout. ' +
+      'It will not fall back to walking the filesystem, because that reads ' +
+      'untracked files and produces a red suite locally against a green one ' +
+      'in CI. Run it from a git working tree. Original error: ' + e.message)
   }
-  return out
+}
+
+const paths = (out) => out.split('\0').filter(Boolean)
+
+function trackedFiles() {
+  const deleted = new Set(paths(git(['ls-files', '-z', '--deleted'])))
+  return paths(git(['ls-files', '-z']))
+    .filter((f) => !deleted.has(f) && SCAN_EXT.has(extname(f)))
 }
 
 describe('product naming is case-sensitive, including in schema values', () => {
   test('no forbidden spelling appears anywhere in the repository', () => {
     const hits = []
+    const files = trackedFiles()
 
-    for (const file of walk(REPO_ROOT)) {
-      const rel = relative(REPO_ROOT, file)
+    // A guard that scans nothing passes. Assert the discovery found files it
+    // cannot miss, rather than a count that depends on the repository's size.
+    assert.ok(
+      files.includes('package.json') &&
+        files.some((f) => f.startsWith('supabase/migrations/') && f.endsWith('.sql')),
+      `discovery returned ${files.length} files without package.json or a ` +
+      'migration — the discovery is broken, not the repository')
+
+    for (const rel of files) {
       if (EXEMPT.has(rel)) continue
 
-      const lines = readFileSync(file, 'utf8').split('\n')
+      const lines = readFileSync(join(REPO_ROOT, rel), 'utf8').split('\n')
       lines.forEach((line, i) => {
         for (const { pattern, correct } of FORBIDDEN) {
           pattern.lastIndex = 0

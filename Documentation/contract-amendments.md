@@ -471,4 +471,59 @@ inventory's 4 stay behind. Slice 1c brings the suite to 70.
 
 ---
 
+## Slice 1c · Two guards that did not guard
+
+Both found by the developer while applying Slice 1b in Bob-New, and both share a
+root cause with the defect they were built to fix. Applied here after the split,
+adapted to this repository.
+
+### F-13 · The naming test read the filesystem, not the repository
+
+After F-10 removed the `public/` skip, the test walked the tree with
+`readdirSync`, so it read **untracked** files. Archived material in a working
+tree turned it red locally while CI, checking out a clean tree, stayed green. A
+suite that is red locally and green on the branch is one people learn to ignore,
+which is F-09 in different clothes.
+
+**Fixed by discovery rather than enumeration:** `git ls-files`. If git is
+unavailable, the test fails loudly rather than falling back to a walk.
+
+**Two adaptations here:**
+- `git ls-files` still lists a tracked file deleted locally but not yet staged,
+  and reading it failed with `ENOENT` — red locally, green in CI, the same
+  inversion. Those paths are subtracted with `git ls-files --deleted`.
+- The package asserted that more than fifty files were scanned. This repository
+  has fewer than forty, so the test now asserts that the discovery found files it
+  cannot miss — `package.json` and the migrations — instead of a count that
+  depends on the repository's size.
+
+### F-14 · The bridge guard ran in no CI job
+
+In Bob-New, `tests/simulator-bridge.test.mjs` entered only through the
+`tests/*.test.mjs` glob in the `test` script, which no job called: visible
+rather than blocking. The cause is the same as F-10 and F-13 — the workflow
+enumerates test files by name, so anything new is orphaned by default.
+
+The bridge guard stayed in the demo (see *Repository split*).
+`tests/ci-coverage.test.mjs` is taken as delivered: it asserts that every test
+file is invoked by some job, following `npm run` into `package.json`, which also
+matches `pnpm run` by substring.
+
+**Known limits, reported and not yet ruled on.** `ci-coverage` reads the
+workflow with regular expressions, not as YAML. It reports a guard as covered
+when its step is commented out, marked `continue-on-error: true` or `if: false`,
+or moved to a job that is not a required check, and when any comment in the
+workflow mentions `npm test`. It does not discover test files in subdirectories
+or with other suffixes. Its check on itself fires only locally: if its own step
+is removed, CI simply stops running it.
+
+### The required-checks list
+
+The package named five required checks. Here there are four: `Lint and build`
+has no application to lint or build yet. `ci.yml` names the four, and
+`ci-coverage` asserts that the comment exists. It does not yet assert that the
+list matches the job names.
+
+---
+
 *Boss.Technology · BOb v1 · Internal only*
