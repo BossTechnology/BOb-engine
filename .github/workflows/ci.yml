@@ -6,10 +6,17 @@ on:
   pull_request:
 
 # ID-12 — a tenancy failure is a build-blocking defect, not a bug.
-# The `tenancy` job must be a REQUIRED status check on the protected branch.
-# Without that, this file makes tenancy visible rather than blocking, and the
-# rule asks for blocking. That setting lives in branch protection, not here, and
-# is the one part of ID-12 a workflow file cannot assert about itself.
+#
+# ALL FOUR JOBS BELOW MUST BE REQUIRED STATUS CHECKS on the protected branch:
+#
+#   Migrations apply from an empty database
+#   Tenancy (build-blocking · ID-10 to ID-12)
+#   Contracts, schema and naming
+#   Availability (FR-20 to FR-23)
+#
+# Lint and build joins this list when an application layer exists. The setting
+# lives in branch protection, not here, and is the one part of ID-12 a workflow
+# file cannot assert about itself.
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -57,7 +64,7 @@ jobs:
         run: pnpm run test:tenancy
 
   schema:
-    name: Slice 0 schema and naming
+    name: Contracts, schema and naming
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -82,6 +89,10 @@ jobs:
         run: node --test --test-concurrency=1 tests/slice1-schema.test.mjs
       - name: Product naming is case-sensitive
         run: node --test --test-concurrency=1 tests/naming.test.mjs
+      # Asserts every test file is invoked by some job here, so the next guard
+      # added cannot be orphaned from CI.
+      - name: Every guard runs in CI
+        run: node --test --test-concurrency=1 tests/ci-coverage.test.mjs
 
   availability:
     name: Availability (FR-20 to FR-23)
