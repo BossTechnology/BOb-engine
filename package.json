@@ -1,0 +1,15 @@
+{
+  "name": "bob-engine",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "test": "node --test --test-concurrency=1 tests/*.test.mjs",
+    "test:tenancy": "node --test --test-concurrency=1 tests/tenancy.test.mjs tests/tenancy-meta.test.mjs",
+    "test:availability": "node --test --test-concurrency=1 tests/availability.test.mjs tests/slice1-schema.test.mjs",
+    "db:reset": "supabase db reset"
+  },
+  "devDependencies": {
+    "pg": "^8.13.1"
+  },
+  "packageManager": "pnpm@12.3.4"
+}

@@ -1,0 +1,19 @@
+# dependencies
+/node_modules
+
+# env files
+.env*
+
+# misc
+.DS_Store
+*.pem
+
+# Supabase CLI local stack state
+supabase/.branches/
+supabase/.temp/
+
+# Reference material stays out of the repository.
+# contract-amendments.md is the handover artifact between build sessions and
+# must be tracked.
+Documentation/*
+!Documentation/contract-amendments.md
