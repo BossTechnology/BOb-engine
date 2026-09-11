@@ -30,17 +30,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
       - uses: supabase/setup-cli@v1
         with:
           version: latest
+      - run: pnpm install --frozen-lockfile
       - name: Start the local stack
         run: supabase start
       - name: Apply the full chain from scratch
         run: supabase db reset --no-seed
-      - name: Assert no migration was skipped
-        run: |
-          supabase db reset --no-seed
-          echo "chain applied twice from empty — idempotent from nothing"
+      # A reset that skips a misnamed migration still exits 0, so the step
+      # above passing does not mean the chain applied. F-15.
+      - name: Every migration file has a name the CLI applies, and schema_migrations holds exactly their versions
+        env:
+          SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+        run: node --test --test-concurrency=1 tests/migrations-applied.test.mjs
 
   tenancy:
     name: Tenancy (build-blocking · ID-10 to ID-12)
