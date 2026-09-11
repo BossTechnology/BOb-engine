@@ -425,6 +425,35 @@ exist in the hosted environment. System Flows §3 identifies configuration and
 live state as the only data that cannot be rebuilt, and its backup has no named
 owner. Migrations were correctly not applied there.
 
+**Three of the four CI actions still declared Node 20.** In run 34563860302 the
+`supabase/setup-cli@v1` step printed "Node 20 is being deprecated. This workflow
+is running with Node 24 by default" — the runner was overriding what the
+actions declare. Once Node 20 is removed
+from the runners, all four required checks depend on that override. Read from
+each `action.yml` at the referenced major:
+
+| Action | Was | Runtime | Now | Runtime |
+|---|---|---|---|---|
+| `actions/checkout` | v4 | node20 | v5 | node24 |
+| `actions/setup-node` | v4 | node20 | v5 | node24 |
+| `supabase/setup-cli` | v1 | node20 | v2 | composite, `oven-sh/setup-bun` on node24 |
+| `pnpm/action-setup` | v6 | node24 | v6 | unchanged |
+
+**Each bump is the lowest major on Node 24, so behavior stays the same.**
+- `checkout` v5 changes only the runtime. v6 moves persisted credentials out of
+  `.git/config`, which is not needed here.
+- `setup-node` v5 turns on caching automatically when `package.json` has a
+  `packageManager` field, and this one does. The jobs already set `cache: pnpm`
+  explicitly, so nothing changes. `node-version` stays `'22'`.
+- `setup-cli` v2 finds the CLI version in the lockfile only when `version` is
+  omitted. The jobs keep `version: latest`. v3 would install the CLI from npm
+  instead of GitHub releases and removes the `github-token` input. That is a
+  change of source with no reason behind it, so v3 was not taken.
+
+No job was renamed, so the four required status checks are unaffected. Every
+action is still referenced by a moving major tag, not a commit SHA. That is
+unchanged, and not ruled on.
+
 ---
 
 ## Repository split · BOb v1 moves to BOb-engine
