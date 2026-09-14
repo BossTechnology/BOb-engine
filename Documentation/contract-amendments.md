@@ -526,4 +526,94 @@ list matches the job names.
 
 ---
 
+## CI · A step that asserted nothing
+
+### F-15 · "Assert no migration was skipped" compared nothing
+
+Found by inspection of the workflow, not by a failure. No migration has been
+skipped so far: run 34527093909 on `main` applied 18 of 18.
+
+The `migrations` job ended in a step named *Assert no migration was skipped*. It
+ran `supabase db reset --no-seed` a second time and echoed a line. Nothing was
+compared, and no test compared `supabase_migrations.schema_migrations` with the
+files either.
+
+**The CLI skips a migration without failing.** It applies a file from
+`supabase/migrations/` only when the name matches `^([0-9]+)_(.*)\.sql$`, and
+skips anything else with a warning on stderr. A `<timestamp>_init.sql` that
+sorts first and predates 2021-12-09 is skipped as a legacy baseline.
+Subdirectories are passed over with no output at all.
+
+Reproduced locally on CLI 2.101.0 with three probes: a malformed name, an
+`init` file and a file in a subdirectory. `supabase db reset --no-seed` exited
+0, printed two warnings and said nothing about the third. None of the three
+reached the database, and `schema_migrations` held the chain's 18. A misnamed
+migration would have left the job green over a database that did not contain
+it, and the other three jobs would have tested that database.
+
+**Fixed by discovery rather than enumeration:**
+`tests/migrations-applied.test.mjs`, run as the last step of the `migrations`
+job, which now installs Node for it.
+
+- Every `.sql` file under `supabase/migrations/`, subdirectories included, must
+  have a name the CLI applies: `^[0-9]+_.+\.sql$`, not `init`, not nested. That
+  is stricter than the CLI in two places, a version with no name and `init`
+  wherever it sorts, because neither is ever intended.
+- `schema_migrations` must hold exactly the versions on disk, in both
+  directions.
+- A second block proves both checks go red, on names built in memory, so the
+  proof never writes into the chain.
+
+It reads the directory rather than `git ls-files`, unlike the naming test
+(F-13), because the CLI reads the directory. An untracked file there is applied
+or skipped by every local reset, and the database half compares against what
+that reset did.
+
+The guard does not depend on the CLI's rules staying put. CI installs the CLI
+at `latest`, and those rules were read at v2.101.0. A file a later CLI stops
+applying shows up either as a name the naming half rejects or as a version
+missing from `schema_migrations`; a name it starts accepting that the naming
+half rejects still fails that half.
+
+**The second reset is gone.** `supabase start` already applies the chain on a
+fresh stack, so the job's first reset was the second application from empty and
+the removed step the third. Its echo claimed idempotence, which no number of
+resets can show: each one starts from an empty database. The step is replaced,
+not renamed, and no job is renamed. All four job names are required status
+checks.
+
+**Duplicate versions are not the same gap.** The CLI records each migration
+with a plain `INSERT` into a table keyed on `version`, so two files sharing one
+fail the reset loudly. Read from the CLI source, not exercised.
+
+**Verified by sabotage**, each case after a real `supabase db reset --no-seed`
+that exited 0, on CLI 2.101.0:
+
+- A malformed name, `2026-09-10_sabotage_probe.sql`. The naming half went red
+  and named the file. The database half stayed green, as it should: a file with
+  no version cannot be missing from `schema_migrations`, which is why the
+  naming half exists.
+- An `init` file that sorts first, `20210101000000_init.sql`. The CLI skipped
+  it and both halves went red, the database half reporting `20210101000000` on
+  disk and not applied.
+
+With the probes removed and the database reset, the check is green again.
+
+**Known limits.**
+- Only the `migrations` job runs it. The other three reset their own database
+  and do not check. A skipped migration blocks the build through that job, but
+  the other jobs' results in the same run describe a database without it.
+- It considers `.sql` files only, in any case. A migration saved under another
+  extension is invisible to it and to the CLI alike.
+- Locally, `pnpm test` goes red when the database is behind the files. That is
+  deliberate, since every other result would be about a stale schema, and the
+  message says to reset.
+- The F-14 limits of `ci-coverage` apply to this step as to any other: commented
+  out or marked `continue-on-error`, it would still read as covered.
+
+**Counts.** The suite goes from 70 tests to 74: the two checks, and the two
+that prove they go red.
+
+---
+
 *Boss.Technology · BOb v1 · Internal only*
