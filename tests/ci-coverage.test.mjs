@@ -60,6 +60,33 @@ function filesCoveredByCI() {
     .map((m) => m[0]))
 }
 
+// The names listed in the header comment as required status checks: the lines
+// that follow it, to the end of that block. Indentation is not part of the
+// match, so reformatting the comment cannot quietly empty the list.
+function requiredChecksNamed(yml) {
+  const header = yml.split(/^jobs:/m)[0].split('\n')
+  const start = header.findIndex((l) => /required status check/i.test(l))
+  if (start === -1) return []
+
+  const names = []
+  for (const line of header.slice(start + 1)) {
+    if (!line.startsWith('#')) break
+    const text = line.replace(/^#/, '').trim()
+    if (text) names.push(text)
+    else if (names.length) break
+  }
+  return names.sort()
+}
+
+// Every job's name, discovered from the workflow rather than listed here. Job
+// keys sit at two spaces and their fields at four; step names are deeper.
+function jobNames(yml) {
+  const body = yml.split(/^jobs:/m)[1] ?? ''
+  return [...body.matchAll(/^ {4}name:\s*(.+?)\s*$/gm)]
+    .map((m) => m[1].replace(/^(['"])(.*)\1$/, '$2'))
+    .sort()
+}
+
 describe('the build runs every guard it contains', () => {
   test('no test file is orphaned from CI', () => {
     const covered = filesCoveredByCI()
@@ -91,5 +118,23 @@ describe('the build runs every guard it contains', () => {
     assert.match(yml, /required status check/i,
       'ci.yml does not say which jobs must be required in branch protection, ' +
       'so the one step a workflow cannot perform for itself is undocumented')
+  })
+
+  // That list is only useful while it matches the jobs. Rename a job and branch
+  // protection keeps waiting for the old name: the check never reports under
+  // it, and every pull request blocks on something that will never arrive.
+  test('the required-checks list names exactly the jobs that exist', () => {
+    const yml = readFileSync(WORKFLOW, 'utf8')
+    const named = requiredChecksNamed(yml)
+    const jobs = jobNames(yml)
+
+    assert.ok(named.length > 0 && jobs.length > 0,
+      'the discovery is broken, not the workflow: ' +
+      `${named.length} names listed, ${jobs.length} jobs found`)
+
+    assert.deepEqual(named, jobs,
+      'the required-checks comment and the jobs disagree. Branch protection is ' +
+      'configured from that list, so a name on one side only is a check that ' +
+      `never reports:\n  listed: ${named.join(', ')}\n  jobs:   ${jobs.join(', ')}`)
   })
 })

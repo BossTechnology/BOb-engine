@@ -645,4 +645,67 @@ that prove they go red.
 
 ---
 
+## Branch protection · ID-12's other half
+
+### `main` is protected
+
+Configured by the account owner, who is the only account with admin on this
+repository. Read back on 2026-09-15 through the branch API with a token that
+has push and not admin:
+
+- `protected: true`
+- enforcement `everyone`, so the owner is not exempt either
+- four required contexts, byte-identical to the four job names in `ci.yml`
+
+**This is the half of ID-12 the workflow cannot assert about itself.** A
+workflow can make a check visible; only this setting makes it blocking. It is
+now set, and the four jobs are the gate.
+
+**Every change enters through a pull request, and an approving review is
+required.** Pull requests #2 and #3 each stayed blocked on *review required*
+until the owner approved them. That was not the intent recorded when the rule
+was drafted, which was to require no approvals and let the four checks be the
+gate, with the developer merging his own work once they are green. Because the
+owner is the only other account with write access, every pull request now waits
+on one person.
+
+**Open — needs a ruling.** Keep the approving review, or set it to zero. Both
+are defensible. What is not defensible is leaving it as it is without anyone
+having decided it.
+
+**What a non-admin cannot read** is the rest of the rule: how many approvals,
+whether stale reviews are dismissed, whether force pushes and deletions are
+blocked. Only the owner can confirm those.
+
+### The required-checks list is asserted against the jobs
+
+Closes the gap left open under *Slice 1c · The required-checks list*: `ci.yml`
+named the four checks and `ci-coverage` asserted only that the comment existed,
+not that it matched the jobs.
+
+`ci-coverage` now reads the names out of that comment and the `name:` of every
+job, and fails when the two differ. The failure it prevents is a renamed job:
+branch protection keeps the old name, no check ever reports under it, and every
+pull request blocks waiting for something that will not arrive. The comment's
+list is read without depending on its indentation, so reformatting it cannot
+quietly empty the list and pass.
+
+**Verified by sabotage.** Renaming a job turned only that test red, and so did
+deleting one name from the comment. Each message prints both lists.
+
+**Known limits.**
+- It compares the comment with the workflow, not with GitHub. A workflow cannot
+  read its own branch protection without admin credentials, so the list being
+  right and the setting being right stay two separate facts. The setting was
+  verified by hand, above, and nothing keeps it verified.
+- Regular expressions, not YAML: the F-14 limits of `ci-coverage` still apply.
+- The sentence above the list still says "ALL FOUR JOBS". A fifth job would be
+  caught by this test only if it were also added to the list; the word is not
+  checked.
+
+**Counts.** The suite goes from 74 tests to 75. The `README.md` example carries
+the new number.
+
+---
+
 *Boss.Technology · BOb v1 · Internal only*
