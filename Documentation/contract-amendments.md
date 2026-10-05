@@ -492,11 +492,13 @@ inventory's 4 stay behind. Slice 1c brings the suite to 70.
 
 - **The five AutoBotz bindings.** Ruled in Slice 1b, they were to be persisted
   through the demo's bridge and then `VALIDATE CONSTRAINT`. That path is not in
-  this repository.
+  this repository. **Still open.** See *Rulings after Slice 1c*.
 - **Visibility.** This repository is public, and the build documents are marked
-  internal. This file was already public on Bob-New's branch.
+  internal. This file was already public on Bob-New's branch. **Ruled:
+  public, deliberately.** See *Rulings after Slice 1c*.
 - **References.** The handoffs and the Slice 2 session prompt name Bob-New. The
   next package, and the fresh repository zip, should come from BOb-engine.
+  **Ruled: Slice 2 targets BOb-engine.** See *Rulings after Slice 1c*.
 
 ---
 
@@ -673,6 +675,8 @@ on one person.
 are defensible. What is not defensible is leaving it as it is without anyone
 having decided it.
 
+**Ruled: no approving review.** See *Rulings after Slice 1c*.
+
 **What a non-admin cannot read** is the rest of the rule: how many approvals,
 whether stale reviews are dismissed, whether force pushes and deletions are
 blocked. Only the owner can confirm those.
@@ -705,6 +709,35 @@ deleting one name from the comment. Each message prints both lists.
 
 **Counts.** The suite goes from 74 tests to 75. The `README.md` example carries
 the new number.
+
+---
+
+## Rulings after Slice 1c
+
+Four items left open above were ruled in the reply that closed Slice 1c.
+
+**Visibility: public, deliberately.** That is how this work is meant to be
+done. The rules on what may be committed here stay as they are: no
+attribution, nothing sensitive staged, explicit paths only.
+
+**No approving review on `main`.** The four required checks are the gate, to be
+revisited when there is a second developer. Applying it is a change to the
+branch rule that only the owner can make: the approval count goes to zero, and
+the four required contexts and the absence of any bypass stay as they are.
+
+**Postgres 17.6 stays.** This reconfirms the ruling under *Environment
+findings*: `config.toml` stays at 15, and the fleet pin is revisited when the
+first VPS instance is built.
+
+**Slice 2 targets BOb-engine.** Its package comes from this repository, not
+from Bob-New.
+
+**Still open: the five AutoBotz bindings.** The path to persisting them depends
+on the state of Bob-New after the split and on which Supabase project it points
+at, both asked in the same reply. This repository's half of the second question
+is settled: nothing in it points at a hosted project. No project reference is
+tracked, the local checkout has never been linked, and CI only ever targets the
+local stack at `127.0.0.1:54322`.
 
 ---
 
