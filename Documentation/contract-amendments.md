@@ -423,7 +423,8 @@ instruction, not a file.**
 **N-08 has a concrete instance behind it.** One organization and five channels
 exist in the hosted environment. System Flows §3 identifies configuration and
 live state as the only data that cannot be rebuilt, and its backup has no named
-owner. Migrations were correctly not applied there.
+owner. Migrations were correctly not applied there. **Ruled: the developer owns
+the backups.** See *Rulings after the Slice 2 questions*.
 
 **Three of the four CI actions still declared Node 20.** In run 34563860302 the
 `supabase/setup-cli@v1` step printed "Node 20 is being deprecated. This workflow
@@ -492,7 +493,8 @@ inventory's 4 stay behind. Slice 1c brings the suite to 70.
 
 - **The five AutoBotz bindings.** Ruled in Slice 1b, they were to be persisted
   through the demo's bridge and then `VALIDATE CONSTRAINT`. That path is not in
-  this repository. **Still open.** See *Rulings after Slice 1c*.
+  this repository. **Ruled: a migration and a fixture here.** See *Rulings
+  after the Slice 2 questions*.
 - **Visibility.** This repository is public, and the build documents are marked
   internal. This file was already public on Bob-New's branch. **Ruled:
   public, deliberately.** See *Rulings after Slice 1c*.
@@ -737,7 +739,49 @@ on the state of Bob-New after the split and on which Supabase project it points
 at, both asked in the same reply. This repository's half of the second question
 is settled: nothing in it points at a hosted project. No project reference is
 tracked, the local checkout has never been linked, and CI only ever targets the
-local stack at `127.0.0.1:54322`.
+local stack at `127.0.0.1:54322`. Ruled since: see below.
+
+---
+
+## Rulings after the Slice 2 questions
+
+The developer's answers to the eight questions asked before Slice 2. Three are
+rulings; the rest are findings that bear on them.
+
+### Bob-New never received the v1 chain
+
+The Slices 0 and 1 pull request on Bob-New (#21, head `edd53ad`, the commit
+this repository was imported from) was closed unmerged on 2026-09-10. Bob-New's
+`main` ends at `20260830100000_autobotz_bindings.sql`: the pre-rename schema,
+with `client_id` and no `mutative`. It has no workflow, only `dependabot.yml`,
+and no test scripts. **`simulator-bridge` and `service-role-inventory` run
+nowhere.** They exist only on the closed branch, last run green on 2026-09-10.
+
+### Rulings
+
+**One hosted Supabase project, and it is this repository's target.** Today only
+the Bob-New demo is connected to it. This repository is not linked to it and no
+migration has been applied there. **Applying this chain there breaks the demo's
+bridge**, which still speaks the pre-rename schema: the F-11 failure, on the
+live project. The bridge guard as a committed contract file should exist first.
+
+**N-08: the developer owns the backups of the hosted project.** No migration
+goes there before a backup exists.
+
+**The five AutoBotz bindings: a migration and a fixture here.**
+`VALIDATE CONSTRAINT autobotz_mutative_declared` ships as a plain migration in
+this repository, and the five rulings under F-07 become a fixture. They cannot
+be persisted in Bob-New, whose `main` has no `mutative` column. `NOT VALID`
+exempts nothing anywhere: the hosted bindings table had 0 rows on 2026-09-06,
+and a database built from this chain starts empty.
+
+### Still open
+
+**The thirteen-month TTL is not applied.** The developer owns BzzzBX retention;
+the date is not decided. On the Bzzz repository, `business_events` still
+carries a 30-day TTL, and D34.4, signed 2026-10-08, kept 30 days for the first
+customer. The change needs its own decision superseding it. Every day at 30 days
+is permanently absent from any later trend.
 
 ---
 
