@@ -137,4 +137,29 @@ describe('the build runs every guard it contains', () => {
       'configured from that list, so a name on one side only is a check that ' +
       `never reports:\n  listed: ${named.join(', ')}\n  jobs:   ${jobs.join(', ')}`)
   })
+
+  // F-16. With `version: latest`, setup-cli asks the GitHub API for the latest
+  // release, unauthenticated, and a required check went red on the rate limit.
+  // A concrete version makes no lookup. Every install is discovered, so a job
+  // added with `latest`, or with a version of its own, fails here.
+  test('every Supabase CLI install uses the one pinned version', () => {
+    const yml = readFileSync(WORKFLOW, 'utf8')
+    const header = yml.split(/^jobs:/m)[0]
+    const pinned = header.match(/^ {2}SUPABASE_CLI_VERSION:\s*['"]?(.*?)['"]?\s*$/m)
+    assert.match(pinned?.[1] ?? '', /^\d+\.\d+\.\d+$/,
+      'SUPABASE_CLI_VERSION in the workflow env is missing or not a concrete ' +
+      `version (found: ${pinned?.[1] ?? 'nothing'}). "latest" brings the ` +
+      'unauthenticated release lookup back.')
+
+    // Each setup-cli step with the lines indented under it.
+    const installs = [...yml.matchAll(/uses:\s*supabase\/setup-cli@.*((?:\n {8,}.*)*)/g)]
+    assert.ok(installs.length > 0,
+      'the discovery is broken, not the workflow: no setup-cli step found')
+
+    const versions = installs.map((m) => m[1].match(/version:\s*(.+?)\s*$/m)?.[1] ?? '(omitted)')
+    const stray = versions.filter((v) => v !== '${{ env.SUPABASE_CLI_VERSION }}')
+    assert.deepEqual(stray, [],
+      'a setup-cli step does not read SUPABASE_CLI_VERSION. Omitted, it falls ' +
+      'back to the lockfile and then to "latest":\n  ' + stray.join('\n  '))
+  })
 })

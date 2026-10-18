@@ -22,6 +22,15 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# The one place the Supabase CLI version is set. Every setup-cli step reads it,
+# and ci-coverage fails if one does not. A concrete version means setup-cli makes
+# no release lookup: with `latest` it called the GitHub API unauthenticated, on
+# the runner's shared per-IP limit, and a check went red on that (F-16). Bump it
+# by hand, in a pull request that changes nothing else; the four checks are the
+# test of the bump.
+env:
+  SUPABASE_CLI_VERSION: 2.120.0
+
 jobs:
   # Runs on every change, first, and independently of anything else. If the
   # migration chain does not apply from nothing, no other result means anything.
@@ -37,7 +46,7 @@ jobs:
           cache: pnpm
       - uses: supabase/setup-cli@v2
         with:
-          version: latest
+          version: ${{ env.SUPABASE_CLI_VERSION }}
       - run: pnpm install --frozen-lockfile
       - name: Start the local stack
         run: supabase start
@@ -62,7 +71,7 @@ jobs:
           cache: pnpm
       - uses: supabase/setup-cli@v2
         with:
-          version: latest
+          version: ${{ env.SUPABASE_CLI_VERSION }}
       - run: pnpm install --frozen-lockfile
       - run: supabase start
       - run: supabase db reset --no-seed
@@ -83,7 +92,7 @@ jobs:
           cache: pnpm
       - uses: supabase/setup-cli@v2
         with:
-          version: latest
+          version: ${{ env.SUPABASE_CLI_VERSION }}
       - run: pnpm install --frozen-lockfile
       - run: supabase start
       - run: supabase db reset --no-seed
@@ -114,7 +123,7 @@ jobs:
           cache: pnpm
       - uses: supabase/setup-cli@v2
         with:
-          version: latest
+          version: ${{ env.SUPABASE_CLI_VERSION }}
       - run: pnpm install --frozen-lockfile
       - run: supabase start
       - run: supabase db reset --no-seed
