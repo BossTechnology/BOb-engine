@@ -450,6 +450,7 @@ each `action.yml` at the referenced major:
   omitted. The jobs keep `version: latest`. v3 would install the CLI from npm
   instead of GitHub releases and removes the `github-token` input. That is a
   change of source with no reason behind it, so v3 was not taken.
+  *Superseded by F-16: the jobs no longer use `latest`.*
 
 No job was renamed, so the four required status checks are unaffected. Every
 action is still referenced by a moving major tag, not a commit SHA. That is
@@ -775,13 +776,82 @@ be persisted in Bob-New, whose `main` has no `mutative` column. `NOT VALID`
 exempts nothing anywhere: the hosted bindings table had 0 rows on 2026-09-06,
 and a database built from this chain starts empty.
 
-### Still open
+### Since: the thirteen-month TTL
 
-**The thirteen-month TTL is not applied.** The developer owns BzzzBX retention;
-the date is not decided. On the Bzzz repository, `business_events` still
-carries a 30-day TTL, and D34.4, signed 2026-10-08, kept 30 days for the first
-customer. The change needs its own decision superseding it. Every day at 30 days
-is permanently absent from any later trend.
+**Ruled and applied.** Bzzz D39, signed 2026-10-12, sets `business_events` to
+395 days on every box and supersedes D34.4. Read from `system.tables` on
+2026-10-12: `toIntervalDay(395)` on the lab box from 21:34 UTC and on the
+reference box from 21:31 UTC. The client box was scheduled for 2026-10-13. The
+history starts 30 days before each box's date: what had already expired does
+not come back.
+
+---
+
+## CI · A check that failed on GitHub's rate limit
+
+### F-16 · `version: latest` made every required check depend on an unauthenticated API call
+
+On 2026-10-11, run 38144661320 (pull request #5, a documentation-only change)
+failed *Contracts, schema and naming* at the `supabase/setup-cli@v2` step:
+"Failed to resolve latest Supabase CLI release: rate limit exceeded". The other
+three jobs passed the same step in the same run, and the re-run passed. The
+failure had nothing to do with the change under test.
+
+**Cause, read from the action's `src/main.ts` at v2.** With `version: latest`
+the action asks `api.github.com/repos/supabase/cli/releases/latest` for a tag,
+and sends a token only if `github-token` is set. No job set it, so the request
+was unauthenticated and shared the runner IP's 60-an-hour limit with whoever
+else had that IP. Any of the four required checks could fail this way. With a
+concrete version the action makes no API call at all: it downloads the release
+archive directly.
+
+**Two fixes weighed.**
+- *Pass `github-token: ${{ github.token }}`.* The lookup is authenticated and
+  moves to the repository's own limit, and the jobs keep tracking `latest`. It
+  fixes the rate limit and nothing else. A new CLI release can still turn all
+  four checks red on a pull request that did not cause it, and the four jobs of
+  one run can resolve different versions if a release lands mid-run. It also
+  depends on an input that v3 removes.
+- *Pin a concrete version.* No lookup to fail, the same CLI in all four jobs,
+  and a CLI change arrives as its own pull request. It works the same on v3,
+  which installs a pinned version from npm. The cost is that someone has to
+  bump it.
+
+**Ruled by this change: pin.** `SUPABASE_CLI_VERSION: 2.120.0` is set once, in
+the workflow-level `env` of `ci.yml`, and every setup-cli step reads it. 2.120.0
+is what `latest` resolved to when this was written: the newest release,
+published 2026-10-06, so the jobs test exactly what they tested before. No
+token is passed, because with a pinned version the action never uses it.
+
+Omitting `version` does not help. The action then looks for a `supabase`
+dependency in the lockfile, and this repository has none, so it falls back to
+`latest`. Adding `supabase` as a dev dependency would make the lockfile the one
+place, but it puts a second CLI download into `pnpm install` for every job, for
+a binary CI already gets from the action.
+
+**How it gets bumped.** By hand, in a pull request that changes only that line
+and records the new version here. The four checks are the test of the bump.
+Nothing schedules it, and Dependabot does not read workflow `env` values. Bump
+when a CLI fix is needed, or when the local stack should track a newer Postgres
+image. The version on a developer's machine is not affected: locally it is
+whatever `supabase --version` says, 2.119.0 on the machine this was written on.
+
+**Guarded.** `ci-coverage` gains a test that the workflow env holds a concrete
+`x.y.z` and that every `supabase/setup-cli` step, discovered rather than listed,
+passes `version: ${{ env.SUPABASE_CLI_VERSION }}`. Verified by sabotage: setting
+the env to `latest`, setting one step to `latest`, and removing one step's
+`version` each turned that test red, and only that test.
+
+**Known limits.**
+- The F-14 limits apply: regular expressions, not YAML.
+- The archive still comes from GitHub releases, and the Docker images from
+  their registries. Those are downloads, not API calls, and are outside the
+  limit that failed here. An outage of either still fails a check.
+
+No job was renamed, so the four required status checks are unaffected.
+
+**Counts.** The suite goes from 75 tests to 76. The `README.md` example carries
+the new number.
 
 ---
 
