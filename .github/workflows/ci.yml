@@ -104,6 +104,10 @@ jobs:
         env:
           SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
         run: node --test --test-concurrency=1 tests/slice1-schema.test.mjs
+      - name: BR-3 · the mutative exemption is closed, and the F-07 rulings are a fixture
+        env:
+          SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+        run: node --test --test-concurrency=1 tests/autobotz-br3.test.mjs
       - name: Product naming is case-sensitive
         run: node --test --test-concurrency=1 tests/naming.test.mjs
       # Asserts every test file is invoked by some job here, so the next guard

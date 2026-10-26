@@ -777,4 +777,50 @@ the new number.
 
 ---
 
+## BR-3 · The mutative exemption is closed
+
+### F-07 · Closed — VALIDATE ships as a migration, the rulings as a fixture
+
+Ruled in BOB-4 (23 Oct 2026). The five rulings could not be persisted through
+the demo's bridge: Bob-New's `main` is pre-rename, with no `mutative` column, and
+the bridge is now disabled (BOB-4, ruling 1). They also cannot be persisted
+anywhere by a migration without putting example rows in production. So the two
+halves go where each belongs.
+
+**Migration** `20261025100000_autobotz_validate_mutative.sql` runs
+`ALTER TABLE autobotz VALIDATE CONSTRAINT autobotz_mutative_declared`, the step
+20260902100000 named. Before it, a guard lists every row with
+`mutative IS NULL` by id, label and type and stops. `VALIDATE` alone would fail
+on such a row too, but only with the constraint's name. The migration never
+rules on a row itself. Nothing is exempted today: the hosted bindings table held
+0 rows on 6 Sep, and this chain starts empty.
+
+**Fixture** `supabase/tests/fixtures/autobotz_br3.sql` holds `ab1` to `ab5` for
+tenant A with the rulings in the table above, and `requires_approval` set on the
+checkout check. Shape choices that are not rulings: provider follows the seed,
+corrected to `bzzzbx`; `scope_kind` is `company` for all five, because the seed
+gives `ab3` a scope (`aba`) outside the §3.4 set; `ab2`'s URL moves to a fake
+host.
+
+**Guarded** by `tests/autobotz-br3.test.mjs`, in the "Contracts, schema and
+naming" job:
+- the constraint is validated;
+- the migration, run inside a rolled-back transaction over a reopened exemption,
+  refuses an unruled row and names it, and validates once every row is ruled;
+- a ruled binding cannot be set back to `NULL`;
+- the fixture's label, type and ruling match the F-07 table in this file, read
+  from here rather than copied into the test;
+- the checkout check is mutative and requires approval.
+
+The migration is found by the statement it executes, not by its file name.
+Verified by sabotage: leaving the constraint `NOT VALID`, removing the guard, and
+ruling `ab5` mutative in the fixture each turned exactly one test red.
+
+No job was renamed, so the four required status checks are unaffected.
+
+**Counts.** The suite goes from 76 tests to 82. The `README.md` example carries
+the new number.
+
+---
+
 *Boss.Technology · BOb v1 · Internal only*

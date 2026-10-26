@@ -74,6 +74,20 @@ export async function loadRoster(client) {
   await client.query('COMMIT')
 }
 
+// The five BR-3 rulings (F-07). Separate from the two-tenant fixture for the
+// same reason as the roster: the tenancy suite keeps its smallest fixture.
+// loadFixture deletes every autobotz row in both tenants, so reloading after it
+// is idempotent.
+export async function loadBr3Rulings(client) {
+  const sql = readFileSync(
+    resolve(REPO_ROOT, 'supabase/tests/fixtures/autobotz_br3.sql'),
+    'utf8',
+  )
+  await client.query('BEGIN')
+  await client.query(sql)
+  await client.query('COMMIT')
+}
+
 // Run a function as `authenticated` carrying a tenant's JWT claims, exactly the
 // way PostgREST does. Always rolled back: a tenancy test must not be able to
 // leave state behind that a later tenancy test then reads.
