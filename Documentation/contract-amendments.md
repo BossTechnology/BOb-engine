@@ -1019,6 +1019,9 @@ the four checks enforced for everyone, admins included. Closing it needs "Do
 not allow bypassing the above settings" on the `main` rule, which only an admin
 can set.
 
+Read back again on 2026-10-29, after the BossTechnology account set it:
+`enforcement_level: everyone`, with the same four required contexts. Closed.
+
 ---
 
 ## Slice 5 · Cooldown and escalation
