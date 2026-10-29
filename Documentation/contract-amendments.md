@@ -901,4 +901,69 @@ the new number.
 
 ---
 
+## Slice 5 · Cooldown and escalation
+
+### D-05 · Closed — 30-minute cooldown, two-hour escalation, a 300-second floor
+
+Ruled in BOB-9 (27 Oct 2026). Migration Order step 6a added in BOB-7 the same
+day. Not built yet: it ships with Slice 5.
+
+- **Cooldown:** one system default of 1800 seconds, overridable per threshold.
+  Not per metric: there is no alert volume to tune five numbers from (C-09).
+- **Key:** the composite subject, `evaluation_state.subject_key`. One problem on
+  four channels produces four alerts. Recognising them as one incident is
+  correlation, which v1 does not do.
+- **Escalation:** severity rises once (RS-04) after 7200 seconds sustained. It
+  is severity, not routing.
+- **Defaults, not authored-with-no-default.** A wrong cooldown is noise, not an
+  irreversible act, so the BR-3 precedent does not apply.
+- **Recovery has no cooldown.**
+- **Floor:** a CHECK refuses a cooldown below 300 seconds. Below one base
+  bucket (C-13), pg_cron re-evaluates the same sealed bucket and a shorter
+  cooldown is inert, not aggressive.
+- **Step 6a:** `cooldown_seconds` and `escalation_after_seconds` on
+  `threshold_configs`, defaults 1800 and 7200, CHECK `>= 300`.
+
+Structural, not configuration: the floor (changing it means changing C-13 and
+rebuilding the projections) and the key (changing it means changing how breach
+state is tracked). Everything else is soft.
+
+**Inherited obligation (A-04, D-25).** The evaluator refuses to evaluate an open
+bucket for a channel whose `lag_seconds` is NULL. The schema cannot enforce it.
+The fixture already carries an undeclared channel to test against
+(`supabase/tests/fixtures/roster.sql:36`).
+
+### Checked against the schema at `aed52ba` — open before step 6a is written
+
+1. **A column DEFAULT does not move existing thresholds.** With
+   `DEFAULT 1800`, every threshold created before a change of default stores
+   1800 literally, and is then indistinguishable from one a customer set to
+   1800 on purpose. Changing the default in one line moves only new thresholds.
+   The alternative is the D-25 shape: nullable, NULL inherits the system
+   default, and the default lives in one place.
+2. **The floor covers only the cooldown.** An `escalation_after_seconds` below
+   300 is inert for the same reason.
+3. **Two threshold models coexist.** `notification_rules`
+   (`20260606120000_initial_schema.sql:209`) has its own `suppression_min`
+   (default 15) and `escalation_min` (default 30) at lines 229-230, no floor,
+   and feeds `alerts`, which carries `acknowledged_at` (line 265).
+   `threshold_configs` (`20260729130000_v3_config_persistence.sql:43`) feeds
+   `alert_log` (line 94). `bob_app` holds grants on both
+   (`20260902100300_roles_and_grants.sql:75-80`). Step 6a adds to one and
+   leaves the other's defaults standing.
+4. **Sustained or unacknowledged.** BOB-9 asked "after how long
+   unacknowledged"; the ruling says two hours sustained. Read as: escalation
+   does not depend on acknowledgement, so Slice 5 needs no acknowledgement
+   column. `alert_log` has none today.
+5. **Recovery followed by a re-breach inside the cooldown.** The re-breach is
+   suppressed, so the last visible event is a recovery while the subject is
+   breached: the mirror of the case uncooled recovery exists to avoid. Not
+   ruled: whether a recovery ends the subject's cooldown.
+6. **Granularity until Phase C.** `threshold_configs` is
+   `UNIQUE(org_id, metric_id)` (line 53), so "per threshold" means per metric
+   per organisation. Voice and WhatsApp share a cooldown until scope columns
+   land (F-05). `evaluation_state` does not exist yet; Slice 5 creates it.
+
+---
+
 *Boss.Technology · BOb v1 · Internal only*
