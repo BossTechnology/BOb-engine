@@ -3,7 +3,7 @@
 > Actualizar al cerrar cada sesión. Es lo primero que lee la siguiente.
 
 ## Tarea actual
-- Tarea 6 de Relevo («The projection read contract»): borrador 0.2 del contrato de proyección en `docs/contracts/projection-contract.md`, en PR. Espera la firma de Henry antes de publicarlo en la tarea 6 y antes de cualquier migración del Slice 2.
+- Tarea 6 de Relevo («The projection read contract»): borrador 0.2 del contrato de proyección en `docs/contracts/projection-contract.md`, en PR #13. Publicado en la tarea 6 de Relevo el 29 oct con F-20 y las cinco preguntas para la 3.7; turno de Federico. Ninguna migración del Slice 2 antes de la firma.
 - Tarea 7 de Relevo («What is left to build — scope map»): paquete de guards antes del Slice 2, mergeado en PR #11.
 - Tarea 9 de Relevo («Slice 5 · Cooldown and escalation durations», D-05): decisión cerrada por Federico el 27 oct, registrada en `contract-amendments.md` («Slice 5 · Cooldown and escalation»). Acuse publicado con seis puntos abiertos antes de escribir el paso 6a; turno de Federico.
 
@@ -23,7 +23,7 @@
 - Nada.
 
 ## Siguiente paso
-- Henry revisa y firma el contrato; luego se publica en la tarea 6 de Relevo y la tarea 3.7 de BzzzBX implementa contra él.
+- Respuesta de Federico en la tarea 6 sobre F-20 (Handoff §3.3) y el §11; luego firma y la tarea 3.7 de BzzzBX implementa contra el contrato.
 - Confirmar en la tarea 7 de Relevo cuando la regla de `main` lea `everyone`.
 
 ## Notas de sesión
