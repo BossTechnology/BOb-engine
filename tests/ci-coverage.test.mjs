@@ -17,7 +17,7 @@
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync, readdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import { REPO_ROOT } from './helpers/db.mjs'
 
 const WORKFLOW = join(REPO_ROOT, '.github/workflows/ci.yml')
@@ -26,10 +26,13 @@ const WORKFLOW = join(REPO_ROOT, '.github/workflows/ci.yml')
 // that way — an entry here is a guard someone has switched off.
 const NOT_IN_CI = new Set([])
 
+// Every test file under tests/, at any depth. Slice 2's property tests are the
+// kind of thing that lands in a subdirectory, and a top-level read would never
+// see them to report them orphaned.
 function testFiles() {
-  return readdirSync(join(REPO_ROOT, 'tests'))
-    .filter((f) => f.endsWith('.test.mjs'))
-    .map((f) => `tests/${f}`)
+  return readdirSync(join(REPO_ROOT, 'tests'), { recursive: true })
+    .filter((f) => f.endsWith('.test.mjs') && !f.split(sep).includes('node_modules'))
+    .map((f) => `tests/${f.split(sep).join('/')}`)
     .sort()
 }
 
@@ -53,11 +56,20 @@ function filesCoveredByCI() {
 
   const joined = commands.join('\n')
 
-  // A glob over the directory covers everything in it.
-  if (/tests\/\*\.test\.mjs/.test(joined)) return new Set(testFiles())
+  // A recursive glob covers the whole tree; a one-level glob covers only the
+  // top level, and a file in a subdirectory stays orphaned under it. The glob
+  // has to reach node quoted: an unquoted ** is expanded by sh, which has no
+  // globstar, as a single level and never reaches the top.
+  const covered = new Set()
+  if (/['"]tests\/\*\*\/\*\.test\.mjs['"]/.test(joined)) {
+    for (const f of testFiles()) covered.add(f)
+  }
+  if (/tests\/\*\.test\.mjs/.test(joined)) {
+    for (const f of testFiles()) if (!f.slice('tests/'.length).includes('/')) covered.add(f)
+  }
 
-  return new Set([...joined.matchAll(/tests\/[a-z0-9._-]+\.test\.mjs/g)]
-    .map((m) => m[0]))
+  for (const m of joined.matchAll(/tests\/[a-z0-9._/-]+\.test\.mjs/g)) covered.add(m[0])
+  return covered
 }
 
 // The names listed in the header comment as required status checks: the lines
