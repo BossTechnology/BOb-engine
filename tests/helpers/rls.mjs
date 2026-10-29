@@ -26,8 +26,8 @@ export async function structuralFindings(client) {
   // roles comes back as name[]; cast so the driver parses it as an array
   // rather than handing back the literal '{authenticated}'.
   const { rows: policies } = await client.query(`
-    SELECT tablename, policyname, roles::text[] AS roles, cmd, qual, with_check
-      FROM pg_policies WHERE schemaname = 'public'`)
+    SELECT schemaname, tablename, policyname, roles::text[] AS roles, cmd, qual, with_check
+      FROM pg_policies`)
 
   for (const t of tables) {
     if (!t.rls_enabled) {
@@ -50,7 +50,9 @@ export async function structuralFindings(client) {
       })
     }
 
-    for (const p of policies.filter((p) => p.tablename === t.table_name)) {
+    const own = policies.filter(
+      (p) => p.schemaname === t.table_schema && p.tablename === t.table_name)
+    for (const p of own) {
       const roles = (p.roles || []).map(String)
       if (!roles.some((r) => PUBLIC_FACING.has(r))) continue
 
@@ -72,28 +74,88 @@ export async function structuralFindings(client) {
 
 // PR-4, asserted rather than assumed. Vacuous until Slice 2 creates the eight
 // projection tables, and load-bearing from the moment it does not.
-export async function projectionGrantFindings(client) {
-  const { rows } = await client.query(`
-    SELECT c.relname AS table_name, g.grantee, g.privilege_type
-      FROM pg_class c
-      JOIN pg_namespace n ON n.oid = c.relnamespace
-      LEFT JOIN information_schema.role_table_grants g
-             ON g.table_schema = 'public'
-            AND g.table_name = c.relname
-            AND g.privilege_type IN ('INSERT','UPDATE','DELETE','TRUNCATE')
-            AND g.grantee IN ('anon','authenticated','bob_app')
-     WHERE n.nspname = 'public'
-       AND c.relkind IN ('r','p')
-       AND c.relname LIKE 'proj\\_%'`)
+//
+// A projection is found three ways, in any schema, and any one is enough:
+//   - its name starts with proj_;
+//   - bob_feeder holds a write grant on it, because writing projections is the
+//     feeder's only job, so a table it writes is a projection whatever its name;
+//   - it is a partition, at any depth, of one of the above. Postgres does not
+//     copy grants from a parent to a partition created later, and in `public`
+//     Supabase's default privileges hand every new table to anon and
+//     authenticated. Thirteen months across eight tables is about a hundred of
+//     them, so the partitions are checked, not only the parents.
+//
+// Privileges are read with has_table_privilege, which is what Postgres
+// enforces: a grant to PUBLIC, or one inherited through a role, counts.
+const NEVER_WRITES = ['public', 'anon', 'authenticated', 'bob_app']
+const WRITE = ['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE']
+const FEEDER_NEEDS = ['SELECT', 'INSERT', 'UPDATE', 'DELETE']
 
+export async function projectionTables(client) {
+  const { rows } = await client.query(`
+    WITH RECURSIVE named AS (
+      SELECT c.oid
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname NOT LIKE 'pg\\_%'
+         AND n.nspname <> 'information_schema'
+         AND c.relkind IN ('r', 'p')
+         AND (c.relname LIKE 'proj\\_%'
+              OR EXISTS (
+                SELECT 1 FROM aclexplode(c.relacl) a
+                 WHERE a.grantee = 'bob_feeder'::regrole
+                   AND a.privilege_type IN ('INSERT', 'UPDATE', 'DELETE')))
+    ), lineage AS (
+      SELECT oid FROM named
+      UNION
+      SELECT i.inhrelid FROM pg_inherits i JOIN lineage l ON i.inhparent = l.oid
+    )
+    SELECT format('%I.%I', n.nspname, c.relname) AS qualified,
+           c.relname AS table_name,
+           c.relispartition AS is_partition,
+           c.oid::text AS oid
+      FROM lineage l
+      JOIN pg_class c ON c.oid = l.oid
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+     ORDER BY 1`)
   return rows
-    .filter((r) => r.grantee)
-    .map((r) => ({
-      table: r.table_name,
-      rule: 'PR-4',
-      finding:
-        `${r.grantee} holds ${r.privilege_type} on a projection table. BOb ` +
-        'never writes a projection. Pass the table through ' +
-        'bob_grant_projection() in its creating migration',
-    }))
+}
+
+export async function projectionGrantFindings(client) {
+  const findings = []
+  for (const t of await projectionTables(client)) {
+    const { rows } = await client.query(`
+      SELECT r AS role, p AS privilege,
+             has_table_privilege(r, $1::oid, p) AS held
+        FROM unnest($2::text[]) r, unnest($3::text[]) p
+      UNION ALL
+      SELECT 'bob_feeder', p, has_table_privilege('bob_feeder', $1::oid, p)
+        FROM unnest($4::text[]) p`,
+      [t.oid, NEVER_WRITES, WRITE, FEEDER_NEEDS])
+
+    const kind = t.is_partition ? 'a partition of a projection' : 'a projection table'
+    for (const r of rows) {
+      if (r.role !== 'bob_feeder' && r.held) {
+        findings.push({
+          table: t.table_name,
+          rule: 'PR-4',
+          finding:
+            `${r.role} holds ${r.privilege} on ${kind}. BOb never writes a ` +
+            'projection. Pass the table through bob_grant_projection() where ' +
+            'it is created, partitions included',
+        })
+      }
+      if (r.role === 'bob_feeder' && !r.held) {
+        findings.push({
+          table: t.table_name,
+          rule: 'PR-4',
+          finding:
+            `bob_feeder lacks ${r.privilege} on ${kind}. A projection the ` +
+            'feeder cannot write is as broken as one the application can. ' +
+            'Pass it through bob_grant_projection()',
+        })
+      }
+    }
+  }
+  return findings
 }

@@ -46,19 +46,37 @@ export async function loadFixture(client) {
     'utf8',
   )
   await client.query('BEGIN')
-  await client.query(`
-    DELETE FROM actor_shifts         WHERE org_id IN ($1, $2);
-    DELETE FROM actor_channel_skills WHERE org_id IN ($1, $2);
-    DELETE FROM actors               WHERE org_id IN ($1, $2);
-    DELETE FROM channel_actor_mix    WHERE org_id IN ($1, $2);
-    DELETE FROM notification_channels WHERE org_id IN ($1, $2);
-    DELETE FROM autobotz             WHERE org_id IN ($1, $2);
-    DELETE FROM channels             WHERE org_id IN ($1, $2);
-    DELETE FROM users                WHERE org_id IN ($1, $2);
-    DELETE FROM organizations        WHERE id     IN ($1, $2);
-  `.replace(/\$1/g, `'${TENANT_A}'`).replace(/\$2/g, `'${TENANT_B}'`))
+  await clearTenants(client)
   await client.query(sql)
   await client.query('COMMIT')
+}
+
+// Remove both test tenants without naming their tables. Deleting the
+// organisations cascades through every foreign key to them; the sweep after it
+// reaches the tables that carry org_id with no such key, which the cascade
+// cannot see. A table added later is cleared without anyone extending a list.
+async function clearTenants(client) {
+  const tenants = [TENANT_A, TENANT_B]
+  await client.query(
+    `DELETE FROM ${await organizationsTable(client)} WHERE id = ANY($1::uuid[])`,
+    [tenants])
+  for (const t of await tenantTables(client)) {
+    await client.query(
+      `DELETE FROM ${t.qualified} WHERE org_id = ANY($1::uuid[])`, [tenants])
+  }
+}
+
+// Found, not assumed to be in `public`, for the same reason as tenantTables.
+async function organizationsTable(client) {
+  const { rows } = await client.query(`
+    SELECT format('%I.%I', n.nspname, c.relname) AS qualified
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE c.relname = 'organizations' AND c.relkind IN ('r', 'p')
+       AND n.nspname NOT LIKE 'pg\\_%'`)
+  if (rows.length !== 1) {
+    throw new Error(`expected one organizations table, found ${rows.length}`)
+  }
+  return rows[0].qualified
 }
 
 // The Slice 1 roster. Separate from the two-tenant fixture because the tenancy
@@ -111,25 +129,45 @@ export async function asTenant(client, orgId, fn) {
   }
 }
 
-// Every table in `public` that carries an org_id. Discovered, never listed:
-// a table added later without RLS must fail this suite without anyone
-// remembering to extend an array.
+// Every table that carries an org_id, in whatever schema it lives. Discovered,
+// never listed: a table added later without RLS must fail this suite without
+// anyone remembering to extend an array.
+//
+// The schema is discovered too. Slice 2 moves the tables from `public` to `bob`,
+// and a query pinned to 'public' would then return nothing and every assertion
+// would loop over zero tables and pass. Only the catalog schemas are left out,
+// by prefix, so a schema nobody has heard of yet is included by default.
+//
+// `qualified` is quoted and schema-qualified, ready to interpolate.
 export async function tenantTables(client) {
   const { rows } = await client.query(`
-    SELECT c.relname AS table_name,
+    SELECT n.nspname AS table_schema,
+           c.relname AS table_name,
+           format('%I.%I', n.nspname, c.relname) AS qualified,
            c.relrowsecurity  AS rls_enabled,
            c.relforcerowsecurity AS rls_forced,
            (SELECT count(*)::int FROM pg_policies p
-             WHERE p.schemaname = 'public' AND p.tablename = c.relname) AS policy_count
+             WHERE p.schemaname = n.nspname AND p.tablename = c.relname) AS policy_count
       FROM pg_class c
       JOIN pg_namespace n ON n.oid = c.relnamespace
-     WHERE n.nspname = 'public'
-       AND c.relkind = 'r'
+     WHERE n.nspname NOT LIKE 'pg\\_%'
+       AND n.nspname <> 'information_schema'
+       AND c.relkind IN ('r', 'p')
        AND EXISTS (
-         SELECT 1 FROM information_schema.columns ic
-          WHERE ic.table_schema = 'public'
-            AND ic.table_name = c.relname
-            AND ic.column_name = 'org_id')
-     ORDER BY c.relname`)
+         SELECT 1 FROM pg_attribute a
+          WHERE a.attrelid = c.oid
+            AND a.attname = 'org_id'
+            AND NOT a.attisdropped)
+     ORDER BY n.nspname, c.relname`)
   return rows
 }
+
+// The floor under tenantTables. A discovery that finds nothing passes every
+// check that loops over what it found, so the suite asserts these are in the
+// set wherever they live. They are the tables the tenancy tests and the
+// two-tenant fixture name; the list is a lower bound, not the set, and a table
+// missing from it is still discovered and still checked.
+export const TENANCY_FLOOR = [
+  'actors', 'autobotz', 'channel_actor_mix', 'channels',
+  'notification_channels', 'users',
+]

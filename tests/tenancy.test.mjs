@@ -7,7 +7,7 @@
 import { test, before, after, describe } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  connect, loadFixture, asTenant, tenantTables, TENANT_A, TENANT_B,
+  connect, loadFixture, asTenant, tenantTables, TENANCY_FLOOR, TENANT_A, TENANT_B,
 } from './helpers/db.mjs'
 import { structuralFindings, projectionGrantFindings } from './helpers/rls.mjs'
 
@@ -23,6 +23,20 @@ after(async () => {
 })
 
 describe('ID-10 · every read and write is constrained to a single organisation', () => {
+  // Every other test here loops over what discovery found. If it finds nothing,
+  // they all pass while testing nothing, so this one fails first.
+  test('discovery finds the tenant tables, wherever they live', async () => {
+    const found = new Set((await tenantTables(db)).map((t) => t.table_name))
+    const missing = TENANCY_FLOOR.filter((name) => !found.has(name))
+    assert.deepEqual(
+      missing, [],
+      'tenantTables() did not find tables that carry org_id. The discovery is ' +
+        'broken, not the schema, and every tenancy check below is looping over ' +
+        `a set that is too small.\n  missing: ${missing.join(', ')}\n  found: ` +
+        `${found.size} tables`,
+    )
+  })
+
   test('every table carrying org_id has RLS and a tenant-scoped policy', async () => {
     const findings = await structuralFindings(db)
     assert.deepEqual(
@@ -39,7 +53,7 @@ describe('ID-10 · every read and write is constrained to a single organisation'
     await asTenant(db, TENANT_A, async () => {
       for (const t of tables) {
         const { rows } = await db.query(
-          `SELECT count(*)::int AS n FROM public.${t.table_name}
+          `SELECT count(*)::int AS n FROM ${t.qualified}
             WHERE org_id <> $1`, [TENANT_A])
         if (rows[0].n > 0) leaks.push(`${t.table_name}: ${rows[0].n} rows`)
       }
@@ -50,22 +64,40 @@ describe('ID-10 · every read and write is constrained to a single organisation'
 
   // The case that gets missed. A count that leaks a magnitude has leaked, and
   // the rule names aggregates explicitly for that reason.
+  //
+  // Every discovered table, not a list: Slice 2's projections are exactly the
+  // aggregates. What tenant A counts must not exceed the rows tenant A owns,
+  // counted outside RLS.
   test('aggregates do not leak across the boundary', async () => {
-    const seen = await asTenant(db, TENANT_A, async () => {
-      const { rows } = await db.query(`
-        SELECT (SELECT count(*)::int FROM channels)              AS channels,
-               (SELECT count(*)::int FROM autobotz)              AS autobotz,
-               (SELECT count(*)::int FROM notification_channels) AS autocomm,
-               (SELECT count(*)::int FROM users)                 AS users`)
-      return rows[0]
+    const tables = await tenantTables(db)
+    const truth = new Map()
+    let otherTenantRows = 0
+    for (const t of tables) {
+      const { rows } = await db.query(
+        `SELECT count(*) FILTER (WHERE org_id = $1)::int AS own,
+                count(*) FILTER (WHERE org_id = $2)::int AS other
+           FROM ${t.qualified}`, [TENANT_A, TENANT_B])
+      truth.set(t.qualified, rows[0].own)
+      otherTenantRows += rows[0].other
+    }
+
+    // A leak is only visible where the other tenant has rows to leak.
+    assert.ok(otherTenantRows > 0,
+      'tenant B owns no rows, so no aggregate could show a leak. The fixture ' +
+      'is not exercising this test')
+
+    const leaks = []
+    await asTenant(db, TENANT_A, async () => {
+      for (const t of tables) {
+        const { rows } = await db.query(
+          `SELECT count(*)::int AS n FROM ${t.qualified}`)
+        const own = truth.get(t.qualified)
+        if (rows[0].n > own) leaks.push(`${t.qualified}: counts ${rows[0].n}, owns ${own}`)
+      }
     })
 
-    // The fixture gives each tenant exactly one of each. Two would mean the
-    // aggregate crossed the boundary while the row-level read did not.
-    assert.equal(seen.channels, 1)
-    assert.equal(seen.autobotz, 1)
-    assert.equal(seen.autocomm, 1)
-    assert.equal(seen.users, 1)
+    assert.deepEqual(leaks, [],
+      `an aggregate crossed the boundary:\n  ${leaks.join('\n  ')}`)
   })
 
   test('a write carrying another tenant\'s org_id is rejected, not accepted', async () => {
