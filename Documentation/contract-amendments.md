@@ -901,4 +901,124 @@ the new number.
 
 ---
 
+## Guards made to fail before Slice 2
+
+Requested in BOB-7 (27 Oct 2026) as its own package ahead of the Slice 2
+proposal: items (a) and (c) of the scope-map review, with what came cheaply
+from (b), (e) and (f). Rule applied: a guard is not trusted until it has been
+made to fail on purpose.
+
+### F-17 · Tenancy discovery was pinned to `public`
+
+`tenantTables()`, the policy read in `structuralFindings()`, PR-4's query and
+the cross-tenant read all named the literal `'public'`. On main at `aed52ba`,
+moving the 26 tenant tables to `bob` inside a transaction takes discovery from
+26 tables to 0; every tenancy assertion then loops over nothing and passes. The
+meta-tests did not notice, because their probes were created in `public`.
+
+**Fixed.** Discovery spans every schema except `pg_*` and `information_schema`,
+found by prefix, so a schema nobody has named yet is included by default. Tables
+are carried schema-qualified, and policies are matched by schema and table.
+
+**Floor.** `TENANCY_FLOOR` in `tests/helpers/db.mjs` names six tables the
+tenancy tests and the fixture use. A new test fails when any of them is missing
+from what discovery found. It is a lower bound, not the set: a table missing
+from it is still discovered and checked.
+
+**Probes in the target schema.** Every meta-test probe runs twice, in `public`
+and in `bob`. A further meta-test moves every real tenant table to `bob` inside
+a rolled-back transaction and asserts discovery returns the same set, none of it
+in `public`, with no structural finding.
+
+### F-18 · PR-4 found projections by name, and could not see partitions
+
+PR-4 looked only at tables named `proj_%`, only at grants recorded in
+`information_schema` for `anon`, `authenticated` and `bob_app`, and never asked
+whether `bob_feeder` could write.
+
+**Fixed.** A table is a projection if its name starts with `proj_`, if
+`bob_feeder` holds a write grant on it, or if it is a partition, at any depth,
+of one of those. Privileges are read with `has_table_privilege`, the check
+Postgres itself makes, so grants to PUBLIC and grants inherited through a role
+count. Each projection must give no write to PUBLIC, `anon`, `authenticated` or
+`bob_app`, and must give `bob_feeder` SELECT, INSERT, UPDATE and DELETE.
+
+**Partitions.** Postgres does not copy grants from a parent to a partition
+created later, and in `public` Supabase's default privileges grant `anon` and
+`authenticated` full rights on every new table. A meta-test passes a partitioned
+parent through `bob_grant_projection()`, creates a month after it under a name
+without the prefix, and asserts the month is reported and the parent is not. In
+`bob` no default privileges apply, and the forgotten month is caught only by the
+feeder check: the schema move removes the over-grant, not the need to grant.
+
+Partitions also do not inherit RLS. A partition of a guarded `org_id` table is
+readable across tenants when queried directly. `tenantTables()` includes
+partitions, and a meta-test asserts one without RLS is reported.
+
+**Still for Slice 2.** Whatever creates a partition calls
+`bob_grant_projection()` on it and enables RLS on it. Asserting there are
+exactly eight projections waits for the published contract to say which.
+
+### F-19 · Three more hand-written lists
+
+- **The aggregate-leak test** counted four named tables. It is now
+  `aggregateLeakFindings()` over every discovered table: what a tenant counts
+  must not exceed what it owns, counted outside RLS. A meta-test feeds it a
+  policy that names `org_id` and still lets every row through, which the
+  structural check accepts.
+- **The fixture's DELETE list** named nine tables. `loadFixture()` now deletes
+  the two organisations and lets the foreign keys cascade, then sweeps every
+  discovered tenant table. The sweep matters: seven tables carry `org_id` with
+  no foreign key to `organizations` (`audit_log`, `baselines`,
+  `metric_snapshots`, `notification_log`, `patterns`, `rootcause_log`,
+  `sentiment_readings`), all inherited from Bob-New, and the cascade cannot
+  reach them.
+- **Test discovery was one level deep.** `package.json` runs
+  `'tests/**/*.test.mjs'`, quoted so that node expands it: `sh` has no
+  globstar and would expand an unquoted `**` as a single level, skipping the
+  top. `ci-coverage` reads `tests/` recursively, so a test file in a
+  subdirectory that no CI job names fails the build.
+
+**Not in this package.** The `bob_app` grants are still listed by hand in
+`20260902100300_roles_and_grants.sql` and nothing checks them. Two absence
+checks in `slice0-schema` (no `autobotz_bindings` table or policy) still look
+only in `public`, and pass trivially after a move. Both ride with Slice 2.
+
+### Verified by sabotage
+
+Each change below was made alone to the helpers, the tenancy suites run, and the
+file restored. Only the named tests went red.
+
+| Sabotage | Red |
+|---|---|
+| Discovery pinned back to `public` | the four structural probes in `bob`, the aggregate probe in `bob`, the move rehearsal |
+| Discovery looking in `bob` while the tables are in `public` | the floor; the aggregate test, which finds no tenant-B rows |
+| Policies read from `public` only | the open-policy probe in `bob` |
+| Partitions dropped from projection discovery | the late-partition probe, in both schemas |
+| Partitions dropped from tenant discovery | the partition-without-RLS probe, in both schemas |
+| Projections found by `proj_` only | the unprefixed-projection probe, in both schemas |
+| PUBLIC left out of the check | the PUBLIC probe, in both schemas |
+| Feeder write not checked | the starved-feeder probe in both schemas, and the late-partition probe in `bob` |
+| Aggregate check back to the four named tables | the aggregate probe, in both schemas |
+
+For (f), with a probe at `tests/zz-sub/zz-probe.test.mjs` that no job names:
+`ci-coverage` as on main stays green; on this branch it fails and names the
+file. Node's glob finds 9 files for `tests/*.test.mjs` and 10 for
+`tests/**/*.test.mjs`.
+
+No job was renamed, so the four required status checks are unaffected.
+
+**Counts.** The suite goes from 82 tests to 100: the floor, and the tenancy
+meta-tests from 4 to 21. The `README.md` example carries the new number.
+
+### Branch protection, read back on 2026-10-28
+
+The branch API reports `enforcement_level: non_admins` on `main`, so an admin
+can merge past the four checks. It read `everyone` on 2026-09-15. The ruling is
+the four checks enforced for everyone, admins included. Closing it needs "Do
+not allow bypassing the above settings" on the `main` rule, which only an admin
+can set.
+
+---
+
 *Boss.Technology · BOb v1 · Internal only*
