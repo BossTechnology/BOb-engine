@@ -1086,4 +1086,47 @@ The fixture already carries an undeclared channel to test against
 
 ---
 
+## Slice 2 · The projection read contract, drafted
+
+Slice 2 opens by publishing the read contract (BOB-6, BOB-7 ruling (d)) before
+any migration. Draft 0.2 is `docs/contracts/projection-contract.md`. It is a
+draft until Henry signs it on BOB-6; no migration is written against it before
+then.
+
+**What it fixes from the package.** The eight names (Migration Order step 14),
+the `proj_response_time` columns verbatim, C-11 to C-15, the five feeder
+obligations, and `org_id UUID` as the tenant key with RLS on every table and
+every partition.
+
+### F-20 · Handoff §3.3 is cited for the projection columns and is not in the package
+
+The Migration Order replaces `sketch BYTEA` "in Handoff §3.3", which places the
+projection column lists there. No package received so far (Slices 0 and 1, 1b,
+1c) contains it. Seven of the eight column lists in the draft are therefore
+proposals, marked **[PROPOSED]**, and so are two of the three provenance
+column names: step 14 requires three and names none, and the Build Brief names
+only `feeder_version`.
+
+**Disposition:** open. Either §3.3 is produced and the draft is checked against
+it, or the published contract replaces it and §3.3 is recorded as superseded.
+
+### Two choices in the draft that bear on the guards
+
+- **The watermark travels on the rows** (`source_watermark`), read back as its
+  maximum. A watermark table written by `bob_feeder` would be a projection to
+  the F-18 guard, and "exactly eight" would fail.
+- **`hist_scale` is not pinned to 4.** The Migration Order stores it per row so
+  rows at an older scale can be down-scaled before merging. A `CHECK
+  (hist_scale = 4)` would make that impossible.
+
+### Carried into the Slice 2 migrations
+
+From ESTADO and F-18/F-19, each to be seen failing before it is trusted:
+`bob_grant_projection()` and RLS on every partition; exactly eight projections,
+read from the contract file rather than copied into the test; a test over the
+`bob_app` grants replacing the hand list in `20260902100300`; the two
+`autobotz_bindings` absence checks in `slice0-schema` widened past `public`.
+
+---
+
 *Boss.Technology · BOb v1 · Internal only*

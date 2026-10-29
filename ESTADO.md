@@ -3,6 +3,7 @@
 > Actualizar al cerrar cada sesión. Es lo primero que lee la siguiente.
 
 ## Tarea actual
+- Tarea 6 de Relevo («The projection read contract»): borrador 0.2 del contrato de proyección en `docs/contracts/projection-contract.md`, en PR. Espera la firma de Henry antes de publicarlo en la tarea 6 y antes de cualquier migración del Slice 2.
 - Tarea 7 de Relevo («What is left to build — scope map»): paquete de guards antes del Slice 2, mergeado en PR #11.
 - Tarea 9 de Relevo («Slice 5 · Cooldown and escalation durations», D-05): decisión cerrada por Federico el 27 oct, registrada en `contract-amendments.md` («Slice 5 · Cooldown and escalation»). Acuse publicado con seis puntos abiertos antes de escribir el paso 6a; turno de Federico.
 
@@ -13,6 +14,7 @@
 - PR #11 con CI verde y mergeado; respuesta publicada en la tarea 7 de Relevo y turno pasado a Federico.
 
 ## Pendiente
+- Contrato de proyección: siete de las ocho listas de columnas y dos nombres de procedencia siguen propuestos, porque el Handoff §3.3 no está en ningún paquete (F-20). Diez preguntas abiertas en el §11 del contrato.
 - Regla de `main`: `enforcement_level` sigue en `non_admins`. Henry marca «Do not allow bypassing the above settings» (necesita admin; `gh` de esta máquina no lo es).
 - Para el Slice 2: llamar `bob_grant_projection()` y activar RLS en cada partición que se cree; afirmar que hay ocho proyecciones cuando el contrato las nombre; test de los grants de `bob_app`; las dos comprobaciones de ausencia de `slice0-schema` que solo miran `public`.
 - Paso 6a (Migration Order): `cooldown_seconds` y `escalation_after_seconds` en `threshold_configs`, 1800/7200, CHECK `>= 300`. Se construye en Slice 5, no antes. Antes de escribirlo: los seis puntos de D-05 en amendments (DEFAULT vs NULL que hereda, piso del escalamiento, `notification_rules` paralela, sostenido vs sin acuse, recuperación y re-breach, granularidad).
@@ -21,10 +23,12 @@
 - Nada.
 
 ## Siguiente paso
-- Confirmar en la tarea 7 de Relevo cuando la regla de `main` lea `everyone`, y abrir el Slice 2 publicando el contrato de proyección.
+- Henry revisa y firma el contrato; luego se publica en la tarea 6 de Relevo y la tarea 3.7 de BzzzBX implementa contra él.
+- Confirmar en la tarea 7 de Relevo cuando la regla de `main` lea `everyone`.
 
 ## Notas de sesión
 <!-- AAAA-MM-DD: una o dos líneas -->
 - 2026-10-28: VALIDATE CONSTRAINT y fixture BR-3 en `main`; puente AutoBotz de Bob-New desactivado (Bob-New #24). Respuesta a Federico publicada con fechas del TTL (Febor: 2026-10-26 16:55:42 UTC).
 - 2026-10-28: D-05 verificada contra el esquema en `aed52ba` y registrada en amendments; paso 6a queda para Slice 5.
 - 2026-10-29: paquete de guards de la tarea 7 de Relevo (F-17 a F-19), 82 → 100 tests; cada guard visto fallar. PR #11 verde, respuesta publicada.
+- 2026-10-29: borrador del contrato de proyección (Slice 2). Los ocho nombres salen del paso 14 del Migration Order (paquete Slice 1c); las columnas, salvo `proj_response_time`, siguen propuestas (F-20).
