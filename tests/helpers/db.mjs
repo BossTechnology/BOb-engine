@@ -112,21 +112,27 @@ export async function loadBr3Rulings(client) {
 export async function asTenant(client, orgId, fn) {
   await client.query('BEGIN')
   try {
-    const claims = JSON.stringify({
-      org_id: orgId,
-      sub: USER_A,
-      role: 'authenticated',
-      app_role: 'admin',
-    })
-    await client.query('SELECT set_config($1, $2, true)', [
-      'request.jwt.claims',
-      claims,
-    ])
-    await client.query('SET LOCAL ROLE authenticated')
+    await becomeTenant(client, orgId)
     return await fn()
   } finally {
     await client.query('ROLLBACK')
   }
+}
+
+// The claims and role asTenant sets, for a caller that already holds a
+// transaction. Both are LOCAL, so they end with the transaction or savepoint.
+export async function becomeTenant(client, orgId) {
+  const claims = JSON.stringify({
+    org_id: orgId,
+    sub: USER_A,
+    role: 'authenticated',
+    app_role: 'admin',
+  })
+  await client.query('SELECT set_config($1, $2, true)', [
+    'request.jwt.claims',
+    claims,
+  ])
+  await client.query('SET LOCAL ROLE authenticated')
 }
 
 // Every table that carries an org_id, in whatever schema it lives. Discovered,

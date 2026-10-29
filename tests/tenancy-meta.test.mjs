@@ -9,8 +9,12 @@
 
 import { test, before, after, describe } from 'node:test'
 import assert from 'node:assert/strict'
-import { connect, tenantTables, TENANCY_FLOOR } from './helpers/db.mjs'
-import { structuralFindings, projectionGrantFindings } from './helpers/rls.mjs'
+import {
+  connect, tenantTables, TENANCY_FLOOR, TENANT_A, TENANT_B,
+} from './helpers/db.mjs'
+import {
+  structuralFindings, projectionGrantFindings, aggregateLeakFindings,
+} from './helpers/rls.mjs'
 
 let db
 
@@ -100,6 +104,29 @@ describe('ID-12 · the tenancy suite detects what it claims to detect', () => {
           findings.some((f) => f.table === 'meta_probe_parted_2026_11' &&
             /row-level security is not enabled/.test(f.finding)),
           'a partition readable without RLS went unreported',
+        )
+      })
+    })
+
+    // A policy that names org_id and still lets every row through. The
+    // structural check reads the expression and is satisfied; only counting
+    // what the tenant sees against what it owns shows the leak.
+    test(`an aggregate that crosses the boundary is reported (in ${s})`, async () => {
+      await probe(s, `
+        CREATE TABLE $S.meta_probe_aggregate (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          org_id UUID NOT NULL);
+        ALTER TABLE $S.meta_probe_aggregate ENABLE ROW LEVEL SECURITY;
+        CREATE POLICY "names_org_id" ON $S.meta_probe_aggregate
+          FOR SELECT TO authenticated USING (org_id IS NOT NULL);
+        GRANT USAGE ON SCHEMA $S TO authenticated;
+        GRANT SELECT ON $S.meta_probe_aggregate TO authenticated;
+        INSERT INTO $S.meta_probe_aggregate (org_id)
+          VALUES ('${TENANT_A}'), ('${TENANT_B}');`, async () => {
+        const { findings } = await aggregateLeakFindings(db, TENANT_A, TENANT_B)
+        assert.ok(
+          findings.some((f) => f.table === 'meta_probe_aggregate'),
+          'a count that reached the other tenant went unreported',
         )
       })
     })

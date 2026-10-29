@@ -6,7 +6,7 @@
 // meta-test creates a deliberately broken table, calls these same functions,
 // and asserts they report it. A green suite that cannot go red is not a suite.
 
-import { tenantTables } from './db.mjs'
+import { tenantTables, becomeTenant } from './db.mjs'
 
 // Tables where RLS is enabled with NO policy on purpose — deny-all, server-side
 // only, service role bypasses. Stated intent, not oversight. Anything else with
@@ -70,6 +70,48 @@ export async function structuralFindings(client) {
   }
 
   return findings
+}
+
+// ID-10 for aggregates. A count that leaks a magnitude has leaked, and the rule
+// names aggregates for that reason. Every discovered table, not a list: Slice
+// 2's projections are exactly the aggregates. What `tenant` counts must not
+// exceed the rows it owns, counted outside RLS.
+//
+// The caller holds a transaction. The tenant's role is taken inside a
+// savepoint and given back, so the meta-test can call this over a probe it has
+// not rolled back yet.
+export async function aggregateLeakFindings(client, tenant, other) {
+  const tables = await tenantTables(client)
+  const owns = new Map()
+  let otherRows = 0
+  for (const t of tables) {
+    const { rows } = await client.query(
+      `SELECT count(*) FILTER (WHERE org_id = $1)::int AS own,
+              count(*) FILTER (WHERE org_id = $2)::int AS other
+         FROM ${t.qualified}`, [tenant, other])
+    owns.set(t.qualified, rows[0].own)
+    otherRows += rows[0].other
+  }
+
+  const findings = []
+  await client.query('SAVEPOINT aggregate_leak')
+  try {
+    await becomeTenant(client, tenant)
+    for (const t of tables) {
+      const { rows } = await client.query(`SELECT count(*)::int AS n FROM ${t.qualified}`)
+      if (rows[0].n > owns.get(t.qualified)) {
+        findings.push({
+          table: t.table_name,
+          rule: 'ID-10',
+          finding: `count(*) returns ${rows[0].n} to a tenant that owns ` +
+            `${owns.get(t.qualified)} rows`,
+        })
+      }
+    }
+  } finally {
+    await client.query('ROLLBACK TO SAVEPOINT aggregate_leak')
+  }
+  return { otherRows, findings }
 }
 
 // PR-4, asserted rather than assumed. Vacuous until Slice 2 creates the eight

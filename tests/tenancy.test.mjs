@@ -9,7 +9,9 @@ import assert from 'node:assert/strict'
 import {
   connect, loadFixture, asTenant, tenantTables, TENANCY_FLOOR, TENANT_A, TENANT_B,
 } from './helpers/db.mjs'
-import { structuralFindings, projectionGrantFindings } from './helpers/rls.mjs'
+import {
+  structuralFindings, projectionGrantFindings, aggregateLeakFindings,
+} from './helpers/rls.mjs'
 
 let db
 
@@ -63,41 +65,24 @@ describe('ID-10 · every read and write is constrained to a single organisation'
   })
 
   // The case that gets missed. A count that leaks a magnitude has leaked, and
-  // the rule names aggregates explicitly for that reason.
-  //
-  // Every discovered table, not a list: Slice 2's projections are exactly the
-  // aggregates. What tenant A counts must not exceed the rows tenant A owns,
-  // counted outside RLS.
+  // the rule names aggregates explicitly for that reason. Every discovered
+  // table, not a list of four: Slice 2's projections are exactly the
+  // aggregates.
   test('aggregates do not leak across the boundary', async () => {
-    const tables = await tenantTables(db)
-    const truth = new Map()
-    let otherTenantRows = 0
-    for (const t of tables) {
-      const { rows } = await db.query(
-        `SELECT count(*) FILTER (WHERE org_id = $1)::int AS own,
-                count(*) FILTER (WHERE org_id = $2)::int AS other
-           FROM ${t.qualified}`, [TENANT_A, TENANT_B])
-      truth.set(t.qualified, rows[0].own)
-      otherTenantRows += rows[0].other
+    await db.query('BEGIN')
+    try {
+      const { otherRows, findings } = await aggregateLeakFindings(db, TENANT_A, TENANT_B)
+
+      // A leak is only visible where the other tenant has rows to leak.
+      assert.ok(otherRows > 0,
+        'tenant B owns no rows, so no aggregate could show a leak. The fixture ' +
+        'is not exercising this test')
+      assert.deepEqual(findings, [],
+        'an aggregate crossed the boundary:\n' +
+          findings.map((f) => `  ${f.table} — ${f.finding}`).join('\n'))
+    } finally {
+      await db.query('ROLLBACK')
     }
-
-    // A leak is only visible where the other tenant has rows to leak.
-    assert.ok(otherTenantRows > 0,
-      'tenant B owns no rows, so no aggregate could show a leak. The fixture ' +
-      'is not exercising this test')
-
-    const leaks = []
-    await asTenant(db, TENANT_A, async () => {
-      for (const t of tables) {
-        const { rows } = await db.query(
-          `SELECT count(*)::int AS n FROM ${t.qualified}`)
-        const own = truth.get(t.qualified)
-        if (rows[0].n > own) leaks.push(`${t.qualified}: counts ${rows[0].n}, owns ${own}`)
-      }
-    })
-
-    assert.deepEqual(leaks, [],
-      `an aggregate crossed the boundary:\n  ${leaks.join('\n  ')}`)
   })
 
   test('a write carrying another tenant\'s org_id is rejected, not accepted', async () => {
