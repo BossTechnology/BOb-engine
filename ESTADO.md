@@ -3,7 +3,7 @@
 > Actualizar al cerrar cada sesión. Es lo primero que lee la siguiente.
 
 ## Tarea actual
-- BOB-9 (D-05, cooldown y escalamiento): decisión cerrada por Federico el 27 oct, registrada en `contract-amendments.md` («Slice 5 · Cooldown and escalation»). Acuse a Federico con seis puntos abiertos antes de escribir el paso 6a.
+- La tarea de Relevo «Slice 5 · Cooldown and escalation durations (D-05)»: decisión cerrada por Federico el 27 oct, registrada en `contract-amendments.md` («Slice 5 · Cooldown and escalation»). Acuse publicado con seis puntos abiertos antes de escribir el paso 6a; turno de Federico.
 
 ## Hecho
 - PR #8: `20261025100000_autobotz_validate_mutative.sql` valida `autobotz_mutative_declared`; las cinco rulings de F-07 van como fixture (`supabase/tests/fixtures/autobotz_br3.sql`) y `tests/autobotz-br3.test.mjs` añade 6 tests. Suite: 82.
@@ -25,4 +25,4 @@
 ## Notas de sesión
 <!-- AAAA-MM-DD: una o dos líneas -->
 - 2026-10-28: VALIDATE CONSTRAINT y fixture BR-3 en `main`; puente AutoBotz de Bob-New desactivado (Bob-New #24). Respuesta a Federico publicada con fechas del TTL (Febor: 2026-10-26 16:55:42 UTC).
-- 2026-10-28: D-05 (BOB-9) verificada contra el esquema en `aed52ba` y registrada en amendments; paso 6a queda para Slice 5.
+- 2026-10-28: D-05 verificada contra el esquema en `aed52ba` y registrada en amendments; paso 6a queda para Slice 5.
