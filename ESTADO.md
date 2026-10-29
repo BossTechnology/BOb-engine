@@ -12,7 +12,7 @@
 - Cada guard se vio fallar a propósito; la tabla está en `contract-amendments.md` (F-17 a F-19).
 - Conteo de archivos: 44 rastreados en `71c5fea`. El «57» era el número de entradas del zip (44 archivos + 13 directorios); el «60 files» del zip de `aa696e2` tiene el mismo error (47 + 13).
 - PR #11 con CI verde y mergeado; respuesta publicada en la tarea 7 de Relevo y turno pasado a Federico.
-- Regla de `main`: «Do not allow bypassing the above settings» marcado; la API lee `everyone` (2026-10-29).
+- Regla de `main`: «Do not allow bypassing the above settings» marcado; la API lee `everyone` (2026-10-29). Confirmado en la tarea 7 de Relevo y registrado en PR #12.
 
 ## Pendiente
 - Contrato de proyección: siete de las ocho listas de columnas y dos nombres de procedencia siguen propuestos, porque el Handoff §3.3 no está en ningún paquete (F-20). Diez preguntas abiertas en el §11 del contrato.
@@ -24,7 +24,6 @@
 
 ## Siguiente paso
 - Respuesta de Federico en la tarea 6 sobre F-20 (Handoff §3.3) y el §11; luego firma y la tarea 3.7 de BzzzBX implementa contra el contrato.
-- Confirmar en la tarea 7 de Relevo que la regla de `main` lee `everyone`.
 
 ## Notas de sesión
 <!-- AAAA-MM-DD: una o dos líneas -->
