@@ -1132,4 +1132,164 @@ read from the contract file rather than copied into the test; a test over the
 
 ---
 
+## Slice 2 · The projection read contract, 0.3
+
+Draft 0.3 replaces 0.2 in `docs/contracts/projection-contract.md`. It is still a
+draft: Henry signs it on BOB-6, and no migration is written before then.
+Federico closed everything on his side on 10 Nov ("Write 0.3. Nothing is left
+on Federico's side for the contract"). Every item below was checked against the
+BOB-6 thread, and against BOB-10, BOB-12 and BOB-13 where they rule, before it
+went into the draft.
+
+### F-20 · Closed — Handoff §3.3 arrived, and it governs with five supersessions
+
+§3.3 is section 3.3, "The tables", of `BOb_Implementation_Handoff_v1_2.docx`. It
+was in the document set the whole time and never reached this build. It was
+attached to BOB-6 on 10 Nov as `BOb_Handoff_3_3_The_Tables.md` (16,183 bytes,
+md5 `eb89363d41da5c8e9f11df8c905d7f3c`, checked on download).
+
+It is not committed here: it is reference material under the `Documentation/`
+rule. The contract cites it by name and hash.
+
+**Ruling (10 Nov):** §3.3 is authoritative for the column lists, except where a
+later decision supersedes it. The supersessions are named, so that no stale part
+ships unmarked:
+
+| # | Where | Change |
+|---|---|---|
+| S1 | `proj_response_time` | C-15's OTel exponential histogram and `n`, `sum_ms`, `min_ms`, `max_ms` replace `sketch BYTEA`. Draft 0.2 already carried them |
+| S2 | `proj_channel_health` | `latency_p50_ms` and `latency_p95_ms` are a defect, contradicting §3.3's own boxed note. They are replaced by the same histogram shape |
+| S3 | `proj_channel_health` | `health_pct` dropped. Channel status is derived at read time as the worst breaching component |
+| S4 | four tables | Columns from later rulings: `identity_rung_at_interaction` (D-12); abstained (A-09 as Relevo numbers it) and classifier-down counts; conversation-grain count-and-sum (D-15); `hist_scale` and `hist_offset` |
+| S5 | prose | `actor_type`'s member value is `'user'`, as the schema has always said |
+
+§3.3's "all six" is a miscount; there are eight. Federico's post counts "four
+supersessions plus this fifth", with `health_pct` as the fifth. The table above
+lists the same changes without relying on that count.
+
+Seven [PROPOSED] column lists and the [PROPOSED] provenance names
+(`computed_at`, `source_watermark`) are gone. The provenance names are §3.3's.
+
+### Rulings written into 0.3
+
+From BOB-6 unless stated otherwise.
+
+- **D-12 (4 Nov).** A linkage rewrites a sealed bucket, by rebuild and never
+  by patch. **Sealed means complete, not immutable.** The rebuild window is
+  bounded by the linked identity's earliest interaction and by retention. It
+  runs in the background, and alerts already fired are not re-evaluated.
+- **Henry's catch on D-12, accepted 10 Nov as a defect in the ruling.** A rebuild
+  from current identity state cannot recover the rung as it was. 0.3 names a
+  dated linkage history and a rebuild test with a linkage inside the window.
+- **D-03 (10 Nov).** A metric attributes to the actor that produced the event it
+  counts. `handled_count` and `event_count` stop overlapping. `proj_actor_metrics`
+  and CF-12 are unblocked.
+- **`hallucinations` applies to all four actor types (10 Nov).** This reverses
+  the ASA-only ruling of 5 Nov on BOB-12. It is stored as `hallucinations` and
+  displayed as "Unfounded claims". It renders absent until D-29's knowledge
+  notes give it a ground truth.
+- **A-07 as Relevo numbers it (10 Nov).** "Who was affected" is a drill-through
+  named in the contract, `affected_members(frame, filter)`, and not per-member
+  projection rows. Members come back as rows and anonymous traffic as an
+  interaction count: interactions, not visitors. D47 stays as signed. Henry's
+  correction stands: for members, the ref is `attributes['miembro.id']`, not
+  `entity_id`.
+- **0.2 §11 Q1, Q2, Q8, Q9** closed with §3.3 and the Data Model. **Q10** closed
+  with D-03 and A-07.
+- **Q3.** A response-time window closes on the first turn from the other side,
+  and consecutive same-side turns move its start. It is measured in both
+  directions and attributed to whoever responded. It lands in the closing
+  turn's bucket. It is **never merged across `actor_type`**, and that is a test,
+  not a sentence. A gap is a response time or an abandonment, never both. There
+  are three ways to detect an abandonment: explicit, superseded and idle. The
+  idle bound is per channel.
+- **Q4.** Liveness comes from the instrumentation heartbeat, declared per channel
+  through `channel_capabilities`. No instrumentation means *not configured*
+  (D-14's third state), which is different from not observed.
+- **Q5.** Event time. The lateness bound is the channel's declared lag (D-25).
+  Past the seal, a late event is a rebuild trigger.
+- **Q6.** Unmapped events are emitted to the bus, not stored. A ninth table is
+  ruled out because the event has no `org_id`, so the count of eight survives.
+- **Q7.** The feeder creates each partition idempotently, in the function that
+  grants it and enables RLS. That closes F-18's remaining half by
+  construction. Nothing drops a partition before Slice 5, and **until then
+  retention is not enforced**, which the contract now says outright.
+- **`health_pct` (10 Nov).** Dropped. The ruling ends composing standard
+  components into a stored percentage. For an API-mediated channel, health is
+  the health of our integration. How many display states there are is a
+  Slice 7 question.
+- **BOB-10 (4 and 10 Nov).** `channel_capabilities (org_id, channel_id,
+  capability)` is presence only and configuration, not projection. A guard
+  asserts that no code path maps a channel type to capabilities.
+- **BOB-12 (D-15).** The conversation grain lands in the bucket the conversation
+  closed in. Resolution is closed without escalation for v1, with closing
+  sentiment beside it, never blended. Coherence is deferred.
+- **BOB-13 (10 Nov).** `actor_external_refs (org_id, actor_id, ref)`, `(org_id,
+  ref)` UNIQUE, covers all four actor types. Agent refs are namespaced by the
+  discovered `source_key`. An unmapped identifier never becomes an actor. The
+  customer's own record is the authority for links, and BOb never infers one.
+
+### The two homes the round left to us
+
+Federico's last post names two items as "ours, not the contract's". 0.3 places
+both, as proposals.
+
+- **The per-channel idle bound.** It goes in `channels.idle_bound_seconds INTEGER`,
+  nullable, no default, `CHECK (> 0)`, beside `lag_seconds`, and is exposed
+  through `v_feeder_channel_map`.
+  - Not in `channel_capabilities`: a number there is the `enabled` column C-16
+    refused.
+  - The feeder already reads per-channel declarations from that view, so it
+    still reads exactly two things from BOb.
+  - What NULL does is open (contract §11 Q11).
+- **The never-merge-across-`actor_type` guard.** It is a Slice 2 guard in contract
+  §10.
+  - Structural half: `actor_type` is `NOT NULL` and part of
+    `proj_response_time`'s key.
+  - Behavioural half: every view or function discovered as reading
+    `proj_response_time` returns `user` and `human` rows as separate
+    distributions.
+  - Slice 2 has no reader, so the behavioural half must not pass over nothing
+    (contract §11 Q16).
+
+### Where 0.3 departs from 0.2, and why
+
+- **Columns follow §3.3:**
+  - `proj_sentiment` uses `source IN ('orga','meca')` and `state` `s0`–`s4`,
+    not four sources and five labels;
+  - `proj_metric_counts` is keyed by `metric_id`, not by the
+    `interactions`/`duration` columns 0.2 proposed;
+  - `proj_channel_health` loses `events_received`/`events_rejected`.
+- **`sealed` is stored**, as §3.3 has it, with a guard that it never disagrees
+  with `source_watermark`. 0.2 derived it. Open as contract §11 Q1.
+- **`proj_detections` and `proj_deliveries` are event-grained** in §3.3, with
+  `correlation_id` on the row. So the grain CHECK and "no correlation_id in any
+  projection" now apply to six tables. Open as contract §11 Q2.
+- **No foreign key from `org_id` to `organizations`**, as in §3.3. 0.2's proposed
+  cascade is withdrawn, and the F-19 sweep covers the fixture.
+- **The partition function is `SECURITY DEFINER`.** `bob_feeder` owns no parent
+  and cannot execute `bob_grant_projection()` (revoked from PUBLIC in
+  `20260902100300`), so Q7's one function has to run as the owner. Proposed.
+
+### Found while writing it — open on BOB-6
+
+Sixteen questions are in contract §11. None reopens a ruling. Each is a place
+where two sources disagree, or a ruling leaves a choice the contract has to
+make. The ones that change a column, or would make code wrong:
+
+- FR-22's average duration has no source in §3.3 (Q3).
+- D-03 and Q3 attribute an abandonment differently, and a queue abandonment
+  has no table (Q4).
+- None of the six capabilities declares health, so "not configured" cannot be
+  read from `channel_capabilities` yet (Q9).
+- `error_rate` and `uptime_pct` are stored ratios (Q10).
+- The bus that Q6 emits to is Slice 8 (Q12).
+- Nobody may create a ghost member's actor (Q13).
+
+**Letters that collide.** Relevo's A-07 and A-09 are not A-07 (Data Model §5.3)
+and A-09 (`actor_shifts.status`) in this file. The contract says which it means
+each time.
+
+---
+
 *Boss.Technology · BOb v1 · Internal only*
