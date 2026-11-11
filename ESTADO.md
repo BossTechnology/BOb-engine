@@ -23,7 +23,7 @@
 - Nada.
 
 ## Siguiente paso
-- Henry revisa el PR #15 (0.4) y responde en la tarea 6 de Relevo O1–O5; luego firma y la tarea 3.7 de BzzzBX implementa contra el contrato.
+- Federico responde O1–O5 en la tarea 6 de Relevo (respuesta de 0.4 publicada el 11 nov; turno de Federico). Después, Henry revisa el PR #15, firma, y la tarea 3.7 de BzzzBX implementa contra el contrato.
 
 ## Notas de sesión
 <!-- AAAA-MM-DD: una o dos líneas -->
@@ -33,3 +33,4 @@
 - 2026-10-29: borrador del contrato de proyección (Slice 2). Los ocho nombres salen del paso 14 del Migration Order (paquete Slice 1c); las columnas, salvo `proj_response_time`, siguen propuestas (F-20).
 - 2026-11-10: borrador 0.3 del contrato de proyección con §3.3 (md5 `eb89363d…`) y los rulings del 4 y 10 nov; entrada «Slice 2 · The projection read contract, 0.3» en amendments. Dieciséis preguntas abiertas para la tarea 6.
 - 2026-11-11: borrador 0.4 con las dieciséis respuestas de Federico del 11 nov; `proj_response_time` pasa a `proj_durations`; A-11 y A-12 registradas. Cinco preguntas abiertas.
+- 2026-11-11: respuesta de 0.4 publicada en la tarea 6 de Relevo (numeración A-11/A-12, decisiones propias, O1–O5) y turno pasado a Federico.
