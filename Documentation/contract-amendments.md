@@ -1292,4 +1292,142 @@ each time.
 
 ---
 
+## Slice 2 · The projection read contract, 0.4
+
+Draft 0.4 replaces 0.3 in `docs/contracts/projection-contract.md`, on the same
+branch and PR. It is still a draft: Henry signs it on BOB-6, and no migration is
+written before then. Federico closed all sixteen of 0.3's §11 questions on
+11 Nov, Q4 at 06:08 and the other fifteen at 06:49, and wrote "Nothing is left
+on Federico's side for this contract. Write 0.4". Every item below was checked
+against those two posts before it went into the draft.
+
+**One property runs through five of the answers.** A projection stores counts,
+sums and distributions. It never stores a figure derived from them. That is the
+reasoning that dropped the t-digest, `health_pct` and stored percentiles, now
+reaching columns nobody had checked against it.
+
+### Identifiers · the A-07 / A-09 collision, resolved
+
+Federico left the numbering to this side. The rule: **this file is the register
+of A-numbers, and a number here is permanent.** A ruling made on Relevo under a
+number the register already uses is entered at the next free number, and cited
+by that number from then on. A-10 is taken (`actors` carries ASA instance
+counts). A-11 and A-12 are unused here and on Relevo (searched 11 Nov).
+
+### A-11 · "Who was affected" is a drill-through named in the contract
+
+Called A-07 on BOB-6. Raised 4 Nov and ruled 10 Nov:
+
+- `affected_members(frame, filter)` returns members as rows and anonymous
+  traffic as an interaction count.
+- It is a named interface in the contract, not per-member projection rows.
+
+Refined 11 Nov (Q15):
+
+- The filter selects by `metric_id` through the feeder's own event mapping,
+  plus optionally `actor_type` and `detection_id`, never `event_name`.
+- It is a third deliverable of 3.7.
+- A test asserts that member count plus anonymous count equals the cell's count.
+
+Contract §7.3.
+
+### A-12 · Abstained is counted, and is never a sentiment state
+
+Called A-09 on BOB-6 (§3.3 supersession note 3). Ruled 10 Nov as a count beside
+the five states. Moved on 11 Nov (Q6) to a `metric_id` in `proj_metric_counts`,
+with `classifier_down` beside it. Contract §6.1.
+
+### Rulings written into 0.4
+
+- **Q4 · abandonment attributes to the side that owed the next turn.**
+  - D-03's wording ("the actor holding the interaction when the customer left")
+    is superseded. It named a bystander. Q3's attribution stands.
+  - `abandoned_in_queue` is a second `metric_id`, always `user`. A constraint
+    and a test assert the degenerate actor.
+- **Q1 · `sealed` is stored**, because `lag_seconds` can change and a derived flag
+  would un-seal history retroactively.
+  - The guard moves to write time.
+  - The sealing rule now includes the channel's declared lag. 0.3's guard
+    ignored it.
+- **Q2 · event grain confirmed** for `proj_detections` and `proj_deliveries`.
+  C-11 is about ownership, not presence. `correlation_id` on `proj_deliveries` is
+  the Slice 8 chain join and is recorded as deliberate.
+- **Q16 · accepted.** The behavioural half reports `todo`, printed and counted in
+  CI. The floor is part of A-05b's definition of done and lands in the first
+  route handler's commit.
+- **Q3 · duration is a second `measure`** in the duration table, which is renamed
+  `proj_durations`. FR-22 gets a distribution. The never-merge guard extends to
+  `measure`.
+- **Q6 · `abstained` and `classifier_down` are `metric_id`s**, always `user`.
+  Their `session_count` is the true denominator D-17's acceptance example needs.
+- **Q7 · `closing_count`** sits on `proj_sentiment` beside `reading_count`. It is
+  stored per state as counts, never a sum, for ORGA only.
+- **Q8 · `proj_actor_metrics`.**
+  - (a) The rung stays in the key, paired with `actor_type` by a constraint.
+    `actor_type` is denormalised onto the row for that.
+  - (b) `handled_count` is dropped in favour of a reserved `metric_id`.
+  - (c) `metric_id` takes a CHECK.
+- **Q10 · numerator and denominator.**
+  - `error_n`/`request_n` and `uptime_seconds`/`observed_seconds` replace
+    `error_rate` and `uptime_pct`.
+  - `proj_channel_health` stores no derived figure.
+  - The guard's grep gains `_rate` and `_pct`.
+- **Q5 · an abandonment lands at the conversation's last activity**, for all
+  three detections.
+  - It usually arrives behind the seal, which is the rebuild path.
+  - Lag shorter than the idle bound means constant rebuilds. Federico asked for
+    a CHECK or at least a declared relationship.
+- **Q9 · four health capabilities:** `health_latency`, `health_errors`,
+  `health_uptime`, `health_disconnects`. Liveness comes from `health_uptime`.
+- **Q11 · with no idle bound, refuse the metric, not the channel.** No
+  `abandoned` rows are written, partial ones included, and it renders not
+  configured.
+- **Q12 · unmapped events are counted and returned, never stored**, until the bus
+  in Slice 8. A test asserts zero against the fixture, after an injected
+  unmappable event is seen to make it non-zero.
+- **Q13 · the never-create rule splits by actor type.**
+  - Unmapped agent and ASA refs are emitted, never created.
+  - An unmapped member ref is a ghost, created by a BOb-side reconciliation as
+    `bob_app`, never by the feeder. A guard restricts that path to `user`.
+  - Ghost creation is a linkage event and triggers the rebuild.
+- **Q14 · identity refs.**
+  - `actors.external_ref` is dropped in Slice 2.
+  - ASA refs are namespaced by the platform on the deployment record.
+  - There is no source registry yet.
+  - A guard forbids namespace literals in code.
+
+### Choices 0.4 makes that the rulings left open
+
+- **Rung for non-member actors** (Q8a: "the exact DDL is yours"):
+  - the value is `'not_applicable'`;
+  - `CHECK ((actor_type = 'user') = (rung <> 'not_applicable'))`;
+  - a composite foreign key `(actor_id, actor_type)` to `actors`, which needs
+    `UNIQUE (id, actor_type)` there.
+- **The reserved metric** (Q8b) is named `handled`.
+- **The degenerate actors** (Q4, Q6) and **ORGA-only `closing_count`** (Q7) are
+  table CHECKs, each with a test that sees it refuse a bad row. The rulings asked
+  for a test, and Q8 for a constraint rather than a convention, so both are
+  carried.
+- **Lag versus idle bound** (Q5) is a declared relationship, not a CHECK.
+  - A CHECK forcing `lag_seconds >= idle_bound_seconds` would delay evaluation of
+    every open bucket on the channel by the idle bound. On WhatsApp that is
+    hours.
+  - Slice 2 reports channels where the lag is below the bound.
+- **The ASA namespace source** (Q14b) is `actors.provider`, the existing ASA-only
+  column, as the candidate.
+
+### Open after 0.4 — on BOB-6
+
+Five, in contract §11. None reopens a ruling.
+
+- **O1:** sealing on a channel whose lag is NULL.
+- **O2:** which `actor_type` `interaction_duration` rows carry.
+- **O3:** whether Q11's refusal reaches `abandoned_in_queue`.
+- **O4:** where the ghost reconciliation reads unmapped member refs from, given
+  that the feeder returns only a count in Slice 2.
+- **O5:** the unit of the `affected_members` count equality (interactions or
+  events).
+
+---
+
 *Boss.Technology · BOb v1 · Internal only*
