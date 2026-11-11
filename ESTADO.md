@@ -6,6 +6,7 @@
 - Tarea 6 de Relevo («The projection read contract»): borrador 0.4 del contrato de proyección en `docs/contracts/projection-contract.md`, en la rama `docs/projection-contract-0.3` (PR #15, sin fusionar; lo revisa Henry). Federico cerró las dieciséis preguntas de 0.3 el 11 nov. Colisión resuelta: las A-07/A-09 de Relevo son A-11/A-12 en amendments. Ninguna migración del Slice 2 antes de la firma.
 - Tarea 7 de Relevo («What is left to build — scope map»): paquete de guards antes del Slice 2, mergeado en PR #11.
 - Tarea 9 de Relevo («Slice 5 · Cooldown and escalation durations», D-05): decisión cerrada por Federico el 27 oct, registrada en `contract-amendments.md` («Slice 5 · Cooldown and escalation»). Acuse publicado con seis puntos abiertos antes de escribir el paso 6a; turno de Federico.
+- Tarea de Relevo «Licence scan on BOb, CHASS1S and Momentum dependency trees»: respuesta publicada el 5 nov con la distribución de licencias de producción y de desarrollo; turno de Federico.
 
 ## Hecho
 - Guards (a) y (c) de la revisión de la tarea 7 de Relevo, y lo barato de (b), (e) y (f): la tenancy descubre el esquema, hay un piso (`TENANCY_FLOOR`), las sondas de los meta-tests corren en `public` y en `bob`, PR-4 revisa particiones, PUBLIC y la escritura del feeder, el test de agregados y la limpieza del fixture descubren sus tablas, y el glob y `ci-coverage` son recursivos. Suite: 100.
@@ -13,6 +14,12 @@
 - Conteo de archivos: 44 rastreados en `71c5fea`. El «57» era el número de entradas del zip (44 archivos + 13 directorios); el «60 files» del zip de `aa696e2` tiene el mismo error (47 + 13).
 - PR #11 con CI verde y mergeado; respuesta publicada en la tarea 7 de Relevo y turno pasado a Federico.
 - Regla de `main`: «Do not allow bypassing the above settings» marcado; la API lee `everyone` (2026-10-29). Confirmado en la tarea 7 de Relevo y registrado en PR #12.
+- Escaneo de licencias (2026-11-05), sobre los lockfiles de `main` y lo que se instala en producción (linux-x64, sin dev):
+  - En los cuatro repos no hay GPL ni AGPL sin alternativa, ni licencias source-available, ni paquetes sin licencia.
+  - BOb-engine: 0 de producción y 14 de desarrollo (`pg`).
+  - Bob-New: 40 de producción; el único LGPL es libvips, que trae sharp.
+  - Momentum: 0 de producción.
+  - CHASS1S (repo `CHS`): 137 de producción. jszip tiene doble licencia (MIT o GPL), duck declara solo «BSD» y Chromium se descarga en tiempo de ejecución.
 
 ## Pendiente
 - Contrato de proyección 0.4: cinco preguntas abiertas en el §11 (O1 sellado con lag NULL, O2 `actor_type` de `interaction_duration`, O3 si Q11 alcanza `abandoned_in_queue`, O4 de dónde lee los refs la reconciliación de fantasmas, O5 unidad de la igualdad de conteos de `affected_members`). Interinos nombrados: conteo de no mapeados hasta el bus (Slice 8), `todo` del guard de no mezclar hasta A-05b, retención sin aplicar hasta Slice 5.
@@ -31,6 +38,7 @@
 - 2026-10-28: D-05 verificada contra el esquema en `aed52ba` y registrada en amendments; paso 6a queda para Slice 5.
 - 2026-10-29: paquete de guards de la tarea 7 de Relevo (F-17 a F-19), 82 → 100 tests; cada guard visto fallar. PR #11 verde, respuesta publicada.
 - 2026-10-29: borrador del contrato de proyección (Slice 2). Los ocho nombres salen del paso 14 del Migration Order (paquete Slice 1c); las columnas, salvo `proj_response_time`, siguen propuestas (F-20).
+- 2026-11-05: escaneo de licencias de BOb, CHASS1S y Momentum publicado en Relevo; ninguna dependencia cambiada. Sin verificar: si el binario de libvips entra en el bundle desplegado en Vercel.
 - 2026-11-10: borrador 0.3 del contrato de proyección con §3.3 (md5 `eb89363d…`) y los rulings del 4 y 10 nov; entrada «Slice 2 · The projection read contract, 0.3» en amendments. Dieciséis preguntas abiertas para la tarea 6.
 - 2026-11-11: borrador 0.4 con las dieciséis respuestas de Federico del 11 nov; `proj_response_time` pasa a `proj_durations`; A-11 y A-12 registradas. Cinco preguntas abiertas.
 - 2026-11-11: respuesta de 0.4 publicada en la tarea 6 de Relevo (numeración A-11/A-12, decisiones propias, O1–O5) y turno pasado a Federico.
