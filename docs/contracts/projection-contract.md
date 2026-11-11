@@ -1,8 +1,8 @@
 # BOb v1 · Projection read contract
 
-**Status: DRAFT 0.2 — not published, not signed.** Opens Slice 2. Once Henry
-approves it, it is published on Relevo task 6 and BzzzBX route-plan task 3.7 implements
-against it. No migration is written until then.
+**Status: DRAFT 0.4 — not published, not signed.** Opens Slice 2. Once Henry
+signs it on Relevo task 6, it is published there and BzzzBX route-plan task 3.7
+implements against it. No migration is written until then.
 
 **How it changes.** It is published, not negotiated (Relevo task 6, 23 Oct). If anything
 here is impossible or expensive on the ClickHouse side, it is said on Relevo task 6 and
@@ -10,21 +10,65 @@ the contract changes deliberately, with a new version number and an entry in
 `Documentation/contract-amendments.md`. When this file and a signed decision
 disagree, the decision wins.
 
-**Sources.** Relevo task 6 (C-13, C-14, C-15, the five feeder obligations); Relevo task 7 thread,
-26–27 Oct (ruling (d): `org_id` as the tenant key; A-05a/A-05b; partitions);
-the scope map `BOb_v1_Remaining_Work(1).docx` (md5 `ee44393d…`); SR-1 in
-`20260902100100_organizations_slug_shape.sql`; `20260902100300_roles_and_grants.sql`;
-F-17 to F-19 and A-06 in `contract-amendments.md`. From the Slice 1c package
-(8 Sep): the Migration Order, step 14 and the `proj_response_time` shape; the
-Decision Sheet, C-11 to C-15; the Build Brief, Slice 2 and Slice 6; and System
-Flows §3, the data path.
+**What changed from 0.3.** All sixteen §11 questions of 0.3 are closed
+(Relevo task 6, 11 Nov: Q4 at 06:08, the other fifteen at 06:49). The main
+changes:
 
-The eight table names, the response-time columns and the five obligations come
-from the package. The column lists of the other seven tables do not: the
-package defers them to Implementation Handoff §3.3, which is not in it.
+- **Q4.** Abandonment attributes to the side that owed the next turn, and
+  `abandoned_in_queue` is added.
+- **Q3.** `proj_response_time` is renamed `proj_durations` and gains a
+  `measure`.
+- **Q6.** `abstained` and `classifier_down` become `metric_id`s.
+- **Q7.** `closing_count` is added to `proj_sentiment`.
+- **Q8.** `proj_actor_metrics` loses `handled_count` and gains `actor_type`.
+- **Q10.** `proj_channel_health` stores numerators and denominators.
+- **Q9.** There are four `health_*` capabilities.
+- **§10.** The guards are corrected.
 
-Items marked **[PROPOSED]** are not stated by any of those sources and need a
-ruling before publication. Items marked **[OPEN]** are questions, listed in §11.
+The A-07 / A-09 name collision is resolved (see "Identifiers" below). The full
+list is in `contract-amendments.md`, under "Slice 2 · The projection read
+contract, 0.4".
+
+**One property runs through it** (Relevo task 6, 11 Nov): **a projection stores
+counts, sums and distributions. It never stores a figure derived from them.**
+That rule dropped the t-digest, `health_pct`, stored percentiles and stored
+ratios.
+
+**Sources.**
+- Relevo task 6 thread:
+  - 23 Oct: C-13 to C-15, the five obligations.
+  - 4 Nov: D-12.
+  - 10 Nov: F-20 closed with §3.3 attached, D-03, the hallucinations
+    correction, A-11, 0.2's Q3 to Q7, `health_pct` dropped.
+  - 11 Nov: 0.3's sixteen questions.
+- **Handoff §3.3, "The tables"** (`BOb_Implementation_Handoff_v1_2.docx`), as
+  attached to Relevo task 6 on 10 Nov: `BOb_Handoff_3_3_The_Tables.md`, 16,183
+  bytes, md5 `eb89363d41da5c8e9f11df8c905d7f3c`, with its supersession notes.
+- Relevo task 10 (`channel_capabilities`), task 12 (D-15, the two grains), and
+  task 13 (`actor_external_refs`; D-02 for agents and ASA).
+- Relevo task 7 thread, 26–27 Oct: ruling (d), `org_id` as the tenant key;
+  A-05a/A-05b.
+- The Slice 1c package (8 Sep): Migration Order step 14, Decision Sheet C-11 to
+  C-15, Build Brief Slices 2 and 6, System Flows §3.
+- The migration chain on `main`, and F-17 to F-19 in `contract-amendments.md`.
+
+**Markers.**
+- **[PROPOSED]** marks a choice this draft makes that no ruling states. It
+  stands unless the review changes it.
+- **[OPEN]** marks a question listed in §11.
+- Everything unmarked is ruled, and the ruling is named next to it.
+
+**Identifiers.** `contract-amendments.md` is the register of A-numbers. A number
+there is permanent. A ruling made on Relevo under a number the register already
+uses is entered at the next free number, and is cited by that number from then
+on (decided by this draft, as Relevo task 6 asked on 11 Nov). So:
+
+| On Relevo it was called | It is | Meaning |
+|---|---|---|
+| A-07 | **A-11** | "Who was affected" is a drill-through named in the contract, `affected_members` (§7.3) |
+| A-09 | **A-12** | The abstained count, separate from the five sentiment states (now a `metric_id`, §6.1) |
+| — | A-07 | Data Model §5.3 is superseded in full (register, unchanged) |
+| — | A-09 | `actor_shifts.status` drops `'live'` (register, unchanged) |
 
 ---
 
@@ -32,304 +76,937 @@ ruling before publication. Items marked **[OPEN]** are questions, listed in §11
 
 | Party | Owns | Never does |
 |---|---|---|
-| **BzzzBX** (truth store, ClickHouse) | Raw business events, per-interaction grain, `correlation_id`, `entity_id`, `bzzz.tenant` | Knows a BOb UUID |
-| **BOb** (Postgres, schema `bob`) | `org_id`, `channel_id`, `actor_id`, configuration, live state, the shape of the eight tables | Queries the truth store; writes a projection (PR-4) |
-| **The feeder** | Every row in the eight tables. Slice 2 builds the reference feeder; task 3.7 replaces it at connection | Reads BOb configuration beyond the two named views in §7 |
+| **BzzzBX** (truth store, ClickHouse) | Raw business events, per-interaction grain, `correlation_id`, `entity_id`, `miembro.id`, `bzzz.tenant` | Knows a BOb UUID; holds an identity store (D47) |
+| **BOb** (Postgres, schema `bob`) | `org_id`, `channel_id`, `actor_id`, configuration (§9), live state, the shape of the eight tables, ghost reconciliation (§7.2) | Queries the truth store except through `affected_members` (§7.3); writes a projection (PR-4) |
+| **The feeder** | Every row in the eight tables, and the partitions they live in (§3) | Reads BOb configuration beyond the two named views in §7.4; creates or writes an actor |
 
 There is exactly one writer, `bob_feeder`. Whether the reference feeder or 3.7
 holds that credential, the contract is the same.
 
 ## 2 · Tenant key
 
-- Every projection row carries **`org_id UUID NOT NULL`**, a foreign key to
-  `organizations(id)`. **Never the slug.** SR-1: `org_id` is the key for RLS and
-  every foreign key inside BOb; the slug is only what crosses the boundary.
+- Every projection row carries **`org_id UUID NOT NULL`**. **Never the slug.**
+  SR-1: `org_id` is the key for RLS and every foreign key inside BOb; the slug is
+  only what crosses the boundary.
 - The feeder receives `bzzz.tenant` (the slug) with each event, resolves
   `(tenant_slug, source_key)` through `v_feeder_channel_map`, and writes the
   `org_id` and `channel_id` it gets back.
 - An event whose `(tenant_slug, source_key)` does not resolve is **not
   projected**. It is never written under a guessed tenant or a catch-all channel.
-  How the feeder reports it is **[OPEN]** (§11, Q6).
+  It is emitted, never stored. It has no `org_id`, so it cannot live in a
+  tenant-scoped table. What the feeder does with it until the bus exists is in
+  §8.6.
 - RLS is enabled on every table **and on every partition**, with the policy
   every tenant table already uses: `org_id = (auth.jwt() ->> 'org_id')::uuid`.
-  A partition does not inherit RLS (F-18), so a partition read directly would
-  otherwise return every tenant's rows.
-- `ON DELETE CASCADE` from `organizations` **[PROPOSED]**: it lets the fixture's
-  cascade reach projections (F-19) and makes deleting a tenant complete.
+  A partition does not inherit RLS (F-18).
+- §3.3 declares no foreign key from `org_id` to `organizations`, and the
+  contract follows it. The fixture's sweep of every discovered tenant table
+  (F-19) covers tables the cascade cannot reach.
 
 ## 3 · Grain, partitions, retention
 
-- **Grain: five-minute buckets, UTC-aligned (C-13).** Column
-  `bucket_start TIMESTAMPTZ NOT NULL`, covering `[bucket_start, bucket_start + 5 min)`,
-  with `CHECK (extract(epoch FROM bucket_start)::bigint % 300 = 0)` on every
-  table.
-- An event lands in the bucket of its **event time** in UTC, not its ingestion
-  time **[PROPOSED]**. Late events reopen nothing sealed; they are picked up by a
-  rebuild (§8.5).
+- **Grain: five-minute buckets, UTC-aligned (C-13)**, for the six aggregate
+  tables (§6.1 to §6.6). Column `bucket_start TIMESTAMPTZ NOT NULL`, covering
+  `[bucket_start, bucket_start + 5 min)`, with
+  `CHECK (extract(epoch FROM bucket_start)::bigint % 300 = 0)`.
+- **Two tables are event-grained, not bucketed** (§3.3; confirmed 11 Nov, Q2).
+  - `proj_detections` has one row per detection, partitioned by `detected_at`.
+  - `proj_deliveries` has one row per delivery attempt, partitioned by
+    `attempted_at`.
+
+  The grain CHECK does not apply to them. C-11 is about who owns the
+  identifiers, not where they appear (§7.1).
+- **Event time, not ingestion time** (0.2 Q5, ruled 10 Nov). An event lands in
+  the bucket of its event time in UTC.
+- **How late is too late** is the channel's declared lag (D-25,
+  `channels.lag_seconds`). NULL means not declared, which the evaluator must
+  refuse rather than treat as zero (A-04). An event arriving after its bucket is
+  sealed is a **rebuild trigger** (§8.5), not a late-arrival path of its own.
+- **Where a measure lands, by rule:**
+
+| Measure | Lands in the bucket of | Ruling |
+|---|---|---|
+| A turn-grain reading (ORGA, RUM) | the turn or action | D-17 |
+| A response time | its **closing** turn | 0.2 Q3 |
+| A conversation-grain figure (resolution, closing sentiment, interaction duration) | the conversation's **close** | D-15 |
+| An abandonment, however detected | the conversation's **last activity** | 0.3 Q5 |
+
+So a call from 13:30 to 14:03 puts its sentiment readings across 13:30–14:00
+and its resolution in 14:00. The two sides of the panel attribute one
+conversation to different times on purpose (Relevo task 12). It is not a bug.
+
+An abandonment is placed at last activity for two reasons. Placing it at
+detection would record it one idle bound late. It would also let a change to the
+bound move where history sits. The bound decides only *whether* a gap is an
+abandonment, never *when*. Because the abandonment is detected after its
+bucket, it usually arrives behind the seal and is applied by the rebuild path
+(§8.5). That costs nothing new. Choosing detection-time placement to avoid the
+rebuild is ruled out.
+
 - **No stored rollups.** Hours, days and months are computed at read time. Every
-  measure in §6 is additive (counts, sums, mins, maxes, histogram buckets), so a
-  coarser window is a sum of finer ones and never an average of averages.
+  measure is additive (counts, sums, mins, maxes, histogram buckets), so a
+  coarser window is a sum of finer ones.
 - The five-minute bucket is structural, not configuration: it is the floor of
   the cooldown CHECK (D-05) and changing it means rebuilding thirteen months.
-- **Partitions: monthly, by `RANGE (bucket_start)`, UTC month boundaries (C-14).**
-  Name `<parent>_yYYYYmMM` **[PROPOSED]**.
+- **Partitions: monthly, by `RANGE` on the partition column, UTC month
+  boundaries (C-14).** Name `<parent>_yYYYYmMM` **[PROPOSED]**.
+- **The feeder creates the partition it is about to write into** (0.2 Q7):
+  idempotently, in the same function that grants it.
+  - The function runs `CREATE TABLE IF NOT EXISTS … PARTITION OF …`, then
+    `bob_grant_projection()`, then `ENABLE ROW LEVEL SECURITY` and the `org_id`
+    policy.
+  - `bob_feeder` does not own the parents and cannot execute
+    `bob_grant_projection()` (revoked from PUBLIC in `20260902100300`). So the
+    function is `SECURITY DEFINER`, owned by the migration owner, with EXECUTE
+    granted to `bob_feeder` alone.
+  - It takes a parent from the eight and a month, and nothing else
+    **[PROPOSED]**.
 - **Retention: thirteen months (C-14)**, matching `business_events` at 395 days
-  (Bzzz D39). Older partitions are detached and dropped, never deleted row by row.
-  Who drops them, and who pre-creates the next month, is **[OPEN]** (§11, Q7).
+  (Bzzz D39). **Until Slice 5, retention is not enforced.** Nothing drops a
+  partition in Slice 2. When `pg_cron` arrives, old partitions are detached and
+  dropped, never deleted row by row.
 
-## 4 · Provenance — three columns on every row
+## 4 · Provenance and sealing
+
+Three provenance columns on every row of all eight tables, named as in §3.3
+(F-20):
 
 | Column | Type | Meaning |
 |---|---|---|
-| `feeder_version` | `TEXT NOT NULL` | Build of the feeder that wrote the row (Build Brief, Slice 2). |
-| `computed_at` | `TIMESTAMPTZ NOT NULL` | When the row was last written. **[PROPOSED]** |
-| `source_watermark` | `TIMESTAMPTZ NOT NULL` | The truth-store watermark the row was computed behind. **[PROPOSED]** |
+| `computed_at` | `TIMESTAMPTZ NOT NULL DEFAULT now()` | When the row was last written |
+| `source_watermark` | `TIMESTAMPTZ NOT NULL` | The truth-store watermark the row was computed behind |
+| `feeder_version` | `TEXT NOT NULL` | Build of the feeder that wrote the row |
 
-Migration Order step 14 requires "the three provenance columns" on every table
-and names none; the Build Brief names `feeder_version`. The other two names are
-this draft's until Handoff §3.3 says otherwise. **Sealed is derived, not
-stored:** a bucket is sealed when `bucket_start + 5 min <= source_watermark`. A
-stored `sealed` flag beside the timestamps would be a second answer to a
-question they already answer, which is the reason A-09 removed `'live'`.
+**`sealed BOOLEAN NOT NULL DEFAULT false` is stored** on the six bucketed tables
+(ruled 11 Nov, Q1). That is §3.3's shape, but it is stored for a different
+reason: `lag_seconds` is configuration and can change. A bucket sealed under a
+two-minute lag was sealed by the rule in force then. A flag derived from today's
+lag would silently un-seal thirteen months of history the day a lag is raised.
+Stored records what was true at the time, the same argument that put
+`identity_rung_at_interaction` on §6.6.
 
-## 5 · Absent is not zero
+**The sealing rule, with declared lag.** The feeder sets `sealed` only when
 
-A missing row means **not observed**. A row with a zero means **observed, and
-none**. Slice 3 builds the rendering on this distinction (FR-32, UI-03, PR-10,
-SR-2), so the feeder must never write a zero it did not observe, and must write
-one when it did. That needs a signal that a channel was alive in a bucket with
-no business events. This draft puts it in `proj_channel_health` (§6.5)
-**[PROPOSED]**; the signal behind it is **[OPEN]** (§11, Q4).
+```
+bucket_start + interval '5 minutes' + (lag_seconds * interval '1 second') <= source_watermark
+```
 
-Two derived figures are absent rather than zero by ruling:
+using the channel's `lag_seconds` at the moment of writing. 0.3 stated the rule
+without the lag, which is stricter than the contract and wrong for every channel
+with a declared lag. For a channel whose lag is NULL, see §11 O1.
+
+**The guard asserts this at write time, not as a standing invariant** (Q1). After a
+lag change, or after a rebuild moves a watermark, honest historic rows would trip
+a standing check. A guard that cries wolf is a guard somebody disables, which is
+how F-14 came to run in no job at all. See §10.
+
+**Sealed means complete, not immutable** (D-12, 4 Nov). A sealed bucket will receive no
+further facts of its own, but its attribution is revisable:
+- a linkage triggers a rebuild of the window (§8.5);
+- a late event or a late-detected abandonment (§3) does the same.
+
+The change is always applied by rebuilding the window, never by patching rows.
+Anyone implementing "sealed" as "immutable" implements the ruling out of
+existence.
+
+## 5 · Absent, zero, not configured
+
+Three states, and the product renders each differently:
+
+| State | Meaning | How it is known |
+|---|---|---|
+| **Not configured** | The channel has no instrumentation, or no declaration, that could produce this | No `channel_capabilities` row for the class (§9.1), or a required declaration is NULL (§9.2). D-14's third state |
+| **Not observed** | It could, and nothing reached us | Capability present, no row |
+| **Observed, none** | It could, it was alive, and nothing happened | A row with a zero |
+
+The feeder must never write a zero it did not observe, and must write one when
+it did.
+
+**Liveness comes from `health_uptime`** (ruled 11 Nov, Q9, refining 0.2 Q4).
+- An uptime probe is the instrumentation that emits on a timer whether or not a
+  customer showed up. A `proj_channel_health` row with `observed = true` comes
+  from it.
+- A channel that declares APM latency but no uptime probe can say how slow it
+  was when used. It cannot say it was alive at three in the morning, so it is
+  **not configured for liveness** even while it declares health.
+- Each health component renders *not configured* on its own when its
+  capability is missing (§6.4).
+
+§5, D-14 and `channel_capabilities` are one mechanism, not three (Relevo task 10, 10 Nov).
+
+Derived figures that are absent rather than zero by ruling:
 - ORGA when no selected channel carries a customer turn (Relevo task 8, D-17).
-- MECA when no selected channel emits RUM (FR-32, FR-35).
+- MECA when no selected channel declares `meca_rum` (FR-32, FR-35).
+- `hallucinations` ("Unfounded claims") until a ground truth exists (§6.1).
+- `abandoned` on a channel with no idle bound: it renders **not configured**
+  (§9.2).
+
+The em dash in the Slice 7 roster means **off shift** (Relevo task 10), a
+fourth rendering that belongs to the roster rather than to this contract.
 
 ## 6 · The eight tables
 
-**Names: Migration Order step 14.** `proj_metric_counts`, `proj_sentiment`,
-`proj_response_time`, `proj_channel_health`, `proj_rum_signals`,
-`proj_actor_metrics`, `proj_detections`, `proj_deliveries`. Five of them
-replace tables that leave BOb (Migration Order, "Why §7.1 no longer holds"):
+**Names: Migration Order step 14, with one rename (11 Nov, Q3).**
 
-| Leaves BOb | Returns as |
-|---|---|
-| `interactions`, `metric_snapshots` | `proj_metric_counts` |
-| `sentiment_readings` | `proj_sentiment` |
-| `rum_events` | `proj_rum_signals` |
-| `channel_health` | `proj_channel_health` |
+- `proj_metric_counts`
+- `proj_sentiment`
+- `proj_durations`
+- `proj_channel_health`
+- `proj_rum_signals`
+- `proj_actor_metrics`
+- `proj_detections`
+- `proj_deliveries`
 
-**Columns.** Only `proj_response_time` has a column list in the package (§6.3,
-verbatim from the Migration Order). Every other column list below is
-**[PROPOSED]**: the package defers them to Handoff §3.3, which this draft has
-not seen (§11, Q1).
+The Migration Order's `proj_response_time` is now `proj_durations`, because a
+table named after one of its two contents is how meaning drifts. Today that is
+one line here, since the "exactly eight" guard reads the names from this file.
+Once anything is built, it would be a migration. §3.3's opening line says "all
+six"; there are eight.
 
-Every table also carries `org_id`, `bucket_start` and the three provenance
-columns. They are omitted from the column lists. `actor_type` is
-`TEXT CHECK (actor_type IN ('user','asa','human','arep'))`, the set `actors` and
-`channel_actor_mix` already use.
+**Columns: Handoff §3.3, except where a later ruling supersedes it.**
 
-### 6.1 `proj_metric_counts` — volume by actor type
+| # | Table | §3.3 says | The contract carries | Ruling |
+|---|---|---|---|---|
+| S1 | `proj_durations` | `proj_response_time`, `sketch BYTEA` (t-digest), no min/max | OTel exponential histogram, `n`, `sum_ms`, `min_ms`, `max_ms`; `measure` in the key; renamed | C-15; note 1; 11 Nov Q3 |
+| S2 | `proj_channel_health` | `latency_p50_ms`, `latency_p95_ms` | The same histogram shape as S1 | Note 2 |
+| S3 | `proj_channel_health` | `health_pct`, `error_rate`, `uptime_pct` | Dropped. `error_n`/`request_n` and `uptime_seconds`/`observed_seconds` instead. Status derived at read time | 10 Nov; 11 Nov Q10 |
+| S4 | four tables | — | Added: `identity_rung_at_interaction` and `actor_type` on §6.6; `closing_count` on §6.2; new `metric_id` values on §6.1 and §6.6 | Note 3; 11 Nov Q6–Q8 |
+| S5 | prose | `member` | `actor_type` value is `'user'`, as the schema says | Note 4 |
+| S6 | `proj_actor_metrics` | `handled_count`; `metric_id` unconstrained | Column dropped; `handled` is a reserved `metric_id`; `metric_id` takes a CHECK | 11 Nov Q8 |
 
-Primary key `(org_id, bucket_start, channel_id, actor_type)` **[PROPOSED]**.
+All eight tables live in schema `bob` and are `PARTITION BY RANGE`. `actor_type`
+is `TEXT CHECK (actor_type IN ('user','asa','human','arep'))`, the set
+`actors` and `channel_actor_mix` use. BObee is not an actor type
+(Relevo task 10, point 8).
 
-| Column | Type | Notes |
-|---|---|---|
-| `channel_id` | `UUID NOT NULL` → `channels(id)` | |
-| `actor_type` | `TEXT NOT NULL` | |
-| `interactions` | `BIGINT NOT NULL CHECK (>= 0)` | Distinct `correlation_id`s that started in the bucket |
-| `duration_ms_sum` | `BIGINT NOT NULL CHECK (>= 0)` | Over interactions that ended in the bucket |
-| `duration_n` | `BIGINT NOT NULL CHECK (>= 0)` | Interactions behind `duration_ms_sum` |
+Below, "provenance" means the three columns of §4. On the six bucketed tables,
+it also means `sealed` and the grain CHECK of §3. Lines marked `-- 0.4` differ
+from 0.3.
 
-Feeds FR-10 to FR-14 (attribution: sum by `actor_type` over the selected
-channels and renormalise; an absent actor contributes no row, so the hundred-
-percent rule holds by construction) and FR-22 (user availability:
-`bob_availability_user(volume, window, duration_ms_sum / duration_n)`).
-`channel_actor_mix` reads its observed split from here.
-
-### 6.2 `proj_actor_metrics` — per actor
-
-Primary key `(org_id, bucket_start, channel_id, actor_id)` **[PROPOSED]**.
-
-| Column | Type | Notes |
-|---|---|---|
-| `channel_id` | `UUID NOT NULL` | |
-| `actor_id` | `UUID NOT NULL` → `actors(id)` | Resolved from `entity_id`, §7 |
-| `handled_count` | `BIGINT NOT NULL CHECK (>= 0)` | Named in D-03 |
-
-D-03 stays open: what this table carries beyond `handled_count` is the
-contract question CF-12 waits on. Adding a column later is an additive version
-of this contract, not a break.
-
-### 6.3 `proj_response_time` — OTel exponential histogram (C-15)
-
-Primary key `(org_id, bucket_start, channel_id, actor_type)` **[PROPOSED]**.
-Measure columns verbatim from the Migration Order ("the amended shape", which
-replaces `sketch BYTEA` in Handoff §3.3):
+### 6.1 `proj_metric_counts` — the metrics, by actor type
 
 ```sql
-n                BIGINT   NOT NULL,           -- exact count
-sum_ms           BIGINT   NOT NULL,           -- exact mean on recombine
-min_ms           BIGINT,
-max_ms           BIGINT,
-hist_scale       SMALLINT NOT NULL DEFAULT 4,
-hist_offset      INTEGER  NOT NULL,           -- index of first populated bucket
-hist_counts      BIGINT[] NOT NULL DEFAULT '{}',
-hist_zero_count  BIGINT   NOT NULL DEFAULT 0,
+CREATE TABLE bob.proj_metric_counts (
+  org_id        UUID        NOT NULL,
+  channel_id    UUID        NOT NULL REFERENCES channels(id),
+  actor_type    TEXT        NOT NULL
+                CHECK (actor_type IN ('user','asa','human','arep')),
+  metric_id     TEXT        NOT NULL
+                CHECK (metric_id IN ('resolved','abandoned','abandoned_in_queue', -- 0.4
+                       'disambiguation','escalations','hallucinations',
+                       'abstained','classifier_down')),                          -- 0.4
+  bucket_start  TIMESTAMPTZ NOT NULL,
+  event_count   BIGINT      NOT NULL DEFAULT 0,
+  session_count BIGINT      NOT NULL DEFAULT 0,   -- denominator
+  -- 0.4: three metrics have one possible actor, by definition
+  CONSTRAINT proj_metric_counts_degenerate_actor
+    CHECK (metric_id NOT IN ('abandoned_in_queue','abstained','classifier_down')
+           OR actor_type = 'user'),
+  -- sealed + provenance
+  PRIMARY KEY (org_id, channel_id, actor_type, metric_id, bucket_start)
+) PARTITION BY RANGE (bucket_start);
 ```
 
-`hist_scale` is stored per row and is **not** constrained to 4: if the scale
-ever changes, rows at different scales are down-scaled by powers of two before
-merging, and a global assumption would make history silently unmergeable.
-Merge: align by `hist_offset`, add counts. Percentiles are read by walking
-buckets until the target fraction is passed. **No stored percentile, ever.**
-Which event pair a response time measures is **[OPEN]** (§11, Q3).
+**Attribution (D-03, 10 Nov; abandonment rewritten 11 Nov, Q4).**
+- **For the four metrics that count something an actor did**, the metric
+  attributes to the actor that produced the event it counts.
+- **`abandoned` counts something an actor did not do.** It attributes to the
+  **side that owed the next turn**.
 
-### 6.4 `proj_sentiment` — readings by state and source
+| `metric_id` | Attributed to |
+|---|---|
+| `resolved` | the actor that produced the resolution |
+| `escalations` | the actor that escalated |
+| `disambiguation` | the actor that had to disambiguate |
+| `hallucinations` | the actor that made the unfounded claim |
+| `abandoned` | the side that owed the next turn. Last turn the customer's, nobody replied: the agent or ASA holding. Last turn the business's, no reply came: `user` |
+| `abandoned_in_queue` | `user`, always (degenerate) |
+| `abstained`, `classifier_down` | `user`, always (degenerate) |
 
-Primary key `(org_id, bucket_start, channel_id, sent_source, sent_state)`
-**[PROPOSED]**.
+- **D-03's original wording for `abandoned` is superseded.** "The actor holding
+  the interaction when the customer left" named a bystander. It would have filed
+  every customer-side abandonment against the agent who happened to be there,
+  and erased the split Q3 exists for ("abandoned — Users 80%, Human Agent 20%").
+  The rule is mechanically decidable from the last turn, in all three detections
+  (§6.3).
+- **One interaction can produce several metrics with different owners.** An ASA
+  that carries a conversation and hands off records one `escalations`. The
+  human who closes it records one `resolved`. That is not double-counting.
+  Counting one metric for two actors is not allowed: it would make the
+  denominator count touches, not interactions.
+- **The hundred-percent rule holds by construction.** Each metric renormalises
+  within itself over the actor types present (§3.3's window function), so the
+  new values change nothing in FR-10 to FR-14.
 
-| Column | Type | Notes |
+**`abandoned_in_queue`** (11 Nov, Q4). Nobody ever answered: the customer left
+while queued. `abandoned` means a conversation died mid-flight, which is a
+conversation problem. `abandoned_in_queue` is a staffing problem. Keeping them
+apart keeps visible the one a manager can act on.
+- Nobody else was present, so the actor dimension is degenerate by definition.
+  The CHECK above makes that a constraint, and a test asserts it (§10).
+- It replaces 0.3's "attributes to nobody", which left the most actionable
+  abandonment with no row at all.
+
+**`abstained` and `classifier_down`** (11 Nov, Q6; abstained is A-12). They are
+customer turns the classifier failed to label:
+- `abstained`: the classifier read the turn and declined to label it.
+- `classifier_down`: the classifier was not running.
+
+`actor_type = 'user'`, degenerate, by the same constraint.
+- They are **not** sentiment states: a sixth state would let FR-30 count it.
+- Their `session_count` carries the **true denominator**, all customer turns in
+  the bucket. That is what makes D-17's "340 of 1,200 customer turns were angry"
+  computable. Summing `reading_count` over the five states counts only labelled
+  turns, which leaves out the abstentions this exists to show.
+- As metrics they take a threshold and a response with no new machinery. The
+  abstention rate is the instrument for tuning the classifier's confidence bar.
+
+**`resolved`, for v1, means closed without escalation** (Relevo task 12, D-15).
+It is conversation grain and lands at the conversation's close (§3). "No
+re-contact within N hours" is deferred to v1.1.
+
+**`hallucinations` applies to all four actor types** (10 Nov).
+- The stored `metric_id` stays `hallucinations`. It is **displayed as
+  "Unfounded claims"**.
+- Detection needs D-29's knowledge notes, which ship empty in v1, so this row
+  renders absent longer than the others.
+
+### 6.2 `proj_sentiment` — ORGA and MECA
+
+```sql
+CREATE TABLE bob.proj_sentiment (
+  org_id        UUID        NOT NULL,
+  channel_id    UUID        NOT NULL REFERENCES channels(id),
+  source        TEXT        NOT NULL CHECK (source IN ('orga','meca')),
+  state         TEXT        NOT NULL
+                CHECK (state IN ('s0','s1','s2','s3','s4')),
+  bucket_start  TIMESTAMPTZ NOT NULL,
+  reading_count BIGINT      NOT NULL DEFAULT 0,
+  closing_count BIGINT      NOT NULL DEFAULT 0,                        -- 0.4
+  -- 0.4: MECA has no conversation close
+  CONSTRAINT proj_sentiment_closing_is_orga
+    CHECK (source = 'orga' OR closing_count = 0),
+  -- sealed + provenance
+  PRIMARY KEY (org_id, channel_id, source, state, bucket_start)
+) PARTITION BY RANGE (bucket_start);
+```
+
+- **Two sources and five states**, as §3.3 declares. ORGA and MECA are separate
+  rows. The blend is computed at read time from the configured mechanical
+  weight, so changing the weight re-renders history instead of invalidating it.
+  Counts, not percentages (PR-1).
+- One ORGA reading is one customer speaker turn, and agent turns produce none
+  (D-17). ORGA on WhatsApp/YCloud comes from the local classifier (D51). Voice
+  stays absent until the two sides arrive separately.
+- **`closing_count`** (11 Nov, Q7) is how many conversations **closed** on this
+  state. `reading_count` is how many turns were in it. Same key, no repeat, no
+  new table.
+  - It is stored per state as counts and never as a sum: the five states are
+    ordinal, and a sum of them is not a state of anything.
+  - It is populated for `source = 'orga'` only. The CHECK above says so, and a
+    test asserts it (§10).
+  - It lands at the conversation's close (§3). Closing sentiment is a weight
+    beside `resolved`, never a confirmation, and no blended resolution score is
+    computed from the two (D-15).
+- The abstained and classifier-down counts are not here. They are `metric_id`s in
+  §6.1.
+
+### 6.3 `proj_durations` — distributions, not averages (S1)
+
+```sql
+CREATE TABLE bob.proj_durations (                                        -- 0.4, renamed
+  org_id          UUID        NOT NULL,
+  channel_id      UUID        NOT NULL REFERENCES channels(id),
+  actor_type      TEXT        NOT NULL
+                  CHECK (actor_type IN ('user','asa','human','arep')),
+  measure         TEXT        NOT NULL                                   -- 0.4
+                  CHECK (measure IN ('response_time','interaction_duration')),
+  bucket_start    TIMESTAMPTZ NOT NULL,
+  n               BIGINT      NOT NULL,           -- exact count
+  sum_ms          BIGINT      NOT NULL,           -- exact mean on recombine
+  min_ms          BIGINT,
+  max_ms          BIGINT,
+  hist_scale      SMALLINT    NOT NULL DEFAULT 4,
+  hist_offset     INTEGER     NOT NULL,           -- index of first populated bucket
+  hist_counts     BIGINT[]    NOT NULL DEFAULT '{}',
+  hist_zero_count BIGINT      NOT NULL DEFAULT 0,
+  -- sealed + provenance
+  PRIMARY KEY (org_id, channel_id, actor_type, measure, bucket_start)    -- 0.4
+) PARTITION BY RANGE (bucket_start);
+```
+
+`hist_scale` is stored per row and is **not** constrained to 4. Rows at
+different scales are down-scaled by powers of two before merging. Merge: align
+by `hist_offset`, add counts. Percentiles are read by walking buckets. **No
+stored percentile, ever.**
+
+**Never merged across `actor_type` or across `measure`** (0.2 Q3; extended
+11 Nov, Q3). The histogram merges freely across channels and time.
+- Merging agent speed with customer think-time produces a figure describing
+  nobody.
+- Merging a response time with a conversation's duration does the same: both
+  are milliseconds.
+
+A test enforces this, not this sentence (§10).
+
+**`measure = 'response_time'`** (0.2 Q3):
+- **The window rule.** A window is opened by a turn and closed by the first
+  turn from the other side after it. Consecutive turns from the same side move
+  the opening to the latest of them. Three customer messages at 10:00, 10:02 and
+  10:04, answered at 10:10, are a six-minute response.
+- **Both directions, attributed to whoever responded.** An agent asks at 10:00
+  and the customer answers at 10:17: seventeen minutes, `actor_type = 'user'`.
+- **It lands in the bucket of its closing turn.** An open window contributes
+  nothing until it closes.
+- **A gap is a response time or an abandonment, never both.** If the reply comes,
+  however late, it is a response time. If it never comes, it converts to
+  `abandoned` (§6.1).
+- **Three detections.** An abandonment is detected one of three ways:
+  - **explicit**: the ASA closes the conversation on its own timer;
+  - **superseded**: a new conversation starts while this one is open;
+  - **idle**: no activity past the channel's idle bound (§9.2).
+
+  All three land at the conversation's last activity (§3) and attribute to the
+  side that owed the next turn (§6.1).
+- **Request-to-response latency is not this measure.** It is technical latency,
+  and it lives in `proj_channel_health`.
+
+**`measure = 'interaction_duration'`** (11 Nov, Q3). The length of an interaction,
+as a distribution.
+- **FR-22** reads it. User availability gets a distribution instead of the
+  average it asked for, and `bob_availability_user`'s average duration is
+  `sum_ms / n` over it. The drill-down gets conversation length for nothing.
+- It is conversation grain and lands at the conversation's close (§3).
+- Which `actor_type` its rows carry is **[OPEN]** §11 O2.
+- It replaces 0.2's `duration_ms_sum` and `duration_n` on `proj_metric_counts`.
+  Those repeated the same two numbers on every metric row, the same defect as
+  `handled_count` (§6.6).
+
+### 6.4 `proj_channel_health` — components, no derived figure (S2, S3)
+
+```sql
+CREATE TABLE bob.proj_channel_health (
+  org_id                  UUID        NOT NULL,
+  channel_id              UUID        NOT NULL REFERENCES channels(id),
+  bucket_start            TIMESTAMPTZ NOT NULL,
+  -- latency: same shape as proj_durations; health_latency
+  latency_n               BIGINT      NOT NULL DEFAULT 0,
+  latency_sum_ms          BIGINT      NOT NULL DEFAULT 0,
+  latency_min_ms          BIGINT,
+  latency_max_ms          BIGINT,
+  latency_hist_scale      SMALLINT    NOT NULL DEFAULT 4,
+  latency_hist_offset     INTEGER     NOT NULL DEFAULT 0,
+  latency_hist_counts     BIGINT[]    NOT NULL DEFAULT '{}',
+  latency_hist_zero_count BIGINT      NOT NULL DEFAULT 0,
+  -- errors: health_errors                                             -- 0.4
+  error_n                 BIGINT      NOT NULL DEFAULT 0,
+  request_n               BIGINT      NOT NULL DEFAULT 0,
+  -- uptime: health_uptime                                             -- 0.4
+  uptime_seconds          BIGINT      NOT NULL DEFAULT 0,
+  observed_seconds        BIGINT      NOT NULL DEFAULT 0,
+  -- disconnects: health_disconnects
+  disconnects             INTEGER,
+  observed                BOOLEAN     NOT NULL DEFAULT true,   -- PR-10
+  -- sealed + provenance
+  PRIMARY KEY (org_id, channel_id, bucket_start)
+) PARTITION BY RANGE (bucket_start);
+```
+
+**`proj_channel_health` stores no derived figure at all** (11 Nov, Q10). It is the
+third time the same reasoning lands on this table:
+- percentiles became a histogram (note 2);
+- `health_pct` was dropped (10 Nov);
+- `error_rate` and `uptime_pct` became numerator and denominator.
+
+An error rate is `sum(error_n) / sum(request_n)` over the selection, and an
+uptime is `sum(uptime_seconds) / sum(observed_seconds)`. Both are computed at
+read time, weighted correctly by construction. The `latency_` prefix is this
+draft's **[PROPOSED]**; the shape is ruled.
+
+- **Standard instrumentation, not ours** (note 2):
+  - APM and browser or mobile agents for digital properties;
+  - API-level measurement and synthetic probes for channels reached over an
+    API.
+
+  OTel's standard shape for a duration is already a histogram.
+- **Channel status is derived at read time as the worst breaching component**
+  (10 Nov). A threshold colours the display whether or not a response is
+  attached (Relevo task 9). Nothing new is stored, and BOb still writes no
+  projection. How many display states that produces is a Slice 7 question.
+- **For an API-mediated channel, health is the health of our integration**, not
+  of the provider's product. A red WhatsApp channel means our calls to Meta are
+  failing or slow.
+- **Each component has its own capability** (§9.1): `health_latency`,
+  `health_errors`, `health_uptime`, `health_disconnects`. A component whose
+  capability is absent renders **not configured**, not "not observed". An API
+  channel has no disconnects at all.
+- A row with `observed = true` comes from `health_uptime` (§5). RS-06 reads this
+  table for channel health as it stood when an alert fired.
+
+### 6.5 `proj_rum_signals` — the MECA inputs
+
+```sql
+CREATE TABLE bob.proj_rum_signals (
+  org_id        UUID        NOT NULL,
+  channel_id    UUID        NOT NULL REFERENCES channels(id),
+  signal        TEXT        NOT NULL CHECK (signal IN
+                  ('rage_click','dead_click','error_click','thrash',
+                   'rapid_exit','clean_session','fast_session')),
+  bucket_start  TIMESTAMPTZ NOT NULL,
+  signal_count  BIGINT      NOT NULL DEFAULT 0,
+  session_count BIGINT      NOT NULL DEFAULT 0,
+  -- sealed + provenance
+  PRIMARY KEY (org_id, channel_id, signal, bucket_start)
+) PARTITION BY RANGE (bucket_start);
+```
+
+Verbatim from §3.3. Replaces `rum_events`. A channel that does not declare
+`meca_rum` (§9.1) has no rows, and MECA renders absent (FR-35).
+
+### 6.6 `proj_actor_metrics` — per actor
+
+```sql
+CREATE TABLE bob.proj_actor_metrics (
+  org_id        UUID        NOT NULL,
+  actor_id      UUID        NOT NULL,
+  actor_type    TEXT        NOT NULL                                   -- 0.4, denormalised
+                CHECK (actor_type IN ('user','asa','human','arep')),
+  channel_id    UUID        NOT NULL REFERENCES channels(id),
+  metric_id     TEXT        NOT NULL                                   -- 0.4, CHECK
+                CHECK (metric_id IN ('resolved','abandoned','disambiguation',
+                       'escalations','hallucinations','handled')),
+  identity_rung_at_interaction TEXT NOT NULL
+                CHECK (identity_rung_at_interaction IN
+                       ('identified','ghost','guest','inferred',
+                        'not_applicable')),                             -- 0.4
+  bucket_start  TIMESTAMPTZ NOT NULL,
+  event_count   BIGINT      NOT NULL DEFAULT 0,
+  -- handled_count: dropped; metric_id = 'handled' carries it          -- 0.4
+  -- 0.4: the rung is a member's; nobody else has one
+  CONSTRAINT proj_actor_metrics_rung_pairs_with_type
+    CHECK ((actor_type = 'user') = (identity_rung_at_interaction <> 'not_applicable')),
+  -- 0.4: the denormalised type must be the actor's own
+  FOREIGN KEY (actor_id, actor_type) REFERENCES actors (id, actor_type),
+  -- sealed + provenance
+  PRIMARY KEY (org_id, actor_id, channel_id, metric_id,
+               identity_rung_at_interaction, bucket_start)
+) PARTITION BY RANGE (bucket_start);
+```
+
+**Ruled 11 Nov, Q8.** The exact DDL above is this draft's; what is ruled is listed
+below.
+
+- **(a) The rung stays in the key, and its pairing with `actor_type` is a
+  constraint, not a convention.**
+  - The rung is right for member rows and impossible for the others: a human
+    agent or an ASA has no identity rung, and a primary-key column cannot be
+    NULL. So non-member rows carry the declared value `'not_applicable'`
+    **[PROPOSED value]**.
+  - The CHECK asserts that `user` rows never carry it and non-`user` rows always
+    do. That needs `actor_type` on the row.
+  - The composite foreign key keeps the denormalised type equal to the actor's.
+    It needs `UNIQUE (id, actor_type)` on `actors`, added in the Slice 2
+    migration that already touches `actors` (§9.3) **[PROPOSED]**.
+- **(b) `handled_count` is dropped.** Keyed by `metric_id`, it repeated on every
+  metric row of an actor. It becomes the reserved **`metric_id = 'handled'`**
+  (name **[PROPOSED]**), whose `event_count` is the number of interactions the
+  actor touched, whatever happened. That gives one row per actor, channel, rung
+  and bucket. "Read it as the maximum" would have been a rule enforced by
+  documentation.
+- **(c) `metric_id` takes a CHECK:** the five of §6.1 plus `handled`. §3.3 leaving
+  it unconstrained was an omission, not a decision.
+
+`event_count` follows §6.1's attribution. This table is unblocked by D-03, and
+so are CF-12 and the Slice 7 per-agent columns.
+
+**`identity_rung_at_interaction`** (D-12) keeps a member's rung as it was when the
+interaction happened, beside the actor it now points to. It is derived from the
+linkage history as of event time (§9.4), never from the actor's current rung.
+Otherwise the first rebuild after a merge turns every pre-authentication rung
+into `identified` while the rebuild test still passes.
+
+**Linkage reaches only this table.** A ghost and an identified member are both
+`actor_type = 'user'`, so `proj_metric_counts` and FR-10 to FR-14 are unchanged
+by a merge (D-12).
+
+### 6.7 `proj_detections` — what Flink found (event grain)
+
+```sql
+CREATE TABLE bob.proj_detections (
+  org_id            UUID        NOT NULL,
+  detection_id      TEXT        NOT NULL,
+  channel_id        UUID        REFERENCES channels(id),   -- may be null
+  detection         TEXT        NOT NULL,
+  detected_at       TIMESTAMPTZ NOT NULL,
+  confidence        NUMERIC,
+  infra_evidence    JSONB,
+  business_evidence JSONB,
+  acted_upon        BOOLEAN     NOT NULL DEFAULT false,
+  correlation_id    TEXT        NOT NULL,
+  -- provenance (no sealed, no bucket_start)
+  PRIMARY KEY (org_id, detection_id)
+) PARTITION BY RANGE (detected_at);
+```
+
+Verbatim from §3.3. `rule_id` is absent by design: a stream detection has no
+authored rule. Named anomaly rules stay in BOb and alert through the evaluation
+loop; unnamed patterns arrive here. `correlation_id` here is what lets
+`affected_members` filter by `detection_id` (§7.3).
+
+### 6.8 `proj_deliveries` — what actually happened (event grain)
+
+```sql
+CREATE TABLE bob.proj_deliveries (
+  org_id           UUID        NOT NULL,
+  attempt_id       TEXT        NOT NULL,
+  outbound_id      UUID        NOT NULL,   -- joins outbound_queue
+  correlation_id   TEXT        NOT NULL,
+  kind             TEXT        NOT NULL CHECK (kind IN ('autocomm','autobotz')),
+  provider         TEXT        NOT NULL,
+  attempted_at     TIMESTAMPTZ NOT NULL,
+  outcome          TEXT        NOT NULL
+                   CHECK (outcome IN ('delivered','failed',
+                          'rejected','expired','suppressed')),
+  attempt          INTEGER     NOT NULL DEFAULT 1,
+  provider_ref     TEXT,
+  provider_message TEXT,
+  guardrail_bound  TEXT,        -- which limit applied, if any
+  report           JSONB,       -- the typed return payload, Handoff §7.4
+  -- provenance (no sealed, no bucket_start)
+  PRIMARY KEY (org_id, attempt_id)
+) PARTITION BY RANGE (attempted_at);
+```
+
+- Verbatim from §3.3.
+- **`correlation_id` here is deliberate, and it carries weight** (11 Nov, Q2).
+  - Slice 8 must answer the chain from condition to alert to action to outcome
+    in one query, and this column is that join.
+  - Nobody removes it to match the six bucketed tables.
+- Provider accounts belong to the customer. So this row, with `provider_ref`, is
+  the answer when a customer says an alert never arrived.
+- `outbound_queue` (Handoff Part 4) is not in the migration chain yet, so
+  `outbound_id` is not a foreign key in Slice 2.
+- AutoBotz execution is not enabled before Slice 8 (Relevo task 6, 4 Nov).
+
+## 7 · Correlation, identity and the drill-through
+
+### 7.1 Whose identifiers
+
+`correlation_id` and `entity_id` are BzzzBX's (C-11). BOb never mints one.
+**C-11 is about ownership, not presence** (11 Nov, Q2).
+
+- `miembro.id` is BzzzBX's too: a salted hash computed at source (D47), held in
+  `business_events.attributes['miembro.id']`, not in `entity_id`. No connector
+  sets `entity_id`.
+- **`correlation_id`** is how the feeder counts an interaction once, opens and
+  closes duration windows (§6.3), and orders turns.
+  - It is a column on the two event-grained tables (§6.7, §6.8).
+  - On the six aggregate tables the aggregate lands in BOb and the identifier
+    stays in ClickHouse.
+- **`entity_id`** appears in no projection.
+
+### 7.2 Resolving an external identifier to an actor
+
+An actor's external identifiers live in **`actor_external_refs (org_id,
+actor_id, ref)`, with `(org_id, ref)` UNIQUE** (Relevo task 13, 10 Nov). See §9.3.
+
+| Actor type | `ref` | How it is obtained | Authority for "these refs are one actor" |
+|---|---|---|---|
+| `user` | `m:…`, the `miembro.id` | **Computed** (D47) | The customer's member record |
+| `human` | `<source_key>:<external id>` | **Mapped**; namespace from `channels.source_key` | The customer's staff directory |
+| `asa` | `<platform>:<deployment id>` | **Mapped**; namespace is the platform declared on the deployment record (11 Nov, Q14) | The customer's deployment record |
+| `arep` | Inherits the ASA shape when it exists | | |
+
+- **Namespaces are never typed** (11 Nov, Q14).
+  - An agent's namespace is discovered from `channels.source_key`.
+  - An ASA's is authored on its deployment record, because there is nothing to
+    discover it from. `actors.provider`, the ASA-only column that exists today,
+    is the candidate **[PROPOSED]**.
+  - No code path contains a namespace literal, and a guard asserts it (§10).
+  - Deployment 42 on two platforms is two deployments, the same argument as PBX
+    42 against Zendesk 42.
+- **No source registry in Slice 2** (Q14). If a staff directory becomes a
+  source later, the refs that re-key are agents and ASAs, tens of rows. Member
+  refs are `m:` hashes and are untouched. The guard above is what keeps that
+  deferral safe.
+- **BOb never infers a link from similarity.**
+
+**When a ref resolves to no actor, the rule splits by actor type** (11 Nov, Q13):
+
+| Actor type | Meaning | What happens |
 |---|---|---|
-| `channel_id` | `UUID NOT NULL` | |
-| `sent_source` | `TEXT NOT NULL` | One of four sources; value set **[OPEN]** (§11, Q8) |
-| `sent_state` | `TEXT NOT NULL CHECK (IN ('angry','unsatisfied','satisfied','content','happy'))` | The simulator's five labels |
-| `reading_count` | `BIGINT NOT NULL CHECK (>= 0)` | Named in the Build Brief, Slice 4 |
+| `human`, `asa` | A configuration error: the person or deployment is in the customer's record and we failed to map it | Emitted (§8.6), **never** an actor. Creating one would paper over the error and corrupt the roster |
+| `user` | Normal: someone contacted the business who is not a registered customer | It is a **ghost** and gets an actor at rung `ghost` |
 
-Sentiment "carries five states × four sources" (Migration Order step 6), and
-`threshold_configs` gains `sent_state` and `sent_source` to address it, so the
-projection is keyed the same way. ORGA and MECA split by instrument and
-substrate, not by counterparty; ASA sessions produce ORGA (C-05). One ORGA
-reading is one **customer speaker turn**; agent turns produce none (D-17).
-Counts, not percentages: volume weights by summing `reading_count`.
+- **The feeder still never creates an actor.** It stays read-only on `actors`
+  and keeps emitting. A **BOb-side reconciliation running as `bob_app`**
+  creates ghosts from member refs only.
+  - A guard asserts that this path can never produce a non-`user` actor (§10).
+  - Where the reconciliation reads unmapped refs from is **[OPEN]** §11 O4.
+- **Ghost creation is a linkage event.** It triggers D-12's bounded rebuild
+  (§8.5), which fills the `proj_actor_metrics` rows that were absent while the
+  ref resolved to nothing. No new mechanism is needed.
+- **The identified-to-ghost ratio is the product-visible signal** a normalisation
+  defect now shows up in (for example, non-E.164 phones). The unmapped *agent*
+  rate stays the operational one.
+- Until it resolves, an interaction counts in §6.1 under its actor type and is
+  absent from §6.6.
+- Today a human agent is identifiable on voice only, because there is no agent
+  on WhatsApp events. The table shows that as an absent mapping.
 
-### 6.5 `proj_channel_health` — was the channel observed
+### 7.3 `affected_members(frame, filter)` — the drill-through (A-11)
 
-Primary key `(org_id, bucket_start, channel_id)` **[PROPOSED]**. One row per
-channel per bucket in which its source was seen alive, **with or without
-business events**. This turns "no row in 6.1" into either *observed, none* or
-*not observed*, and is what FR-23 reads to tell a quiet channel from a broken
-deployment.
+"Who was affected" is answered by a **drill-through to the truth store, named
+here as part of the contract**, not by per-member projection rows (A-11, ruled
+10 Nov). Per-member rows at five-minute grain approach interaction grain, which
+A-06 and D-30 left in the truth store. Because the interface is named in the
+contract, the application still never knows which truth store it runs against.
 
-| Column | Type |
-|---|---|
-| `channel_id` | `UUID NOT NULL` |
-| `events_received` | `BIGINT NOT NULL CHECK (>= 0)` |
-| `events_rejected` | `BIGINT NOT NULL CHECK (>= 0)` — dead-lettered |
+- **`frame`**: `tenant_slug`, `source_key`(s), and a window `[from, to)` no
+  longer than retention, the same frame §7.5 uses.
+- **`filter` speaks the cell's language** (11 Nov, Q15). It takes:
+  - **`metric_id`**, resolved through the **feeder's own event mapping**;
+  - optionally **`actor_type`**;
+  - optionally **`detection_id`**, answerable through `proj_detections.correlation_id`.
 
-### 6.6 `proj_rum_signals` — the mechanical substrate
+  It never takes an `event_name`. If the filter carried its own idea of which
+  events count, the drill-through could disagree with the number it drills into:
+  click 47, get 52 names. **One definition, two consumers.** Whatever the feeder
+  uses to decide an event is an `abandoned` is what `affected_members` uses.
+- **Output, two kinds of thing and never one:**
+  1. **Members as rows.** One row per member per interaction:
+     - `external_ref` (`m:…`)
+     - `correlation_id`
+     - `first_seen`
+     - `last_seen`
+     - `n_events`
 
-Primary key `(org_id, bucket_start, channel_id, signal)` **[PROPOSED]**.
+     The rows are paged. BOb aggregates them to one line per member and resolves
+     `m:…` through §7.2.
+  2. **Anonymous traffic as a count.** The number of distinct `correlation_id`s
+     in the frame and filter with no `miembro.id`. It counts **interactions,
+     not visitors.**
+- The panel reads, for example: "47 members affected, and 23 interactions with
+  no identified member".
+- **The count-equality test is the whole guarantee.** The drill-through's member
+  count plus its anonymous count equals the cell's count for the same frame. It
+  is seen failing first (§10). The unit both sides are counted in is **[OPEN]**
+  §11 O5.
+- **A third deliverable** (11 Nov, Q15), not a mode of the evidence packages.
+  The two are different shapes: a lookup by a known key, against a query that
+  returns a set. The count-equality test also needs this one independently
+  callable.
+- **Pseudonyms only.** BzzzBX never learns a name. Turning `m:…` into a person
+  is BOb's job, under ID-04 (Slice 8).
+- **No ghost key for anonymous visitors.** D47 stays as signed.
+- **Cost on the ClickHouse side** (Henry, 6 Nov, estimated, not measured):
+  - a windowed query prunes on `business_events`' primary key and is cheap;
+  - one member's whole history reads the attributes map for the window. A
+    materialised `miembro_id` column with a bloom-filter index is the BzzzBX fix
+    if it hurts.
 
-| Column | Type |
-|---|---|
-| `channel_id` | `UUID NOT NULL` |
-| `signal` | `TEXT NOT NULL` — value set **[OPEN]** |
-| `signal_count` | `BIGINT NOT NULL CHECK (>= 0)` |
+### 7.4 What the feeder reads from BOb
 
-Replaces `rum_events`. No row for a channel that emits no RUM, which is what
-makes MECA absent rather than zero (FR-35). Whether MECA readings are derived by
-BOb from these rows through the state composition table, or written by the
-feeder into `proj_sentiment`, is **[OPEN]** (§11, Q8): the Build Brief puts the
-composition table in BOb and the coefficients in the feeder.
+Exactly two views. Anything more is a finding about this contract.
 
-### 6.7 `proj_detections` — CEP detections
+- **`v_feeder_channel_map`** (exists): `channel_id`, `org_id`, `tenant_slug`,
+  `source_key`, `lag_seconds`, `adapter_kind`. It gains `idle_bound_seconds`
+  (§9.2).
+- **`v_feeder_actor_map`** **[PROPOSED]**: `org_id`, `ref`, `actor_id`,
+  `actor_type`, and the linkage history of §9.4 (`identity_rung`, `valid_from`,
+  `valid_to`).
+  - From these the feeder derives the actor and the rung as of an event's time.
+  - It carries no `display_name` and no `display_id`: the feeder never sees a
+    name.
 
-Primary key `(org_id, bucket_start, channel_id, detection_kind)` **[PROPOSED]**.
-ClickHouse already holds CEP detections (Relevo task 1, 7 Sep); this is their
-BOb-facing count.
+### 7.5 Evidence is not a projection
 
-| Column | Type |
-|---|---|
-| `channel_id` | `UUID NOT NULL` |
-| `detection_kind` | `TEXT NOT NULL` |
-| `detections` | `BIGINT NOT NULL CHECK (>= 0)` |
+3.7's evidence packages by `correlation_id` and `entity_id` are the platform's
+surface. A BOb cell reaches them through its frame (`tenant_slug`,
+`source_key`, bucket window, `external_ref`), which is a query key into BzzzBX,
+not a BOb table.
 
-### 6.8 `proj_deliveries` — delivery outcomes read back
+So 3.7 delivers three things that do not merge:
+- the eight tables;
+- the evidence packages;
+- `affected_members`.
 
-Primary key `(org_id, bucket_start, autobotz_id, outcome)` **[PROPOSED]**. BOb
-writes an alert and its delivery intent; layer 8 transmits; the outcome returns
-as a projection row on the same path as every other fact (System Flows §4). In
-v1 the outbox drains to a stub and this table is read back through the real
-path (Build Brief, Slice 6).
+## 8 · The feeder's obligations
 
-| Column | Type |
-|---|---|
-| `autobotz_id` | `UUID NOT NULL` → `autobotz(id)` |
-| `outcome` | `TEXT NOT NULL` — value set **[OPEN]** |
-| `deliveries` | `BIGINT NOT NULL CHECK (>= 0)` |
-
-Whether a delivery is keyed to the binding, to `alert_deliveries` (step 12), or
-both, is **[OPEN]**: "the full chain answers to a single query" needs a join
-from the outcome back to the alert.
-
-## 7 · Correlation
-
-**`correlation_id` and `entity_id` are BzzzBX's.** Identity resolution is
-upstream and the session's correlation id is the join (C-11); BOb never mints
-one, and inherits one wherever an upstream key exists (Slice 8).
-
-**Neither appears as a column in any projection.** Per-interaction grain is
-truth-store grain (A-06). They reach the projection only through what the
-feeder does with them:
-
-- **`correlation_id`** is how the feeder counts an interaction once, pairs the
-  events behind a response time, and orders customer turns. The aggregate lands
-  in BOb; the identifier stays in ClickHouse.
-- **`entity_id`** resolves to `actors.id` through a second named view,
-  **`v_feeder_actor_map`** **[PROPOSED]**: `org_id`, `actor_id`, `actor_type`,
-  `external_ref`, with `external_ref = entity_id`. No `display_name`, no
-  `display_id`: the feeder never sees a name. An `entity_id` with no actor counts
-  in 6.1 under its actor type and is absent from 6.2. The feeder never creates an
-  actor. Actor identity comes from session data, agent login and account ID
-  (C-12); which is authoritative is D-02, still open.
-- **Evidence is not a projection.** 3.7's evidence packages by `correlation_id`
-  and `entity_id` are the platform's surface. A BOb cell reaches them through its
-  frame (`tenant_slug`, `source_key`, bucket window, `external_ref`), which is a
-  query key into BzzzBX, not a BOb table. So 3.7 delivers two things that must
-  not merge: the eight tables here, and the evidence packages.
-
-The feeder reads exactly two things from BOb: `v_feeder_channel_map` (exists)
-and `v_feeder_actor_map`. Anything more is a finding about this contract.
-
-## 8 · The feeder's five obligations
-
-From the Build Brief (Slice 2) and System Flows §3:
-
-1. **Fill every table at declared grain.** Every row on a five-minute UTC
-   boundary; the CHECK in §3 refuses anything else.
-2. **Idempotent on the primary key.** An upsert on the projection primary key;
-   replaying a window changes nothing but `computed_at`.
-3. **Advance a watermark and seal only behind it**, so a bucket is never sealed
-   while facts are still arriving. System Flows has the feeder read the
-   watermark from Supabase. This draft keeps it on the rows (`source_watermark`)
-   **[PROPOSED]**, read back as its maximum per tenant and table. A separate
-   watermark table written by `bob_feeder` would be a ninth projection to the
-   PR-4 guard (F-18 counts every table the feeder writes), and "exactly eight"
-   would fail.
+1. **Fill every table at declared grain.**
+   - Bucketed tables are written on five-minute UTC boundaries; the CHECK in §3
+     refuses anything else.
+   - Event-grained tables carry their event time.
+   - Buckets are assigned by event time, and each measure lands where §3 says.
+2. **Idempotent on the primary key.** An upsert on the projection primary key.
+   Replaying a window changes nothing but `computed_at`.
+3. **Advance a watermark and seal only behind it.**
+   - The watermark travels on the rows as `source_watermark`, read back as its
+     maximum per tenant and table. A watermark table written by `bob_feeder`
+     would be a ninth projection to the F-18 guard.
+   - `sealed` is set only by the rule in §4, with the declared lag, and is
+     checked when it is written.
+   - **Sealed means complete, not immutable.**
 4. **Stamp `feeder_version`** on every row it writes.
 5. **Rebuild an arbitrary window on demand.** The same query over a different
-   range: for `(org_id, [from, to))`, delete and refill. The rebuild test
-   truncates every projection, re-runs the feeder, and asserts the application
-   renders identically.
+   range: for `(org_id, [from, to))`, delete and refill. Three things trigger
+   one:
+   - **A linkage** (D-12), ghost creation included (§7.2).
+     - The window is `[earliest interaction attributable to the linked
+       identity, now)`, bounded by retention (C-14).
+     - It runs in the background, bounded, never synchronously with a login.
+     - Attribution is re-derived from the linkage history as of each event's
+       time (§9.4).
+   - **A late event** behind the seal (§3).
+   - **An abandonment detected behind the seal**, which is the usual case for
+     idle detection (§3).
+
+   **Alerts already fired are not re-evaluated** (D-12).
+
+   The rebuild test truncates every projection, re-runs the feeder, and asserts
+   the application renders identically. One case of it has a linkage inside the
+   window (§10).
+6. **Create the partition it writes into, and account for what it cannot map.**
+   - Partitions go through the one function of §3: create, grant, RLS.
+   - What it cannot map is emitted to the bus, as audit is under X-10. That
+     covers an unresolved tenant or channel (§2) and an agent or ASA ref with
+     no actor (§7.2).
+   - **Until the bus exists (Slice 8), the reference feeder counts unmapped
+     events per run and returns the count** (11 Nov, Q12). A non-zero run reports
+     it, and a test asserts zero against the fixture (§10). Nothing is stored:
+     a ninth projection breaks the count of eight, and a non-tenant table of
+     unresolved customer data is worse than the problem.
+   - The requirement is that nobody can believe the feeder processed everything
+     when it did not. The interim is tied to a test, not a log, so it cannot
+     quietly become permanent. §11 names what supersedes it.
 
 The recommended shape (System Flows §3) is a scheduled ClickHouse query on a
 timer, not a stream: idempotency comes from the upsert, and rebuild is the same
 query with a different range.
 
-## 9 · Roles, grants, schema
+## 9 · Configuration the contract depends on
 
-- The eight tables live in schema **`bob`**, created in the Slice 2 schema move.
-- Each table and each partition goes through **`bob_grant_projection()`**:
-  `bob_feeder` SELECT, INSERT, UPDATE, DELETE; `bob_app` and `authenticated`
-  SELECT only; no write for PUBLIC or `anon`. `bob_ai_ro` reads `v_ai_*` views,
-  never these tables (IR-1).
-- **A-05a closes in Slice 2:** `bob_app` becomes a LOGIN role and BOb connects as
-  it. The credential is set outside the migration chain.
-- **A-05b does not:** service-role reads move with the first route handler. The
-  thin Performance matrix is that handler and starts on `bob_app` or the
-  user-scoped client, never the service client (Relevo task 7, 27 Oct).
+Configuration, not projection: authored in BOb, written by `bob_app`, backed up,
+never rebuilt, outside the count of eight and outside PR-4.
+
+### 9.1 `channel_capabilities` (Relevo task 10, 4 Nov; health 11 Nov, Q9)
+
+```sql
+channel_capabilities (org_id, channel_id, capability)
+  PRIMARY KEY (org_id, channel_id, capability)
+```
+
+**A row means this channel can produce this class; no row means it cannot.**
+Presence only, with no `enabled` boolean (C-16's reasoning).
+
+| Capability | Declares |
+|---|---|
+| `orga_conversation` | Customer language to classify |
+| `meca_rum` | Interface telemetry |
+| `response_time` | Turns from both sides |
+| `resolution` | A conversation close |
+| `coherence` | The business's own text (deferred, Relevo task 12) |
+| `hallucination` | Claims to check against a ground truth |
+| `health_latency` | Latency instrumentation (APM, API measurement, probe) |
+| `health_errors` | Error and request counts |
+| `health_uptime` | A probe emitting on a timer. **The source of liveness** (§5) |
+| `health_disconnects` | Disconnect counts |
+
+- **Four health capabilities, not one** (11 Nov, Q9). Health instrumentation
+  differs per channel the same way the other classes do:
+  - a synthetic probe gives uptime and latency;
+  - APM gives latency and errors;
+  - an API channel has no disconnects.
+
+  A single `channel_health` would render a missing probe's uptime as *not
+  observed* when the truth is *not instrumented*.
+- **Declared per channel, never mapped from `channel_type`.** A guard asserts it
+  (§10).
+- The drill-down reads the union of capabilities across the selected channels.
+
+### 9.2 The per-channel idle bound
+
+```sql
+ALTER TABLE channels ADD COLUMN idle_bound_seconds INTEGER
+  CHECK (idle_bound_seconds IS NULL OR idle_bound_seconds > 0);
+```
+
+Exposed to the feeder through `v_feeder_channel_map`.
+
+- **Why it lives on `channels`.** It is per channel and never a constant in the
+  feeder (0.2 Q3). It sits beside `lag_seconds`, where the feeder already reads
+  per-channel declarations, so it needs no third view. It is not in
+  `channel_capabilities`, because a number there is the `enabled` column C-16
+  refused. Placed in 0.3; not disputed in the 11 Nov round.
+- **NULL: refuse the metric, not the channel** (11 Nov, Q11).
+  - The channel projects normally, and **`abandoned` alone renders not
+    configured**.
+  - **No `abandoned` rows are written for a channel with no idle bound**, not
+    even the explicit and superseded ones. On WhatsApp, where most abandonments
+    are idle, a partial count would show twelve when the truth is three hundred:
+    a real number, understated by an unknown amount, with nothing saying so.
+  - An absent metric is recoverable in a minute by declaring the bound.
+  - This is A-04's refuse precedent at the right scope. Whether it reaches
+    `abandoned_in_queue` is **[OPEN]** §11 O3.
+- **Lag and idle bound: a declared relationship, not a CHECK** (11 Nov, Q5,
+  which offered either) **[PROPOSED]**.
+  - If a channel's `lag_seconds` is shorter than its `idle_bound_seconds`,
+    every idle abandonment lands behind the seal and triggers a rebuild. That is
+    not wrong, but it is constant churn.
+  - A CHECK forcing `lag_seconds >= idle_bound_seconds` would delay evaluation of
+    every open bucket on that channel by the idle bound (PR-7). On WhatsApp that
+    means hours, which trades churn for blind alerting.
+  - So the relationship is declared here, and Slice 2 reports channels where
+    lag is below the bound rather than refusing them.
+
+### 9.3 `actor_external_refs` (Relevo task 13, 10 Nov; 11 Nov, Q14)
+
+`actor_external_refs (org_id, actor_id, ref)`, `(org_id, ref)` UNIQUE, indexed
+on `ref`, for all four actor types (§7.2).
+
+**`actors.external_ref` is dropped in Slice 2** (11 Nov, Q14). A replaced identity
+column kept beside its replacement is two sources of truth for one fact, which
+is the defect this table exists to fix. The counter-precedent,
+`alerts.acknowledged_at` kept nullable and unread, has no competing replacement
+and lives on a partitioned table. `actors` is neither.
+
+The same Slice 2 migration adds `UNIQUE (id, actor_type)` to `actors` for §6.6's
+composite key **[PROPOSED]**.
+
+Two more pieces belong to the actor work in Slice 2, not to this contract. They
+are named here because a wrong salt fails §7.2 silently:
+- BOb's `miembro.id` computation reads BzzzBX's
+  `conectores/contratos/miembro/vectores.json`, not a copy.
+- The salt is checked by effect: a reserved canary identifier that the feeder
+  skips by rule, run at startup and daily (Relevo task 13).
+
+### 9.4 The linkage history **[PROPOSED]**
+
+D-12's rebuild cannot recover the rung at interaction time (§6.6) from
+*current* state. So BOb keeps an append-only, dated history:
+
+```sql
+actor_ref_history (
+  org_id        UUID        NOT NULL,
+  ref           TEXT        NOT NULL,
+  actor_id      UUID        NOT NULL,
+  identity_rung TEXT        NOT NULL
+                CHECK (identity_rung IN ('identified','ghost','guest','inferred')),
+  valid_from    TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (org_id, ref, valid_from)
+)
+```
+
+- The state of a ref at time `t` is its row with the greatest `valid_from <= t`.
+- A linkage, a merge, a ghost creation or a rung change appends a row and never
+  updates one.
+- `actor_external_refs` is the current state. A guard asserts that, for every
+  member ref, it equals the latest history row.
+
+The table holds member refs only, since only members have a rung. Agent and ASA
+refs need no history: their `identity_rung_at_interaction` is
+`'not_applicable'`, and `v_feeder_actor_map` reads them from
+`actor_external_refs` directly.
 
 ## 10 · Guards Slice 2 adds
 
@@ -338,44 +1015,74 @@ Each one is seen failing on purpose before it is trusted, and recorded in
 
 | Guard | Discovers | Asserts |
 |---|---|---|
-| Exactly eight | `projectionTables()` (F-18) | The set of non-partition projections equals the eight table names in §6 of **this file**, read from here rather than copied into the test |
-| Partitions granted | partitions via `pg_inherits` | Every partition of a projection passes `projectionGrantFindings()` |
+| Exactly eight | `projectionTables()` (F-18) | The non-partition projections equal the eight names in §6 of **this file**, read from here, not copied into the test |
+| Partitions granted | partitions via `pg_inherits` | Every partition passes `projectionGrantFindings()` |
 | Partitions guarded | `tenantTables()` | Every partition has RLS and the `org_id` policy |
+| Partition function | the function of §3 | Run twice for one month: one partition, granted, with RLS. Executable by `bob_feeder` and no other role |
 | `bob_app` grants | every `org_id` table | Non-projections: `bob_app` SELECT, INSERT, UPDATE, DELETE. Projections: SELECT only. Replaces the hand list in `20260902100300` |
 | Pre-rename absence | every schema except `pg_*` and `information_schema` | No `autobotz_bindings` table or policy anywhere; replaces the two `public`-only checks in `slice0-schema.test.mjs` |
-| Grain | every projection | Carries the bucket-alignment CHECK |
-| No percentiles | every projection column | No column named like `p\d+`, `percentile`, `median`, `avg`, `mean` |
+| Grain | every projection with a `bucket_start` column | Carries the bucket-alignment CHECK |
+| **No derived figures** | every projection column | No column named like `p\d+`, `percentile`, `median`, `avg`, `mean`, `health_pct`, **`_rate`**, **`_pct`**. With the last two it would have caught `error_rate` and `uptime_pct` by itself (Q10) |
 | Provenance | every projection | Carries the three columns of §4, `NOT NULL` |
+| **Sealed at write time** | every projection with a `sealed` column | Over the rows the feeder writes in the test run, and only those, every row written with `sealed` satisfies §4's rule **with the channel's declared lag at that moment**. Not a standing scan of history (Q1) |
 | Tenant key | every projection | Carries `org_id UUID NOT NULL`, no slug column |
+| **Never merged across `actor_type` or `measure`** | every view and function whose definition reads `proj_durations` (`pg_depend`, `pg_proc`) | Structural, in Slice 2: `actor_type` and `measure` are `NOT NULL` and in the primary key. Behavioural: over a fixture with `user` and `human` rows, and with both measures, in one channel and bucket, every discovered reader returns separate distributions. While it discovers zero readers it reports **`todo`, printed and counted in CI**, never `pass` (Q16) |
+| Degenerate actor | `proj_metric_counts` | A row with `abandoned_in_queue`, `abstained` or `classifier_down` and any `actor_type` but `user` is refused |
+| Closing is ORGA | `proj_sentiment` | A `meca` row with `closing_count > 0` is refused |
+| Rung pairs with type | `proj_actor_metrics` | A `user` row with `'not_applicable'`, a non-`user` row with any other rung, and an `actor_type` that differs from the actor's are each refused |
+| Ghost path | the reconciliation of §7.2 | Given agent, ASA and member refs that resolve to nothing, it creates actors for member refs only, all at rung `ghost`, and never a non-`user` actor |
+| No namespace literal | every tracked file (`git ls-files`, as the naming test does) | No code path builds a ref with a literal namespace; namespaces come from `channels.source_key` or the deployment record (Q14) |
+| Unmapped is counted | the reference feeder over the fixture | The returned unmapped count is zero. A deliberately unmappable event is injected first, to watch it go non-zero (Q12) |
+| `affected_members` count equality | 3.7's endpoint over a frame | Member count plus anonymous count equals the cell's count for the same frame (Q15) |
+| Rebuild with linkage | the rebuild test | A linkage inside the rebuilt window leaves `identity_rung_at_interaction` as it was at event time, and the render identical to a full rebuild |
+| No capability from channel type | the codebase and the schema | No code path, view, function or seed derives `channel_capabilities` from `channel_type` (Relevo task 10) |
 
-## 11 · Open questions before publication
+**The never-merge floor is part of A-05b's definition of done** (11 Nov, Q16).
+A-05b returns with the first route handler, and the floor that makes the
+behavioural half required lands in that same commit. It is not a later
+promise.
 
-1. **Handoff §3.3.** The Migration Order cites it for the projection columns
-   and it is not in the Slices 0, 1 or 1c packages. Seven column lists in §6
-   are proposals until it is read. Where is it, or does §6 replace it?
-2. **Provenance names.** Step 14 requires three provenance columns and names
-   none; `feeder_version` comes from the Build Brief. `computed_at` and
-   `source_watermark` are this draft's.
-3. **Response time.** Which event pair, matched by `correlation_id`: customer
-   turn to first reply, request to response, or per channel type?
-4. **Observed with nothing.** What tells the feeder a channel was alive in a
-   bucket with no business events: an adapter heartbeat, a span, a DLQ count?
-   Without it §5 cannot hold, and `proj_channel_health` has nothing to read.
-5. **Late events.** Event time or ingestion time for bucket assignment, and how
-   late an event may arrive before only a rebuild picks it up.
-6. **Unresolved tenant or channel.** Where the feeder reports events it could not
-   map: a log, a ClickHouse counter, or a ninth table (which would break the
-   count of eight).
-7. **Partition lifecycle.** Who creates next month's partitions and drops the
-   fourteenth month. `pg_cron` arrives in Slice 5; Slice 2 needs an answer
-   before then.
-8. **Sentiment.** The four values of `sent_source` (Technical Architecture
-   §2.3, not in the package), and whether MECA is written by the feeder into
-   `proj_sentiment` or derived by BOb from `proj_rum_signals`.
-9. **Deliveries.** The `outcome` value set; whether AutoComm deliveries (layer 8
-   transmits both) share the table, which `autobotz_id` alone cannot key; and
-   whether `proj_deliveries` joins back to `alert_deliveries` so the chain
-   answers to one query.
-10. **D-03, D-02, D-15.** Still open. They change columns in `proj_actor_metrics`
-    and the authority for `external_ref`, and decide whether Response Quality is
-    a ninth measure.
+## 11 · Interim measures, and what is open after 0.4
+
+0.3's sixteen questions are closed (Relevo task 6, 11 Nov).
+
+### Interim, named so it stays visibly interim
+
+| Interim in Slice 2 | Superseded by | When |
+|---|---|---|
+| The reference feeder counts unmapped events per run and returns the count, under a zero-against-fixture test (§8.6) | Emission to the bus, as audit is under X-10 | Slice 8 |
+| The never-merge guard's behavioural half reports `todo` (§10) | The floor, in A-05b's commit | The first route handler |
+| Retention is not enforced (§3) | `pg_cron` detaching and dropping partitions | Slice 5 |
+
+### Open after 0.4
+
+These five came out of writing 0.4 against the 11 Nov rulings. None reopens a
+ruling. Each is a gap a ruling leaves.
+
+- **O1 · Sealing on a channel with no declared lag.** §4's rule needs
+  `lag_seconds`. A-04 forbids treating NULL as zero. So does the feeder never
+  seal a bucket of a channel whose lag is NULL, or does it seal with some
+  other rule? Never sealing is consistent with A-04, and it means that
+  channel's buckets stay open, and unevaluated, until a lag is declared.
+- **O2 · `actor_type` on `interaction_duration`.** An interaction has several
+  actors and one length. FR-22 is *user* availability. Are these rows always
+  `user`, the third degenerate case, or one row per actor type present?
+- **O3 · Does Q11's refusal reach `abandoned_in_queue`?** A queue abandonment is
+  the customer hanging up while queued, which is not detected by the idle bound.
+  The ruling says "no abandonment rows" for a channel without a bound, and does
+  not say whether that includes this one.
+- **O4 · Where the ghost reconciliation reads unmapped member refs.** The feeder
+  returns only a count in Slice 2 (§8.6), never the refs. BOb reads the truth
+  store only through `affected_members`. Does the reconciliation get the refs
+  from the feeder's run result, from `affected_members`, or from the bus in
+  Slice 8? If it is the bus, ghosts do not exist before Slice 8.
+- **O5 · The unit of `affected_members`' count equality.**
+  - Member rows are one per member per interaction.
+  - The anonymous count is in interactions.
+  - The cell's `event_count` counts events, and `hallucinations` can count
+    more than one per interaction.
+
+  0.4 reads the equality as interactions on both sides: member interaction rows
+  plus anonymous interactions equals the cell's interaction count. "47 members"
+  on the panel is then distinct members, which can be fewer. Confirm, or name
+  the unit.

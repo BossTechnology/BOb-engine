@@ -3,7 +3,7 @@
 > Actualizar al cerrar cada sesión. Es lo primero que lee la siguiente.
 
 ## Tarea actual
-- Tarea 6 de Relevo («The projection read contract»): borrador 0.2 del contrato de proyección en `docs/contracts/projection-contract.md`, en PR #13. Publicado en la tarea 6 de Relevo el 29 oct con F-20 y las cinco preguntas para la 3.7; turno de Federico. Ninguna migración del Slice 2 antes de la firma.
+- Tarea 6 de Relevo («The projection read contract»): borrador 0.4 del contrato de proyección en `docs/contracts/projection-contract.md`, en la rama `docs/projection-contract-0.3` (PR #15, sin fusionar; lo revisa Henry). Federico cerró las dieciséis preguntas de 0.3 el 11 nov. Colisión resuelta: las A-07/A-09 de Relevo son A-11/A-12 en amendments. Ninguna migración del Slice 2 antes de la firma.
 - Tarea 7 de Relevo («What is left to build — scope map»): paquete de guards antes del Slice 2, mergeado en PR #11.
 - Tarea 9 de Relevo («Slice 5 · Cooldown and escalation durations», D-05): decisión cerrada por Federico el 27 oct, registrada en `contract-amendments.md` («Slice 5 · Cooldown and escalation»). Acuse publicado con seis puntos abiertos antes de escribir el paso 6a; turno de Federico.
 - Tarea de Relevo «Licence scan on BOb, CHASS1S and Momentum dependency trees»: respuesta publicada el 5 nov con la distribución de licencias de producción y de desarrollo; turno de Federico.
@@ -22,7 +22,7 @@
   - CHASS1S (repo `CHS`): 137 de producción. jszip tiene doble licencia (MIT o GPL), duck declara solo «BSD» y Chromium se descarga en tiempo de ejecución.
 
 ## Pendiente
-- Contrato de proyección: siete de las ocho listas de columnas y dos nombres de procedencia siguen propuestos, porque el Handoff §3.3 no está en ningún paquete (F-20). Diez preguntas abiertas en el §11 del contrato.
+- Contrato de proyección 0.4: cinco preguntas abiertas en el §11 (O1 sellado con lag NULL, O2 `actor_type` de `interaction_duration`, O3 si Q11 alcanza `abandoned_in_queue`, O4 de dónde lee los refs la reconciliación de fantasmas, O5 unidad de la igualdad de conteos de `affected_members`). Interinos nombrados: conteo de no mapeados hasta el bus (Slice 8), `todo` del guard de no mezclar hasta A-05b, retención sin aplicar hasta Slice 5.
 - Para el Slice 2: llamar `bob_grant_projection()` y activar RLS en cada partición que se cree; afirmar que hay ocho proyecciones cuando el contrato las nombre; test de los grants de `bob_app`; las dos comprobaciones de ausencia de `slice0-schema` que solo miran `public`.
 - Paso 6a (Migration Order): `cooldown_seconds` y `escalation_after_seconds` en `threshold_configs`, 1800/7200, CHECK `>= 300`. Se construye en Slice 5, no antes. Antes de escribirlo: los seis puntos de D-05 en amendments (DEFAULT vs NULL que hereda, piso del escalamiento, `notification_rules` paralela, sostenido vs sin acuse, recuperación y re-breach, granularidad).
 
@@ -30,7 +30,7 @@
 - Nada.
 
 ## Siguiente paso
-- Respuesta de Federico en la tarea 6 sobre F-20 (Handoff §3.3) y el §11; luego firma y la tarea 3.7 de BzzzBX implementa contra el contrato.
+- Federico responde O1–O5 en la tarea 6 de Relevo (respuesta de 0.4 publicada el 11 nov; turno de Federico). Después, Henry revisa el PR #15, firma, y la tarea 3.7 de BzzzBX implementa contra el contrato.
 
 ## Notas de sesión
 <!-- AAAA-MM-DD: una o dos líneas -->
@@ -39,3 +39,6 @@
 - 2026-10-29: paquete de guards de la tarea 7 de Relevo (F-17 a F-19), 82 → 100 tests; cada guard visto fallar. PR #11 verde, respuesta publicada.
 - 2026-10-29: borrador del contrato de proyección (Slice 2). Los ocho nombres salen del paso 14 del Migration Order (paquete Slice 1c); las columnas, salvo `proj_response_time`, siguen propuestas (F-20).
 - 2026-11-05: escaneo de licencias de BOb, CHASS1S y Momentum publicado en Relevo; ninguna dependencia cambiada. Sin verificar: si el binario de libvips entra en el bundle desplegado en Vercel.
+- 2026-11-10: borrador 0.3 del contrato de proyección con §3.3 (md5 `eb89363d…`) y los rulings del 4 y 10 nov; entrada «Slice 2 · The projection read contract, 0.3» en amendments. Dieciséis preguntas abiertas para la tarea 6.
+- 2026-11-11: borrador 0.4 con las dieciséis respuestas de Federico del 11 nov; `proj_response_time` pasa a `proj_durations`; A-11 y A-12 registradas. Cinco preguntas abiertas.
+- 2026-11-11: respuesta de 0.4 publicada en la tarea 6 de Relevo (numeración A-11/A-12, decisiones propias, O1–O5) y turno pasado a Federico.
