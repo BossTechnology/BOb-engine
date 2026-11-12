@@ -3,6 +3,7 @@
 Una línea por cambio entregado, en lenguaje de usuario.
 
 ## Sin publicar
+- Borrador 0.5 del contrato de proyección: un canal sin lag declarado sigue mostrando cifras pero se marca «lag no declarado»; la duración de la conversación es del cliente; los eventos sin tenant y los actores sin resolver siguen dos caminos separados; se propone el corte tras el cual una etiqueta que falta es un fallo y no un retraso.
 - Insumos de la capa de aplicación (P5) para BZZ-3: dónde vive el esquema de proyección, qué puede leer y escribir cada uno de los tres roles, dónde quedan sus credenciales y cómo llegan las migraciones a la caja, separando lo decidido de lo propuesto. Dos defectos del acceso del feeder quedan registrados (F-21, F-22).
 - Borrador 0.4 del contrato de proyección: el abandono se atribuye a quien debía el siguiente turno y el abandono en cola se cuenta aparte; la salud del canal guarda numeradores y denominadores, nunca porcentajes; las duraciones de conversación quedan como distribución.
 - Borrador 0.3 del contrato de proyección: las columnas de las ocho tablas salen del Handoff §3.3 con cinco cambios nombrados, la salud del canal deja de guardar un porcentaje, «quién fue afectado» se consulta a la fuente y el contrato dice dónde vive el umbral de inactividad por canal.
