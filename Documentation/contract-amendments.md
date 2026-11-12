@@ -1430,4 +1430,48 @@ Five, in contract §11. None reopens a ruling.
 
 ---
 
+## P5 · The application layer, inputs
+
+Federico asked on BZZ-3 (10 Nov) for the whole application layer: the
+projection schema, the three roles and their grants, and the migration
+mechanism. The inputs are `docs/p5-application-layer.md`. The decision is a
+BzzzBX one, takes the next free number there, and is unsigned. Nothing below
+writes a migration.
+
+Reading the Slice 0 grants against the roles that will hold them turned up two
+defects. Both were found by reading the migration, not by running it.
+
+### F-21 · The feeder cannot read `v_feeder_channel_map`
+
+`20260902100300` creates the view `WITH (security_invoker = true)` and grants
+`bob_feeder` SELECT on the view alone. With an invoker view, Postgres checks
+the base tables against the caller's privileges, so a read as `bob_feeder` is
+refused on `channels`. Granting `channels` would not help: its RLS policy needs
+an `org_id` claim, and the feeder needs the map across every tenant before it
+knows the `org_id`. No test reads the view as `bob_feeder`.
+
+**Proposed** (inputs §3.3): recreate both feeder views as definer views owned by
+the migration owner, exposing only their named columns. Add a guard that reads
+them as `bob_feeder` over the two-tenant fixture and is refused on the base
+tables. **Disposition:** open, for the Slice 2 migrations.
+
+### F-22 · The tenant policy refuses the feeder's writes
+
+Contract §2 puts `org_id = (auth.jwt() ->> 'org_id')::uuid` on every
+projection and partition. `bob_feeder` is `NOBYPASSRLS` and sets no claim, so
+`WITH CHECK` refuses every insert.
+
+**Proposed** (inputs §3.3): the feeder writes one tenant per transaction and
+sets that tenant's claim with `set_config(…, true)`. The policy and the
+contract stay as they are.
+- `BYPASSRLS` is rejected: it removes the protection from the role that writes
+  the most rows.
+- A permissive policy for `bob_feeder` is rejected: it is what the tenancy
+  suite's open-policy probe exists to catch.
+
+A guard asserts that, holding tenant A's claim, a tenant B row is refused.
+**Disposition:** open, for the Slice 2 migrations.
+
+---
+
 *Boss.Technology · BOb v1 · Internal only*
