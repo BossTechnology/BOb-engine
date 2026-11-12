@@ -3,7 +3,7 @@
 > Actualizar al cerrar cada sesión. Es lo primero que lee la siguiente.
 
 ## Tarea actual
-- BZZ-3 de Relevo, P5 («the whole application layer»): insumos en `docs/p5-application-layer.md`, rama `docs/p5-application-layer` (PR sin fusionar; lo revisa Henry). Separa lo decidido de lo propuesto: el esquema es el contrato 0.4; los tres roles se leen como `bob_app`, `bob_feeder` y `bob_ai_ro`; secretos en ficheros, no en Vault; la base de BOb en el `supabase-db` de la caja, esquema `bob`; migraciones desde BOb-engine aplicadas por Henry con el mismo CLI de CI, primero en lab-02. Borrador de respuesta a P5 preparado, sin publicar en Relevo.
+- BZZ-3 de Relevo, P5 («the whole application layer»): insumos en `docs/p5-application-layer.md`, rama `docs/p5-application-layer` (PR #16, revisado por Henry, sin fusionar). Separa lo decidido de lo propuesto: el esquema es el contrato 0.4; los tres roles se leen como `bob_app`, `bob_feeder` y `bob_ai_ro`; secretos en ficheros, no en Vault; la base de BOb en el `supabase-db` de la caja, esquema `bob`; migraciones desde BOb-engine aplicadas por Henry con el mismo CLI de CI, primero en lab-02. Respuesta a P5 publicada en BZZ-3 el 2026-11-11 con las tres preguntas para Federico; turno de Federico.
 - Tarea 6 de Relevo («The projection read contract»): borrador 0.4 del contrato de proyección en `docs/contracts/projection-contract.md`, en la rama `docs/projection-contract-0.3` (PR #15, sin fusionar; lo revisa Henry). Federico cerró las dieciséis preguntas de 0.3 el 11 nov. Colisión resuelta: las A-07/A-09 de Relevo son A-11/A-12 en amendments. Ninguna migración del Slice 2 antes de la firma.
 - Tarea 7 de Relevo («What is left to build — scope map»): paquete de guards antes del Slice 2, mergeado en PR #11.
 - Tarea 9 de Relevo («Slice 5 · Cooldown and escalation durations», D-05): decisión cerrada por Federico el 27 oct, registrada en `contract-amendments.md` («Slice 5 · Cooldown and escalation»). Acuse publicado con seis puntos abiertos antes de escribir el paso 6a; turno de Federico.
@@ -33,7 +33,7 @@
 - Nada.
 
 ## Siguiente paso
-- Henry revisa el PR de los insumos de P5 y publica la respuesta a P5 en BZZ-3 (borrador en el resumen de la sesión del 2026-11-11).
+- Federico responde las tres preguntas de P5 en BZZ-3 (los tres roles, el modelo de tenencia del runbook §7.3, el proyecto hospedado). Después se escribe la decisión de BzzzBX con el siguiente número libre.
 - Federico responde O1–O5 en la tarea 6 de Relevo (respuesta de 0.4 publicada el 11 nov; turno de Federico). Después, Henry revisa el PR #15, firma, y la tarea 3.7 de BzzzBX implementa contra el contrato.
 
 ## Notas de sesión
@@ -47,3 +47,4 @@
 - 2026-11-11: borrador 0.4 con las dieciséis respuestas de Federico del 11 nov; `proj_response_time` pasa a `proj_durations`; A-11 y A-12 registradas. Cinco preguntas abiertas.
 - 2026-11-11: respuesta de 0.4 publicada en la tarea 6 de Relevo (numeración A-11/A-12, decisiones propias, O1–O5) y turno pasado a Federico.
 - 2026-11-11: insumos de P5 (capa de aplicación) para BZZ-3 en `docs/p5-application-layer.md`; F-21 y F-22 registrados en amendments; ninguna migración ni base tocada.
+- 2026-11-11: respuesta a P5 publicada en BZZ-3 tras la revisión del PR #16, y turno pasado a Federico.
