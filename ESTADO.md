@@ -4,7 +4,7 @@
 
 ## Tarea actual
 - BZZ-3 de Relevo, P5 («the whole application layer»): insumos en `docs/p5-application-layer.md`, rama `docs/p5-application-layer` (PR #16, revisado por Henry, sin fusionar). Separa lo decidido de lo propuesto: el esquema es el contrato 0.4; los tres roles se leen como `bob_app`, `bob_feeder` y `bob_ai_ro`; secretos en ficheros, no en Vault; la base de BOb en el `supabase-db` de la caja, esquema `bob`; migraciones desde BOb-engine aplicadas por Henry con el mismo CLI de CI, primero en lab-02. Respuesta a P5 publicada en BZZ-3 el 2026-11-11 con las tres preguntas para Federico; turno de Federico.
-- Tarea 6 de Relevo («The projection read contract»): borrador 0.5 del contrato de proyección en `docs/contracts/projection-contract.md`, rama `docs/projection-contract-0.5` (PR #17, sin fusionar; lo revisa Henry). Recoge los rulings de Federico del 12 nov (O1–O5, numeración A-11/A-12 y las cinco elecciones de 0.4 aceptadas), separa el §7.2 en dos rutas y propone el corte de D-25 en el nuevo §4.1. Respuesta para la tarea 6 en borrador, sin publicar; el turno sigue en Henry. Ninguna migración del Slice 2 antes de la firma.
+- Tarea 6 de Relevo («The projection read contract»): borrador 0.5 del contrato de proyección en `docs/contracts/projection-contract.md`, rama `docs/projection-contract-0.5` (PR #17, sin fusionar; lo revisa Henry). Recoge los rulings de Federico del 12 nov (O1–O5, numeración A-11/A-12 y las cinco elecciones de 0.4 aceptadas), separa el §7.2 en dos rutas y propone el corte de D-25 en el nuevo §4.1. Respuesta publicada en la tarea 6 el 13 nov; turno de Federico. Ninguna migración del Slice 2 antes de la firma.
 - Tarea 7 de Relevo («What is left to build — scope map»): paquete de guards antes del Slice 2, mergeado en PR #11.
 - Tarea 9 de Relevo («Slice 5 · Cooldown and escalation durations», D-05): decisión cerrada por Federico el 27 oct, registrada en `contract-amendments.md` («Slice 5 · Cooldown and escalation»). Acuse publicado con seis puntos abiertos antes de escribir el paso 6a; turno de Federico.
 - Tarea de Relevo «Licence scan on BOb, CHASS1S and Momentum dependency trees»: respuesta publicada el 5 nov con la distribución de licencias de producción y de desarrollo; turno de Federico.
@@ -34,7 +34,7 @@
 
 ## Siguiente paso
 - Federico responde las tres preguntas de P5 en BZZ-3 (los tres roles, el modelo de tenencia del runbook §7.3, el proyecto hospedado). Después se escribe la decisión de BzzzBX con el siguiente número libre.
-- Henry revisa el PR #17 y publica la respuesta de 0.5 en la tarea 6 (borrador listo). Federico elige C1–C3 y O6; después Henry firma y la tarea 3.7 de BzzzBX implementa contra el contrato.
+- Federico elige C1–C3 y O6 en la tarea 6 (respuesta de 0.5 publicada el 13 nov; turno de Federico). Henry revisa el PR #17; después firma y la tarea 3.7 de BzzzBX implementa contra el contrato.
 
 ## Notas de sesión
 <!-- AAAA-MM-DD: una o dos líneas -->
@@ -49,3 +49,4 @@
 - 2026-11-11: insumos de P5 (capa de aplicación) para BZZ-3 en `docs/p5-application-layer.md`; F-21 y F-22 registrados en amendments; ninguna migración ni base tocada.
 - 2026-11-11: respuesta a P5 publicada en BZZ-3 tras la revisión del PR #16, y turno pasado a Federico.
 - 2026-11-12: borrador 0.5 con los rulings O1–O5 de Federico; §7.2 en dos rutas; §4.1 nuevo con la latencia de voz de la tarea 14 y el corte de D-25 propuesto (`label_missing`, tres elecciones abiertas). Respuesta sin publicar.
+- 2026-11-13: respuesta de 0.5 publicada en la tarea 6 de Relevo (PR #17, corte de D-25, C1–C3 y O6) y turno pasado a Federico.
