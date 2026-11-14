@@ -27,11 +27,27 @@ D-25 cut. The main changes:
 - **O5.** The count equality is in interactions on both sides. The panel's
   "47 members" is distinct members, deliberately a different number (§7.3).
 - **New, §4.1.** The channel-lag section: voice is 5–10 minutes late end to
-  end (Relevo task 14), and a proposed cut after which a missing label is a failure
-  rather than lag. The cut has three choices in it, left to Federico (§11
-  C1–C3).
-- **New, §7.3a.** A proposed `member_refs_seen(frame)` for the reconciliation
-  to ask the truth store through; how it is delivered is §11 O6.
+  end (Relevo task 14), and the cut after which a missing label is a failure
+  rather than lag.
+- **New, §7.3a.** `member_refs_seen(frame)`, the interface the reconciliation
+  asks the truth store through.
+
+**Ruled on 13 Nov** (Relevo task 6, 21:26), in the same draft. Federico chose
+(a) on all four choices 0.5 left open, and accepted the two-count proposal with
+one condition:
+
+- **C1.** The cut is the seal (§4.1).
+- **C2.** The failure is its own `metric_id`, `label_missing` (§4.1, §6.1).
+- **C3.** A label after the cut is a late event and triggers a rebuild. Alerts
+  already fired stay. Whether Slice 7 shows that a bucket was rebuilt after it
+  sealed goes to D-33, which stays open (§4.1).
+- **O6.** `member_refs_seen(frame)` is its own interface, a fourth deliverable
+  of 3.7 (§7.3a).
+- **Two counts until the bus** (§8.6), with the condition written beside it:
+  what changes when the bus arrives.
+
+Where his reasons differ from the ones 0.5 gave, his are recorded, because the
+reason is what carries into the next decision.
 
 The 0.3→0.4 changes are in `contract-amendments.md`, under "Slice 2 · The
 projection read contract, 0.4". This round is under "…, 0.5".
@@ -50,6 +66,8 @@ ratios.
   - 11 Nov: 0.3's sixteen questions.
   - 12 Nov: O1 to O5, the numbering and the five choices accepted, §7.2's
     split, the D-25 cut asked for.
+  - 13 Nov (21:26): C1 to C3 and O6 ruled, the two counts accepted with an
+    end condition.
 - Relevo task 14 (the AI drone), 12 Nov: Henry's measured voice latency
   (00:39, 01:42) and Federico's ruling that only chat goes to the provider in
   v1 (08:17).
@@ -284,22 +302,43 @@ denominator and in no state. `abstained` and `classifier_down` stay at zero.
 A provider outage on chat reads as lag, not as a failure. That is
 absent-versus-zero again, in the labelling path.
 
-**Proposed shape** **[PROPOSED; three choices in it, §11 C1–C3]:**
-1. **The cut is the seal.** When a bucket seals under §4, a customer turn in
-   it with no label, no `abstained` and no `classifier_down` is a failure. No
-   new configuration. The declared lag is already the channel saying
-   "everything for this bucket has arrived by now", and a label is part of
-   everything. Sealed keeps meaning complete.
-2. **The failure is its own `metric_id`, `label_missing`** (name
-   **[PROPOSED]**), `actor_type = 'user'`, degenerate like the other two
-   (§6.1). It is not `classifier_down`. At the cut we know the label never
-   came, not why: a provider timeout, a lost message, the drone down.
-   `classifier_down` asserts a cause. As a metric it takes a threshold and a
-   response with no new machinery, which is how a provider outage on chat
-   becomes an alert.
-3. **A label that arrives after the cut is a late event** (§3). It triggers a
-   rebuild, which moves the turn from `label_missing` to its state. Alerts
-   already fired stay as they fired (D-12).
+**The cut** (ruled 13 Nov, C1–C3):
+1. **The cut is the seal** (C1). When a bucket seals under §4, a customer turn
+   in it with no label, no `abstained` and no `classifier_down` is a failure.
+   No new configuration: the declared lag already says "everything for this
+   bucket has arrived by now", and a label is part of everything.
+   - The deciding reason (Federico, 13 Nov) is what a second clock would do to
+     the seal. A per-channel `label_cutoff_seconds` makes a bucket complete for
+     counts and incomplete for labels at the same moment. "Sealed" would mean
+     two things, and every consumer would have to know which: two sources of
+     truth about one fact. It would also be two authored numbers per channel
+     that must agree, with nothing asserting that they do.
+   - If a channel's labels need longer than its counts, the fix is **a longer
+     declared lag on that channel**, not a second clock.
+   - The cost: a channel whose classifier is slower than its declared lag
+     produces `label_missing` systematically until someone raises the lag. That
+     is a configuration error that shows itself in a product-visible figure,
+     which is the direction it should fail in.
+2. **The failure is its own `metric_id`, `label_missing`** (C2),
+   `actor_type = 'user'`, degenerate like the other two (§6.1). It is not
+   `classifier_down`. At the cut we know the label never came, not why: the
+   classifier, the drone, the relay, the merge step, or the link between any
+   two. Folding it into `classifier_down` would write a diagnosis in the voice
+   of a measurement. As a metric it takes a threshold and a response with no
+   new machinery, which is how a provider outage on chat becomes an alert.
+3. **A label that arrives after the cut is a late event** (C3, §3). It
+   triggers D-12's bounded rebuild, which moves the turn from `label_missing`
+   to its state, so a classifier that recovers after an outage repairs its own
+   history. No arrival timestamp is stored on labels.
+   - **Alerts already fired stay as they fired** (D-12). Un-firing an alert is
+     worse than leaving it. The consequence, stated: a customer can hold an
+     alert citing 12% while the panel now reads 9%.
+   - The data to explain that gap already exists: a rebuild moves
+     `computed_at` past the seal, and `source_watermark` records what it saw.
+     Nothing is added to the schema.
+   - **Not decided here:** whether Slice 7 renders "this bucket was rebuilt
+     after it sealed". It goes to **D-33 as one more input**, and D-33 stays
+     open.
 
 **What it buys.** At seal, every customer turn on a channel that declares
 `orga_conversation` is in exactly one of: the five states, `abstained`,
@@ -433,7 +472,7 @@ CREATE TABLE bob.proj_metric_counts (
 | `abandoned` | the side that owed the next turn. Last turn the customer's, nobody replied: the agent or ASA holding. Last turn the business's, no reply came: `user` |
 | `abandoned_in_queue` | `user`, always (degenerate) |
 | `abstained`, `classifier_down` | `user`, always (degenerate) |
-| `label_missing` | `user`, always (degenerate). Proposed in 0.5 (§4.1) |
+| `label_missing` | `user`, always (degenerate). Ruled 13 Nov, C2 (§4.1) |
 
 - **D-03's original wording for `abandoned` is superseded.** "The actor holding
   the interaction when the customer left" named a bystander. It would have filed
@@ -473,11 +512,17 @@ customer turns the classifier failed to label:
 - As metrics they take a threshold and a response with no new machinery. The
   abstention rate is the instrument for tuning the classifier's confidence bar.
 
-**`label_missing`** (proposed in 0.5, §4.1). A customer turn still unlabelled
+**`label_missing`** (13 Nov, C2; §4.1). A customer turn still unlabelled
 when its bucket seals: the label never came, cause unknown. Kept apart from
-`classifier_down`, which asserts the cause, so that transport failures do not
-pollute the figures used to tune the classifier. With it, the five states plus
-the three failure values account for every customer turn at seal.
+`classifier_down`, which asserts the cause. It is the 5 Nov argument that split
+`classifier_down` from `abstained`, one rung further out. The three absences
+each have a different owner, so they cannot share a count:
+- `abstained` is a tuning signal;
+- `classifier_down` is an operations signal;
+- `label_missing` is a plumbing signal.
+
+With it, the five states plus the three failure values account for every
+customer turn at seal.
 
 **`resolved`, for v1, means closed without escalation** (Relevo task 12, D-15).
 It is conversation grain and lands at the conversation's close (§3). "No
@@ -894,8 +939,8 @@ a ninth projection. It never applied to route B.
   actor (§1), so the truth store returns refs seen and BOb subtracts the refs
   it knows.
 - The question goes through a named interface, `member_refs_seen(frame)`
-  (name and shape **[PROPOSED]**, §7.3a), so BOb still never knows which truth
-  store it runs against.
+  (13 Nov, O6; §7.3a), so BOb still never knows which truth store it runs
+  against.
 - **No new table. No change to the feeder's grants. No dependence on Slice 8's
   bus.** With the bus as the source there would be no ghosts for most of v1,
   which guts the member drill-down ghosts were ruled to serve.
@@ -975,11 +1020,10 @@ contract, the application still never knows which truth store it runs against.
     materialised `miembro_id` column with a bloom-filter index is the BzzzBX fix
     if it hurts.
 
-### 7.3a `member_refs_seen(frame)` — what the ghost reconciliation reads **[PROPOSED]**
+### 7.3a `member_refs_seen(frame)` — what the ghost reconciliation reads
 
-New in 0.5, for O4. Federico ruled that the reconciliation does a windowed
-query against the truth store and "reuses the affected_members shape". This
-draft names it as its own interface:
+New in 0.5, for O4; ruled its own interface on 13 Nov (O6), **a fourth
+deliverable of 3.7**:
 
 - **`frame`**: `tenant_slug`, `source_key`(s), and a window `[from, to)`, as in
   §7.3.
@@ -989,10 +1033,21 @@ draft names it as its own interface:
   not what it did.
 - **Pseudonyms only**, as in §7.3.
 
-Why not `affected_members` with the filter left out: Q15 ruled against one
-endpoint with two behaviours, because half its parameters become meaningless in
-one of them, and the count-equality test has no cell to balance against here.
-The alternative is open as §11 O6.
+Why not `affected_members` with the filter left out (Federico, 13 Nov):
+- **The deciding reason is what `affected_members` is for.** It sits on the
+  reveal path: it answers "who was affected" for a person looking at a panel,
+  under A-11/A-12 and the ID-04 audit trail. The reconciliation is an
+  unattended scheduled job running as `bob_app`. Those should not be the same
+  door. A narrow interface that returns refs and nothing else exposes less,
+  which is what a job that runs unwatched should have.
+- Reusing it would couple the two: a later change to `affected_members` for
+  the drill-down would silently change the reconciliation.
+- "No filter" is cheap on Febor's 482 members and not on a customer with
+  eighty thousand.
+- Q15's reasoning against one endpoint with two behaviours, which 0.5 gave,
+  still holds, but it was not the deciding one.
+
+The cost is the fourth deliverable on 3.7, and nothing else.
 
 ### 7.4 What the feeder reads from BOb
 
@@ -1019,7 +1074,7 @@ So 3.7 delivers things that do not merge:
 - the eight tables;
 - the evidence packages;
 - `affected_members`;
-- `member_refs_seen`, if §11 O6 keeps it separate.
+- `member_refs_seen` (O6).
 
 ## 8 · The feeder's obligations
 
@@ -1065,16 +1120,44 @@ So 3.7 delivers things that do not merge:
      on its own (§7.2). The feeder does not report it.
    - **Until the bus exists (Slice 8), the reference feeder counts per run and
      returns the counts** (11 Nov, Q12). **Two counts, never one sum**
-     **[PROPOSED]**: unmapped events (route A) and unresolved agent and ASA refs
-     (route B). One is an event we dropped; the other is an event we projected
-     with a roster gap. A single number would send both down one path again
-     (O4). A non-zero run reports them, and a test asserts both are zero
-     against the fixture (§10). Nothing is stored: a ninth projection breaks the
-     count of eight, and a non-tenant table of unresolved customer data is worse
-     than the problem.
+     (accepted 13 Nov): unmapped events (route A) and unresolved agent and ASA
+     refs (route B). They are different failures with different owners: one is
+     an event we cannot attribute to any organisation, the other an event whose
+     organisation we know and whose actor we cannot resolve. A single number
+     re-merges what O4 separated, and nobody can act on it. A non-zero run
+     reports them, and a test asserts both are zero against the fixture (§10).
+     Nothing is stored: a ninth projection breaks the count of eight, and a
+     non-tenant table of unresolved customer data is worse than the problem.
+   - **End condition: what changes when the bus arrives** (13 Nov, the
+     condition of the acceptance). The interim ends when the Slice 8 bus
+     accepts events from the feeder, as audit is accepted under X-10. Then, in
+     one change and under a new contract version:
+     1. **The feeder stops returning the two counts.** It emits one event per
+        failure instead. Both run together at no point: two outputs for one
+        fact would be two sources of truth.
+     2. **The two routes stay two on the bus** (event shapes
+        **[PROPOSED]**). A route A event carries `tenant_slug` and
+        `source_key`, and no `org_id`, because that is what failed. A route B
+        event carries `org_id`, `channel_id`, the actor type (`human` or
+        `asa`) and the ref. They are two event kinds, never one kind with a
+        flag, so no consumer can add them into one number.
+     3. **The §10 guard "Unmapped is counted, by route" is rewritten, not
+        dropped.** Over the fixture the bus receives no unmapped emission. The
+        same three injections then produce exactly one route A event, exactly
+        one route B event, and nothing for the member ref. The new guard is
+        seen failing before it replaces the old one.
+     4. **The §11 interim row is removed** and the change is recorded in
+        `contract-amendments.md`.
+
+     What does **not** change: unresolved member refs are still not reported
+     and the ghost reconciliation stays as it is (§7.2, not interim); nothing
+     unmapped is stored in a BOb table; there are still eight projections.
+     If Slice 8 slips, the interim stays, still under its zero-against-fixture
+     test.
    - The requirement is that nobody can believe the feeder processed everything
      when it did not. The interim is tied to a test, not a log, so it cannot
-     quietly become permanent. §11 names what supersedes it.
+     quietly become permanent, and the end condition above says what replaces
+     it.
 
 The recommended shape (System Flows §3) is a scheduled ClickHouse query on a
 timer, not a stream: idempotency comes from the upsert, and rebuild is the same
@@ -1233,7 +1316,7 @@ Each one is seen failing on purpose before it is trusted, and recorded in
 | Tenant key | every projection | Carries `org_id UUID NOT NULL`, no slug column |
 | **Never merged across `actor_type` or `measure`** | every view and function whose definition reads `proj_durations` (`pg_depend`, `pg_proc`) | Structural, in Slice 2: `actor_type` and `measure` are `NOT NULL` and in the primary key. Behavioural: over a fixture with `user` and `human` rows, and with both measures, in one channel and bucket, every discovered reader returns separate distributions. While it discovers zero readers it reports **`todo`, printed and counted in CI**, never `pass` (Q16) |
 | Degenerate actor | `proj_metric_counts`, `proj_durations` | A `proj_metric_counts` row with `abandoned_in_queue`, `abstained`, `classifier_down` or `label_missing` and any `actor_type` but `user` is refused. So is a `proj_durations` row with `interaction_duration` and any `actor_type` but `user` (O2) |
-| **Every turn accounted at seal** (§4.1, if C1–C3 stand) | the rows the feeder writes with `sealed = true` on channels declaring `orga_conversation` | The five states' `reading_count` plus `abstained`, `classifier_down` and `label_missing` equal the true denominator for the bucket. A turn whose label is withheld in the fixture is seen landing in `label_missing`, and moving to its state on a rebuild once the label arrives |
+| **Every turn accounted at seal** (§4.1, C1–C3) | the rows the feeder writes with `sealed = true` on channels declaring `orga_conversation` | The five states' `reading_count` plus `abstained`, `classifier_down` and `label_missing` equal the true denominator for the bucket. A turn whose label is withheld in the fixture is seen landing in `label_missing`, and moving to its state on a rebuild once the label arrives |
 | **Lag not declared** | every channel with `lag_seconds IS NULL` | The fixture's undeclared channel (`roster.sql:36`) gets rows written and none sealed, and Slice 2's report counts it (O1) |
 | Closing is ORGA | `proj_sentiment` | A `meca` row with `closing_count > 0` is refused |
 | Rung pairs with type | `proj_actor_metrics` | A `user` row with `'not_applicable'`, a non-`user` row with any other rung, and an `actor_type` that differs from the actor's are each refused |
@@ -1252,13 +1335,13 @@ promise.
 ## 11 · Interim measures, and what is open after 0.5
 
 0.3's sixteen questions are closed (Relevo task 6, 11 Nov). 0.4's five are
-closed (12 Nov, 08:23).
+closed (12 Nov, 08:23). 0.5's four are closed (13 Nov, 21:26).
 
 ### Interim, named so it stays visibly interim
 
 | Interim in Slice 2 | Superseded by | When |
 |---|---|---|
-| The reference feeder counts unmapped events (route A) and unresolved agent and ASA refs (route B) per run and returns both counts, under a zero-against-fixture test (§8.6) | Emission to the bus, as audit is under X-10 | Slice 8 |
+| The reference feeder counts unmapped events (route A) and unresolved agent and ASA refs (route B) per run and returns both counts, under a zero-against-fixture test (§8.6) | Emission to the bus, as audit is under X-10: two event kinds, the counts removed in the same change, the guard rewritten (end condition in §8.6) | When the Slice 8 bus accepts events from the feeder |
 | The never-merge guard's behavioural half reports `todo` (§10) | The floor, in A-05b's commit | The first route handler |
 | Retention is not enforced (§3) | `pg_cron` detaching and dropping partitions | Slice 5 |
 
@@ -1275,40 +1358,25 @@ and does not wait for the bus.
 | O4 | Two routes; the reconciliation discovers member refs itself, as `bob_app` | §7.2, §8.6 |
 | O5 | Interactions on both sides; the panel's distinct-member figure is a different number on purpose | §7.3 |
 
+### Closed on 13 Nov
+
+Federico chose (a) on all four (Relevo task 6, 13 Nov, 21:26).
+
+| | Ruling | Where |
+|---|---|---|
+| C1 | The cut is the seal. No second per-channel clock: it would make "sealed" mean two things. A channel whose labels are slower than its counts gets a longer declared lag | §4.1 |
+| C2 | `label_missing` is its own `metric_id`, degenerate `user`. It does not assert a cause; `abstained`, `classifier_down` and `label_missing` have three different owners | §4.1, §6.1 |
+| C3 | A label after the cut is a late event and a D-12 rebuild. Alerts already fired stay. The display question goes to D-33 | §4.1 |
+| O6 | `member_refs_seen(frame)` is its own interface, a fourth deliverable of 3.7. The reveal path and an unattended job are not the same door | §7.3a |
+| Two counts | Accepted, with the end condition written beside the interim shape | §8.6 |
+
 ### Open after 0.5
 
-The D-25 cut (§4.1) is a proposal with three real choices in it. The
-recommendation is (a) in each.
+Nothing on Federico's side for 0.5 (13 Nov). One input added elsewhere:
 
-- **C1 · Where the cut sits.**
-  - (a) **At the seal.** No new configuration; sealed keeps meaning complete.
-    The cost: a channel's lag must cover its label path, so a slow label path
-    delays that channel's evaluation.
-  - (b) A second per-channel declaration, `label_cutoff_seconds >=
-    lag_seconds`. A channel could seal its counts early and wait longer for
-    labels. But a sealed bucket would then routinely receive labels after the
-    seal: "sealed" would mean "complete except labels", which weakens D-12's
-    sentence. Between seal and cut a turn would be in a sixth condition,
-    pending, that evaluation would have to handle.
-  - (c) A system constant. Ruled out by the argument that made the idle bound
-    per channel (0.2 Q3): label paths differ by minutes between channels, so
-    one number is too tight for one and too loose for another.
-- **C2 · How the failure is counted.**
-  - (a) **Its own `metric_id`, `label_missing`.** It says what is known: the
-    label never came.
-  - (b) Folded into `classifier_down`. One value fewer, but it asserts a cause
-    the feeder does not know, and it mixes transport failures into the figures
-    used to tune the classifier.
-- **C3 · A label that arrives after the cut.**
-  - (a) **A late event and a rebuild**: the failure becomes a reading. The
-    projection stays a function of the truth store, and the rebuild test holds
-    unchanged.
-  - (b) **Final**: once cut, it stays a failure. Figures are stable once
-    sealed, but the feeder must compare each label's arrival time with the cut.
-    That needs an arrival timestamp on the label in the truth store, so that a
-    full rebuild reaches the same verdict.
-- **O6 · How the reconciliation asks the truth store** (§7.3a). (a) its own
-  named interface, `member_refs_seen(frame)`, a fourth deliverable of 3.7; or
-  (b) `affected_members` called with the filter left out. (a) follows Q15's
-  reasoning against one endpoint with two behaviours. (b) adds nothing to
-  3.7's scope.
+- **D-33** (stays open, deliberately): whether Slice 7 renders "this bucket was
+  rebuilt after it sealed", so that an alert citing a figure the panel no
+  longer shows is explained. The data is already there (`computed_at`,
+  `source_watermark`); only the display is undecided (C3).
+
+What remains is Henry's signature on Relevo task 6. No migration before it.

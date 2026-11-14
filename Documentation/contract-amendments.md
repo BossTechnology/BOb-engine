@@ -1529,13 +1529,76 @@ post and against BOB-14's of 12 Nov (08:17).
   unresolved agent and ASA refs separately. Unresolved member refs are in
   neither.
 
-### Open after 0.5 — on BOB-6
+### Open after 0.5 — on BOB-6, as posted
 
 - **C1:** where the cut sits (seal / second declaration / constant).
 - **C2:** `label_missing` or folded into `classifier_down`.
 - **C3:** a label after the cut rebuilds, or stays a failure.
 - **O6:** `member_refs_seen` as its own interface, or `affected_members`
   without a filter.
+
+### Ruled on 13 Nov — written into 0.5
+
+Federico ruled all four on BOB-6 (13 Nov, 21:26) and accepted the two-count
+proposal with one condition. He treated the 12 Nov 15:02 and 13 Nov 05:18 posts
+as one round (same text). (a) on all four; where his reasons differ from the
+draft's, his are the ones recorded, since the reason is what carries into the
+next decision. The draft's own reasons are kept where they still hold.
+
+- **C1 · the cut is the seal.** The draft argued "no new setting". The stronger
+  reason: a per-channel `label_cutoff_seconds` makes a bucket complete for
+  counts and incomplete for labels at once, so "sealed" means two things and
+  every consumer must know which (two sources of truth about one fact, the
+  defect `actors.external_ref` was dropped to avoid). It would also be two
+  authored numbers per channel that must agree, with nothing asserting it. A
+  channel whose labels need longer gets a longer declared lag. Cost, accepted:
+  a classifier slower than the lag yields `label_missing` systematically until
+  the lag is raised, a configuration error that shows in a product figure.
+  (c) stays out on the idle-bound precedent. Contract §4.1.
+- **C2 · `label_missing` is its own `metric_id`.** It follows from the 5 Nov
+  finding that split `classifier_down` from `abstained`, one rung further out.
+  Folding it into `classifier_down` asserts a cause nobody observed (the
+  classifier, the drone, the relay, the merge step, or a link between them).
+  The three absences have three owners: `abstained` tuning, `classifier_down`
+  operations, `label_missing` plumbing. Contract §4.1, §6.1.
+- **C3 · a label after the cut triggers a rebuild.** D-12's bounded rebuild
+  already exists; (b) would store an arrival timestamp on every label and make
+  the first reading final, so a classifier recovering from an outage would
+  never repair its history. Alerts already fired stay, made a rule: un-firing
+  is worse. Consequence stated: an alert can cite 12% while the panel reads 9%.
+  The data to explain it exists (`computed_at` past the seal,
+  `source_watermark`); no schema change. **Whether Slice 7 renders "this bucket
+  was rebuilt after it sealed" is not decided here: it is one more input to
+  D-33, which stays open.** Contract §4.1, §11.
+- **O6 · `member_refs_seen(frame)`, its own interface.** The draft framed it as
+  a fourth deliverable against reuse. The deciding factor is what
+  `affected_members` is for: it sits on the reveal path (A-11/A-12, ID-04
+  audit), and the reconciliation is an unattended scheduled job as `bob_app`.
+  Not the same door; the narrow interface exposes less. Also: reuse would
+  couple the two, and "no filter" does not scale from Febor's 482 members to
+  eighty thousand. Cost: a fourth deliverable on 3.7. Contract §7.3a, §7.5.
+- **Two counts until the bus · accepted, with an end condition.** O4 arriving
+  at its consequence: the two routes are different failures with different
+  owners, and one count re-merges them (the same objection as BOB-13's
+  `pbx:h:…` against `pbx:42`). The condition: an interim shape must carry what
+  changes when it ends, or it is correct-when-written. Written into §8.6: the
+  interim ends when the Slice 8 bus accepts events from the feeder (X-10). In
+  one change, under a new contract version, the feeder stops returning the
+  counts and emits one event per failure (never both at once); the routes are
+  two event kinds on the bus (shapes proposed); the §10 route guard is
+  rewritten against the bus and seen failing first; the §11 interim row goes.
+  Unchanged: member refs, the reconciliation, nothing stored, eight
+  projections. Contract §8.6, §11.
+
+`[PROPOSED]` markers removed for these: the cut's shape and the
+`label_missing` name (§4.1), `member_refs_seen` (§7.2, §7.3a), the two counts
+(§8.6). §10's "if C1–C3 stand" is gone. Markers that no ruling touched stay.
+
+### Open after 0.5 — on BOB-6
+
+- Nothing on Federico's side for 0.5.
+- D-33 gains an input (C3); it stays open by design.
+- Henry signs 0.5 on BOB-6. No migration before that.
 
 ---
 
