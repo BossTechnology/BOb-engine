@@ -1,6 +1,6 @@
 # BOb v1 · Projection read contract
 
-**Status: DRAFT 0.4 — not published, not signed.** Opens Slice 2. Once Henry
+**Status: DRAFT 0.5 — not published, not signed.** Opens Slice 2. Once Henry
 signs it on Relevo task 6, it is published there and BzzzBX route-plan task 3.7
 implements against it. No migration is written until then.
 
@@ -10,24 +10,47 @@ the contract changes deliberately, with a new version number and an entry in
 `Documentation/contract-amendments.md`. When this file and a signed decision
 disagree, the decision wins.
 
-**What changed from 0.3.** All sixteen §11 questions of 0.3 are closed
-(Relevo task 6, 11 Nov: Q4 at 06:08, the other fifteen at 06:49). The main
-changes:
+**What changed from 0.4.** Federico ruled O1 to O5 on Relevo task 6
+(12 Nov, 08:23), accepted the A-11/A-12 numbering and the five choices 0.4 made,
+and asked for two things: §7.2 split into its two routes, and the shape of the
+D-25 cut. The main changes:
 
-- **Q4.** Abandonment attributes to the side that owed the next turn, and
-  `abandoned_in_queue` is added.
-- **Q3.** `proj_response_time` is renamed `proj_durations` and gains a
-  `measure`.
-- **Q6.** `abstained` and `classifier_down` become `metric_id`s.
-- **Q7.** `closing_count` is added to `proj_sentiment`.
-- **Q8.** `proj_actor_metrics` loses `handled_count` and gains `actor_type`.
-- **Q10.** `proj_channel_health` stores numerators and denominators.
-- **Q9.** There are four `health_*` capabilities.
-- **§10.** The guards are corrected.
+- **O1.** A channel with no declared lag never seals and is never evaluated.
+  Its rows are still written and rendered, and it is surfaced as "lag not
+  declared" (§4, §4.1).
+- **O2.** `interaction_duration` rows are always `user`, the third degenerate
+  actor, with a CHECK (§6.3).
+- **O3.** Q11's refusal does not reach `abandoned_in_queue` (§9.2).
+- **O4.** §7.2 is split into two routes. An unmapped event has no `org_id`;
+  an unresolved actor ref has one. The ghost reconciliation does its own
+  windowed discovery and no longer depends on the bus (§7.2, §8.6).
+- **O5.** The count equality is in interactions on both sides. The panel's
+  "47 members" is distinct members, deliberately a different number (§7.3).
+- **New, §4.1.** The channel-lag section: voice is 5–10 minutes late end to
+  end (Relevo task 14), and the cut after which a missing label is a failure
+  rather than lag.
+- **New, §7.3a.** `member_refs_seen(frame)`, the interface the reconciliation
+  asks the truth store through.
 
-The A-07 / A-09 name collision is resolved (see "Identifiers" below). The full
-list is in `contract-amendments.md`, under "Slice 2 · The projection read
-contract, 0.4".
+**Ruled on 13 Nov** (Relevo task 6, 21:26), in the same draft. Federico chose
+(a) on all four choices 0.5 left open, and accepted the two-count proposal with
+one condition:
+
+- **C1.** The cut is the seal (§4.1).
+- **C2.** The failure is its own `metric_id`, `label_missing` (§4.1, §6.1).
+- **C3.** A label after the cut is a late event and triggers a rebuild. Alerts
+  already fired stay. Whether Slice 7 shows that a bucket was rebuilt after it
+  sealed goes to D-33, which stays open (§4.1).
+- **O6.** `member_refs_seen(frame)` is its own interface, a fourth deliverable
+  of 3.7 (§7.3a).
+- **Two counts until the bus** (§8.6), with the condition written beside it:
+  what changes when the bus arrives.
+
+Where his reasons differ from the ones 0.5 gave, his are recorded, because the
+reason is what carries into the next decision.
+
+The 0.3→0.4 changes are in `contract-amendments.md`, under "Slice 2 · The
+projection read contract, 0.4". This round is under "…, 0.5".
 
 **One property runs through it** (Relevo task 6, 11 Nov): **a projection stores
 counts, sums and distributions. It never stores a figure derived from them.**
@@ -41,6 +64,13 @@ ratios.
   - 10 Nov: F-20 closed with §3.3 attached, D-03, the hallucinations
     correction, A-11, 0.2's Q3 to Q7, `health_pct` dropped.
   - 11 Nov: 0.3's sixteen questions.
+  - 12 Nov: O1 to O5, the numbering and the five choices accepted, §7.2's
+    split, the D-25 cut asked for.
+  - 13 Nov (21:26): C1 to C3 and O6 ruled, the two counts accepted with an
+    end condition.
+- Relevo task 14 (the AI drone), 12 Nov: Henry's measured voice latency
+  (00:39, 01:42) and Federico's ruling that only chat goes to the provider in
+  v1 (08:17).
 - **Handoff §3.3, "The tables"** (`BOb_Implementation_Handoff_v1_2.docx`), as
   attached to Relevo task 6 on 10 Nov: `BOb_Handoff_3_3_The_Tables.md`, 16,183
   bytes, md5 `eb89363d41da5c8e9f11df8c905d7f3c`, with its supersession notes.
@@ -61,7 +91,7 @@ ratios.
 **Identifiers.** `contract-amendments.md` is the register of A-numbers. A number
 there is permanent. A ruling made on Relevo under a number the register already
 uses is entered at the next free number, and is cited by that number from then
-on (decided by this draft, as Relevo task 6 asked on 11 Nov). So:
+on (decided by 0.4, as Relevo task 6 asked on 11 Nov; accepted 12 Nov). So:
 
 | On Relevo it was called | It is | Meaning |
 |---|---|---|
@@ -77,7 +107,7 @@ on (decided by this draft, as Relevo task 6 asked on 11 Nov). So:
 | Party | Owns | Never does |
 |---|---|---|
 | **BzzzBX** (truth store, ClickHouse) | Raw business events, per-interaction grain, `correlation_id`, `entity_id`, `miembro.id`, `bzzz.tenant` | Knows a BOb UUID; holds an identity store (D47) |
-| **BOb** (Postgres, schema `bob`) | `org_id`, `channel_id`, `actor_id`, configuration (§9), live state, the shape of the eight tables, ghost reconciliation (§7.2) | Queries the truth store except through `affected_members` (§7.3); writes a projection (PR-4) |
+| **BOb** (Postgres, schema `bob`) | `org_id`, `channel_id`, `actor_id`, configuration (§9), live state, the shape of the eight tables, ghost reconciliation (§7.2) | Queries the truth store except through the named interfaces of §7.3 and §7.3a; writes a projection (PR-4) |
 | **The feeder** | Every row in the eight tables, and the partitions they live in (§3) | Reads BOb configuration beyond the two named views in §7.4; creates or writes an actor |
 
 There is exactly one writer, `bob_feeder`. Whether the reference feeder or 3.7
@@ -122,6 +152,8 @@ holds that credential, the contract is the same.
   `channels.lag_seconds`). NULL means not declared, which the evaluator must
   refuse rather than treat as zero (A-04). An event arriving after its bucket is
   sealed is a **rebuild trigger** (§8.5), not a late-arrival path of its own.
+  What a channel's lag must cover, and when a missing label stops being late
+  and becomes a failure, is §4.1.
 - **Where a measure lands, by rule:**
 
 | Measure | Lands in the bucket of | Ruling |
@@ -193,7 +225,21 @@ bucket_start + interval '5 minutes' + (lag_seconds * interval '1 second') <= sou
 
 using the channel's `lag_seconds` at the moment of writing. 0.3 stated the rule
 without the lag, which is stricter than the contract and wrong for every channel
-with a declared lag. For a channel whose lag is NULL, see §11 O1.
+with a declared lag.
+
+**A channel whose lag is NULL never seals** (12 Nov, O1). That is A-04 applied:
+NULL is not zero. Only sealing and evaluation stop:
+- Its rows are still written and still rendered. The data is not lost; the
+  alerting is honestly off, because the evaluator refuses every open bucket
+  and so no threshold ever fires on that channel.
+- The channel is surfaced to the customer as **"lag not declared"**. Without
+  it the customer sees figures, receives no alerts, and has no way to learn
+  why. A silence with no stated cause looks like a system that is working.
+- Slice 2 reports **the count of channels whose lag is NULL**, so we see the
+  gap too, not only a customer who happens to open the right panel. It sits
+  beside the lag-below-idle-bound report (§9.2).
+
+One declaration fixes it.
 
 **The guard asserts this at write time, not as a standing invariant** (Q1). After a
 lag change, or after a rebuild moves a watermark, honest historic rows would trip
@@ -208,6 +254,104 @@ further facts of its own, but its attribution is revisable:
 The change is always applied by rebuilding the window, never by patching rows.
 Anyone implementing "sealed" as "immutable" implements the ruling out of
 existence.
+
+### 4.1 Channel lag (D-25): what it must cover, and the label cut
+
+New in 0.5. Federico moved the latency finding here from Relevo task 14
+(12 Nov): "a projection fact, not a drone fact".
+
+**What a declared lag states.** `channels.lag_seconds` says: by this long after
+a bucket ends, every fact of that bucket has reached the truth store. Sealing
+(§4) and evaluation (PR-7) wait for it. It is per channel because the paths
+differ by minutes.
+
+**Voice is minutes late, with or without a provider.** Febor today (Relevo
+task 14, 12 Nov):
+
+| Leg | Febor today | Kind |
+|---|---|---|
+| Call delivered to the box by the third party, after hang-up | 1.5–6 min | Measured |
+| Whisper transcription | ~3.5 min per call | Measured |
+| Provider round trip, if a call's text were sent | ~5 s median, ~20 s p95 | Estimated |
+| **End to end** | **~5–10 min** | |
+
+- The provider term is not the one that matters. Voice misses the 30-second
+  watermark and the five-minute bucket with the provider or without it.
+- A voice channel's lag must cover the slowest leg behind any fact the eight
+  tables read from it. If a projected fact comes from the transcript, that is
+  ~10 minutes on today's figures. A 14:00–14:05 voice bucket then seals around
+  14:15 at the earliest, and "real time" on voice means that.
+- In v1 no voice transcript goes to the provider, and voice produces no ORGA
+  because the audio is mono (Relevo task 14, 12 Nov; ruled 5 Nov). So the
+  provider leg does not apply to voice in v1.
+- Chat to the provider adds ~1.5 s median and ~6 s p95 per message
+  (estimated). That fits well inside a five-minute bucket, and chat's lag is
+  set by the rest of its path.
+- **Declare lag from the measured tail, not the median** **[PROPOSED]**. A lag
+  at the median puts half of a channel's facts behind the seal, and each of
+  them is a rebuild.
+
+**The label cut: when a missing label is a failure rather than lag.** A label
+is a fact derived from a fact that has already arrived. In Slice 2 it is the
+ORGA sentiment label on a customer turn, on a channel that declares
+`orga_conversation`. If the turn has arrived and its label has not, the label
+is either late or lost, and 0.4 does not say when the first becomes the second.
+
+Without a cut, a lost label is lateness forever. The turn sits in the
+denominator and in no state. `abstained` and `classifier_down` stay at zero.
+A provider outage on chat reads as lag, not as a failure. That is
+absent-versus-zero again, in the labelling path.
+
+**The cut** (ruled 13 Nov, C1–C3):
+1. **The cut is the seal** (C1). When a bucket seals under §4, a customer turn
+   in it with no label, no `abstained` and no `classifier_down` is a failure.
+   No new configuration: the declared lag already says "everything for this
+   bucket has arrived by now", and a label is part of everything.
+   - The deciding reason (Federico, 13 Nov) is what a second clock would do to
+     the seal. A per-channel `label_cutoff_seconds` makes a bucket complete for
+     counts and incomplete for labels at the same moment. "Sealed" would mean
+     two things, and every consumer would have to know which: two sources of
+     truth about one fact. It would also be two authored numbers per channel
+     that must agree, with nothing asserting that they do.
+   - If a channel's labels need longer than its counts, the fix is **a longer
+     declared lag on that channel**, not a second clock.
+   - The cost: a channel whose classifier is slower than its declared lag
+     produces `label_missing` systematically until someone raises the lag. That
+     is a configuration error that shows itself in a product-visible figure,
+     which is the direction it should fail in.
+2. **The failure is its own `metric_id`, `label_missing`** (C2),
+   `actor_type = 'user'`, degenerate like the other two (§6.1). It is not
+   `classifier_down`. At the cut we know the label never came, not why: the
+   classifier, the drone, the relay, the merge step, or the link between any
+   two. Folding it into `classifier_down` would write a diagnosis in the voice
+   of a measurement. As a metric it takes a threshold and a response with no
+   new machinery, which is how a provider outage on chat becomes an alert.
+3. **A label that arrives after the cut is a late event** (C3, §3). It
+   triggers D-12's bounded rebuild, which moves the turn from `label_missing`
+   to its state, so a classifier that recovers after an outage repairs its own
+   history. No arrival timestamp is stored on labels.
+   - **Alerts already fired stay as they fired** (D-12). Un-firing an alert is
+     worse than leaving it. The consequence, stated: a customer can hold an
+     alert citing 12% while the panel now reads 9%.
+   - The data to explain that gap already exists: a rebuild moves
+     `computed_at` past the seal, and `source_watermark` records what it saw.
+     Nothing is added to the schema.
+   - **Not decided here:** whether Slice 7 renders "this bucket was rebuilt
+     after it sealed". It goes to **D-33 as one more input**, and D-33 stays
+     open.
+
+**What it buys.** At seal, every customer turn on a channel that declares
+`orga_conversation` is in exactly one of: the five states, `abstained`,
+`classifier_down`, `label_missing`. Those add up to the true denominator, the
+`session_count` of §6.1. A guard asserts it at write time (§10). A missing
+label can no longer be silently absent.
+
+**Where the cut does not apply.**
+- A channel whose lag is NULL never seals, so it never cuts (O1). A missing
+  label there stays lag, and the channel shows "lag not declared".
+- A channel that does not declare `orga_conversation` expects no label.
+  Nothing is missing; it is not configured (§5). Febor voice is this case
+  today.
 
 ## 5 · Absent, zero, not configured
 
@@ -239,7 +383,11 @@ Derived figures that are absent rather than zero by ruling:
 - MECA when no selected channel declares `meca_rum` (FR-32, FR-35).
 - `hallucinations` ("Unfounded claims") until a ground truth exists (§6.1).
 - `abandoned` on a channel with no idle bound: it renders **not configured**
-  (§9.2).
+  (§9.2). `abandoned_in_queue` is not affected (12 Nov, O3).
+
+One more state is about alerting, not figures: a channel whose lag is NULL
+renders its figures and is marked **"lag not declared"**, because nothing on
+it is evaluated (§4, O1).
 
 The em dash in the Slice 7 roster means **off shift** (Relevo task 10), a
 fourth rendering that belongs to the roster rather than to this contract.
@@ -281,7 +429,7 @@ is `TEXT CHECK (actor_type IN ('user','asa','human','arep'))`, the set
 
 Below, "provenance" means the three columns of §4. On the six bucketed tables,
 it also means `sealed` and the grain CHECK of §3. Lines marked `-- 0.4` differ
-from 0.3.
+from 0.3, and lines marked `-- 0.5` differ from 0.4.
 
 ### 6.1 `proj_metric_counts` — the metrics, by actor type
 
@@ -294,13 +442,15 @@ CREATE TABLE bob.proj_metric_counts (
   metric_id     TEXT        NOT NULL
                 CHECK (metric_id IN ('resolved','abandoned','abandoned_in_queue', -- 0.4
                        'disambiguation','escalations','hallucinations',
-                       'abstained','classifier_down')),                          -- 0.4
+                       'abstained','classifier_down',                            -- 0.4
+                       'label_missing')),                     -- 0.5, §4.1 C2
   bucket_start  TIMESTAMPTZ NOT NULL,
   event_count   BIGINT      NOT NULL DEFAULT 0,
   session_count BIGINT      NOT NULL DEFAULT 0,   -- denominator
-  -- 0.4: three metrics have one possible actor, by definition
+  -- 0.4: these metrics have one possible actor, by definition
   CONSTRAINT proj_metric_counts_degenerate_actor
-    CHECK (metric_id NOT IN ('abandoned_in_queue','abstained','classifier_down')
+    CHECK (metric_id NOT IN ('abandoned_in_queue','abstained','classifier_down',
+                             'label_missing')                 -- 0.5, §4.1 C2
            OR actor_type = 'user'),
   -- sealed + provenance
   PRIMARY KEY (org_id, channel_id, actor_type, metric_id, bucket_start)
@@ -322,6 +472,7 @@ CREATE TABLE bob.proj_metric_counts (
 | `abandoned` | the side that owed the next turn. Last turn the customer's, nobody replied: the agent or ASA holding. Last turn the business's, no reply came: `user` |
 | `abandoned_in_queue` | `user`, always (degenerate) |
 | `abstained`, `classifier_down` | `user`, always (degenerate) |
+| `label_missing` | `user`, always (degenerate). Ruled 13 Nov, C2 (§4.1) |
 
 - **D-03's original wording for `abandoned` is superseded.** "The actor holding
   the interaction when the customer left" named a bystander. It would have filed
@@ -360,6 +511,18 @@ customer turns the classifier failed to label:
   turns, which leaves out the abstentions this exists to show.
 - As metrics they take a threshold and a response with no new machinery. The
   abstention rate is the instrument for tuning the classifier's confidence bar.
+
+**`label_missing`** (13 Nov, C2; §4.1). A customer turn still unlabelled
+when its bucket seals: the label never came, cause unknown. Kept apart from
+`classifier_down`, which asserts the cause. It is the 5 Nov argument that split
+`classifier_down` from `abstained`, one rung further out. The three absences
+each have a different owner, so they cannot share a count:
+- `abstained` is a tuning signal;
+- `classifier_down` is an operations signal;
+- `label_missing` is a plumbing signal.
+
+With it, the five states plus the three failure values account for every
+customer turn at seal.
 
 **`resolved`, for v1, means closed without escalation** (Relevo task 12, D-15).
 It is conversation grain and lands at the conversation's close (§3). "No
@@ -430,6 +593,9 @@ CREATE TABLE bob.proj_durations (                                        -- 0.4,
   hist_offset     INTEGER     NOT NULL,           -- index of first populated bucket
   hist_counts     BIGINT[]    NOT NULL DEFAULT '{}',
   hist_zero_count BIGINT      NOT NULL DEFAULT 0,
+  -- 0.5: a conversation's length belongs to the conversation (O2)
+  CONSTRAINT proj_durations_interaction_is_user
+    CHECK (measure <> 'interaction_duration' OR actor_type = 'user'),
   -- sealed + provenance
   PRIMARY KEY (org_id, channel_id, actor_type, measure, bucket_start)    -- 0.4
 ) PARTITION BY RANGE (bucket_start);
@@ -477,7 +643,18 @@ as a distribution.
   average it asked for, and `bob_availability_user`'s average duration is
   `sum_ms / n` over it. The drill-down gets conversation length for nothing.
 - It is conversation grain and lands at the conversation's close (§3).
-- Which `actor_type` its rows carry is **[OPEN]** §11 O2.
+- **Its rows always carry `actor_type = 'user'`** (12 Nov, O2). A
+  conversation's duration is a property of the conversation, not of an actor.
+  The customer is the only actor present for the whole of it; every other actor
+  is present for part.
+  - Splitting it as per-actor held time would need a sum across `actor_type`
+    to recover the conversation's length, which the never-merge rule forbids.
+    Taking the quantity that needs no exemption keeps the rule whole.
+  - This is the third degenerate actor, after `abandoned_in_queue` and the
+    classifier counts. Same treatment: the CHECK above, and a test that the
+    value never varies (§10).
+  - If per-actor held time is wanted later, it is **a different `measure` with
+    its own name**, never a reinterpretation of this one.
 - It replaces 0.2's `duration_ms_sum` and `duration_n` on `proj_metric_counts`.
   Those repeated the same two numbers on every metric row, the same defect as
   `handled_count` (§6.6).
@@ -601,15 +778,16 @@ below.
   - The rung is right for member rows and impossible for the others: a human
     agent or an ASA has no identity rung, and a primary-key column cannot be
     NULL. So non-member rows carry the declared value `'not_applicable'`
-    **[PROPOSED value]**.
+    (chosen in 0.4, accepted 12 Nov).
   - The CHECK asserts that `user` rows never carry it and non-`user` rows always
     do. That needs `actor_type` on the row.
   - The composite foreign key keeps the denormalised type equal to the actor's.
     It needs `UNIQUE (id, actor_type)` on `actors`, added in the Slice 2
-    migration that already touches `actors` (§9.3) **[PROPOSED]**.
+    migration that already touches `actors` (§9.3). Accepted 12 Nov: the
+    foreign key makes the pairing unforgeable, not merely checked.
 - **(b) `handled_count` is dropped.** Keyed by `metric_id`, it repeated on every
   metric row of an actor. It becomes the reserved **`metric_id = 'handled'`**
-  (name **[PROPOSED]**), whose `event_count` is the number of interactions the
+  (name chosen in 0.4, accepted 12 Nov), whose `event_count` is the number of interactions the
   actor touched, whatever happened. That gives one row per actor, channel, rung
   and bucket. "Read it as the maximum" would have been a rule enforced by
   documentation.
@@ -721,7 +899,7 @@ actor_id, ref)`, with `(org_id, ref)` UNIQUE** (Relevo task 13, 10 Nov). See §9
   - An agent's namespace is discovered from `channels.source_key`.
   - An ASA's is authored on its deployment record, because there is nothing to
     discover it from. `actors.provider`, the ASA-only column that exists today,
-    is the candidate **[PROPOSED]**.
+    is the source (chosen in 0.4, accepted 12 Nov).
   - No code path contains a namespace literal, and a guard asserts it (§10).
   - Deployment 42 on two platforms is two deployments, the same argument as PBX
     42 against Zendesk 42.
@@ -731,26 +909,55 @@ actor_id, ref)`, with `(org_id, ref)` UNIQUE** (Relevo task 13, 10 Nov). See §9
   deferral safe.
 - **BOb never infers a link from similarity.**
 
-**When a ref resolves to no actor, the rule splits by actor type** (11 Nov, Q13):
+**Two routes, never one** (12 Nov, O4). 0.4 sent two different failures down
+one sentence and both to §8.6. That is how the Q12/Q13 collision survived two
+readings. They differ in one fact: whether the event has an `org_id`.
+
+| | Route A · an unmapped event | Route B · an unresolved actor ref |
+|---|---|---|
+| What failed | `(tenant_slug, source_key)` did not resolve (§2) | The event mapped; its actor ref resolved to no actor |
+| `org_id` | **None.** That is what failed | **Known**, and so is the channel |
+| Is the event projected? | No | **Yes.** It counts in §6.1 under its actor type, and is absent from §6.6 until the ref resolves |
+| Where it goes | Counted and returned by the feeder (§8.6); the bus in Slice 8 | Splits by actor type, below |
+| Ruling | 0.2 Q6; 11 Nov, Q12, unchanged | 11 Nov, Q13; 12 Nov, O4 |
+
+Route A's arithmetic (no `org_id`, so no tenant-scoped table) is what ruled out
+a ninth projection. It never applied to route B.
+
+**Route B splits by actor type** (11 Nov, Q13):
 
 | Actor type | Meaning | What happens |
 |---|---|---|
-| `human`, `asa` | A configuration error: the person or deployment is in the customer's record and we failed to map it | Emitted (§8.6), **never** an actor. Creating one would paper over the error and corrupt the roster |
-| `user` | Normal: someone contacted the business who is not a registered customer | It is a **ghost** and gets an actor at rung `ghost` |
+| `human`, `asa` | A configuration error: the person or deployment is in the customer's record and we failed to map it | Emitted, **never** an actor. Creating one would paper over the error and corrupt the roster. Until the bus, the feeder counts these apart from route A (§8.6) |
+| `user` | Normal: someone contacted the business who is not a registered customer. The majority case | It is a **ghost** and gets an actor at rung `ghost`, created by the reconciliation below |
 
-- **The feeder still never creates an actor.** It stays read-only on `actors`
-  and keeps emitting. A **BOb-side reconciliation running as `bob_app`**
-  creates ghosts from member refs only.
-  - A guard asserts that this path can never produce a non-`user` actor (§10).
-  - Where the reconciliation reads unmapped refs from is **[OPEN]** §11 O4.
+**The ghost reconciliation does its own discovery** (12 Nov, O4).
+- It runs **as `bob_app`**, on a schedule, over a window: it asks the truth
+  store which member refs (`m:…`) were seen in the window, and creates a ghost
+  for each one that resolves to no actor in `actor_external_refs`.
+- "Resolves to no actor" is decided on BOb's side. BzzzBX never knows a BOb
+  actor (§1), so the truth store returns refs seen and BOb subtracts the refs
+  it knows.
+- The question goes through a named interface, `member_refs_seen(frame)`
+  (13 Nov, O6; §7.3a), so BOb still never knows which truth store it runs
+  against.
+- **No new table. No change to the feeder's grants. No dependence on Slice 8's
+  bus.** With the bus as the source there would be no ghosts for most of v1,
+  which guts the member drill-down ghosts were ruled to serve.
+- The window starts where the last run ended, bounded by retention (C-14)
+  **[PROPOSED]**.
+
+What stays from 0.4:
+- **The feeder still never creates an actor.** It stays read-only on `actors`.
+  A guard asserts that the reconciliation can never produce a non-`user` actor
+  (§10).
 - **Ghost creation is a linkage event.** It triggers D-12's bounded rebuild
   (§8.5), which fills the `proj_actor_metrics` rows that were absent while the
   ref resolved to nothing. No new mechanism is needed.
 - **The identified-to-ghost ratio is the product-visible signal** a normalisation
-  defect now shows up in (for example, non-E.164 phones). The unmapped *agent*
-  rate stays the operational one.
-- Until it resolves, an interaction counts in §6.1 under its actor type and is
-  absent from §6.6.
+  defect now shows up in (for example, non-E.164 phones: Henry's count of 482 pbx
+  refs and 1,547 YCloud refs at Febor, none in common, cited 11 Nov, Q13). The unresolved *agent* count stays the
+  operational one.
 - Today a human agent is identifiable on voice only, because there is no agent
   on WhatsApp events. The table shows that as an absent mapping.
 
@@ -790,8 +997,16 @@ contract, the application still never knows which truth store it runs against.
   no identified member".
 - **The count-equality test is the whole guarantee.** The drill-through's member
   count plus its anonymous count equals the cell's count for the same frame. It
-  is seen failing first (§10). The unit both sides are counted in is **[OPEN]**
-  §11 O5.
+  is seen failing first (§10).
+- **The unit is interactions, on both sides** (12 Nov, O5). Member interaction
+  rows plus anonymous interactions equals the cell's interaction count. It is
+  the only unit that balances: distinct members plus anonymous interactions
+  does not, because one member has several interactions.
+- **The panel shows a different number on purpose.** "47 members affected" is
+  **distinct members**; the test balances **interactions**. Both are correct and
+  they are not meant to agree. Written here so that the first person to check
+  47 against the cell does not report a bug that is not there, and nobody
+  "fixes" it.
 - **A third deliverable** (11 Nov, Q15), not a mode of the evidence packages.
   The two are different shapes: a lookup by a known key, against a query that
   returns a set. The count-equality test also needs this one independently
@@ -804,6 +1019,35 @@ contract, the application still never knows which truth store it runs against.
   - one member's whole history reads the attributes map for the window. A
     materialised `miembro_id` column with a bloom-filter index is the BzzzBX fix
     if it hurts.
+
+### 7.3a `member_refs_seen(frame)` — what the ghost reconciliation reads
+
+New in 0.5, for O4; ruled its own interface on 13 Nov (O6), **a fourth
+deliverable of 3.7**:
+
+- **`frame`**: `tenant_slug`, `source_key`(s), and a window `[from, to)`, as in
+  §7.3.
+- **Output**: one row per distinct member ref seen in the frame:
+  `external_ref` (`m:…`), `first_seen`, `last_seen`. Paged. No
+  `correlation_id`, no counts: the reconciliation needs to know a ref exists,
+  not what it did.
+- **Pseudonyms only**, as in §7.3.
+
+Why not `affected_members` with the filter left out (Federico, 13 Nov):
+- **The deciding reason is what `affected_members` is for.** It sits on the
+  reveal path: it answers "who was affected" for a person looking at a panel,
+  under A-11/A-12 and the ID-04 audit trail. The reconciliation is an
+  unattended scheduled job running as `bob_app`. Those should not be the same
+  door. A narrow interface that returns refs and nothing else exposes less,
+  which is what a job that runs unwatched should have.
+- Reusing it would couple the two: a later change to `affected_members` for
+  the drill-down would silently change the reconciliation.
+- "No filter" is cheap on Febor's 482 members and not on a customer with
+  eighty thousand.
+- Q15's reasoning against one endpoint with two behaviours, which 0.5 gave,
+  still holds, but it was not the deciding one.
+
+The cost is the fourth deliverable on 3.7, and nothing else.
 
 ### 7.4 What the feeder reads from BOb
 
@@ -826,10 +1070,11 @@ surface. A BOb cell reaches them through its frame (`tenant_slug`,
 `source_key`, bucket window, `external_ref`), which is a query key into BzzzBX,
 not a BOb table.
 
-So 3.7 delivers three things that do not merge:
+So 3.7 delivers things that do not merge:
 - the eight tables;
 - the evidence packages;
-- `affected_members`.
+- `affected_members`;
+- `member_refs_seen` (O6).
 
 ## 8 · The feeder's obligations
 
@@ -869,16 +1114,50 @@ So 3.7 delivers three things that do not merge:
 6. **Create the partition it writes into, and account for what it cannot map.**
    - Partitions go through the one function of §3: create, grant, RLS.
    - What it cannot map is emitted to the bus, as audit is under X-10. That
-     covers an unresolved tenant or channel (§2) and an agent or ASA ref with
-     no actor (§7.2).
-   - **Until the bus exists (Slice 8), the reference feeder counts unmapped
-     events per run and returns the count** (11 Nov, Q12). A non-zero run reports
-     it, and a test asserts zero against the fixture (§10). Nothing is stored:
-     a ninth projection breaks the count of eight, and a non-tenant table of
-     unresolved customer data is worse than the problem.
+     covers §7.2's route A (an unresolved tenant or channel) and the agent and
+     ASA half of route B (a ref with no actor). An unresolved **member** ref is
+     neither: it is normal, it is projected, and the reconciliation finds it
+     on its own (§7.2). The feeder does not report it.
+   - **Until the bus exists (Slice 8), the reference feeder counts per run and
+     returns the counts** (11 Nov, Q12). **Two counts, never one sum**
+     (accepted 13 Nov): unmapped events (route A) and unresolved agent and ASA
+     refs (route B). They are different failures with different owners: one is
+     an event we cannot attribute to any organisation, the other an event whose
+     organisation we know and whose actor we cannot resolve. A single number
+     re-merges what O4 separated, and nobody can act on it. A non-zero run
+     reports them, and a test asserts both are zero against the fixture (§10).
+     Nothing is stored: a ninth projection breaks the count of eight, and a
+     non-tenant table of unresolved customer data is worse than the problem.
+   - **End condition: what changes when the bus arrives** (13 Nov, the
+     condition of the acceptance). The interim ends when the Slice 8 bus
+     accepts events from the feeder, as audit is accepted under X-10. Then, in
+     one change and under a new contract version:
+     1. **The feeder stops returning the two counts.** It emits one event per
+        failure instead. Both run together at no point: two outputs for one
+        fact would be two sources of truth.
+     2. **The two routes stay two on the bus** (event shapes
+        **[PROPOSED]**). A route A event carries `tenant_slug` and
+        `source_key`, and no `org_id`, because that is what failed. A route B
+        event carries `org_id`, `channel_id`, the actor type (`human` or
+        `asa`) and the ref. They are two event kinds, never one kind with a
+        flag, so no consumer can add them into one number.
+     3. **The §10 guard "Unmapped is counted, by route" is rewritten, not
+        dropped.** Over the fixture the bus receives no unmapped emission. The
+        same three injections then produce exactly one route A event, exactly
+        one route B event, and nothing for the member ref. The new guard is
+        seen failing before it replaces the old one.
+     4. **The §11 interim row is removed** and the change is recorded in
+        `contract-amendments.md`.
+
+     What does **not** change: unresolved member refs are still not reported
+     and the ghost reconciliation stays as it is (§7.2, not interim); nothing
+     unmapped is stored in a BOb table; there are still eight projections.
+     If Slice 8 slips, the interim stays, still under its zero-against-fixture
+     test.
    - The requirement is that nobody can believe the feeder processed everything
      when it did not. The interim is tied to a test, not a log, so it cannot
-     quietly become permanent. §11 names what supersedes it.
+     quietly become permanent, and the end condition above says what replaces
+     it.
 
 The recommended shape (System Flows §3) is a scheduled ClickHouse query on a
 timer, not a stream: idempotency comes from the upsert, and rebuild is the same
@@ -946,10 +1225,19 @@ Exposed to the feeder through `v_feeder_channel_map`.
     are idle, a partial count would show twelve when the truth is three hundred:
     a real number, understated by an unknown amount, with nothing saying so.
   - An absent metric is recoverable in a minute by declaring the bound.
-  - This is A-04's refuse precedent at the right scope. Whether it reaches
-    `abandoned_in_queue` is **[OPEN]** §11 O3.
+  - This is A-04's refuse precedent at the right scope.
+- **The refusal does not reach `abandoned_in_queue`** (12 Nov, O3). Q11
+  withholds abandonment because idle detection needs the bound. A queue
+  abandonment does not use it: the customer ends the interaction before any
+  actor takes it, which is an explicit event, not a timeout.
+  - Withholding it would be the rule applied by name rather than by reason, and
+    it would suppress the staffing signal, the most actionable figure in the
+    set.
+  - Caveat: on Febor voice this is theory until the call-label problem
+    resolves, because the labels that would identify a queue abandonment are
+    the ones in question (Relevo tasks 10 and 14).
 - **Lag and idle bound: a declared relationship, not a CHECK** (11 Nov, Q5,
-  which offered either) **[PROPOSED]**.
+  which offered either; chosen in 0.4, accepted 12 Nov).
   - If a channel's `lag_seconds` is shorter than its `idle_bound_seconds`,
     every idle abandonment lands behind the seal and triggers a rebuild. That is
     not wrong, but it is constant churn.
@@ -971,7 +1259,7 @@ is the defect this table exists to fix. The counter-precedent,
 and lives on a partitioned table. `actors` is neither.
 
 The same Slice 2 migration adds `UNIQUE (id, actor_type)` to `actors` for §6.6's
-composite key **[PROPOSED]**.
+composite key (accepted 12 Nov).
 
 Two more pieces belong to the actor work in Slice 2, not to this contract. They
 are named here because a wrong salt fails §7.2 silently:
@@ -1027,13 +1315,15 @@ Each one is seen failing on purpose before it is trusted, and recorded in
 | **Sealed at write time** | every projection with a `sealed` column | Over the rows the feeder writes in the test run, and only those, every row written with `sealed` satisfies §4's rule **with the channel's declared lag at that moment**. Not a standing scan of history (Q1) |
 | Tenant key | every projection | Carries `org_id UUID NOT NULL`, no slug column |
 | **Never merged across `actor_type` or `measure`** | every view and function whose definition reads `proj_durations` (`pg_depend`, `pg_proc`) | Structural, in Slice 2: `actor_type` and `measure` are `NOT NULL` and in the primary key. Behavioural: over a fixture with `user` and `human` rows, and with both measures, in one channel and bucket, every discovered reader returns separate distributions. While it discovers zero readers it reports **`todo`, printed and counted in CI**, never `pass` (Q16) |
-| Degenerate actor | `proj_metric_counts` | A row with `abandoned_in_queue`, `abstained` or `classifier_down` and any `actor_type` but `user` is refused |
+| Degenerate actor | `proj_metric_counts`, `proj_durations` | A `proj_metric_counts` row with `abandoned_in_queue`, `abstained`, `classifier_down` or `label_missing` and any `actor_type` but `user` is refused. So is a `proj_durations` row with `interaction_duration` and any `actor_type` but `user` (O2) |
+| **Every turn accounted at seal** (§4.1, C1–C3) | the rows the feeder writes with `sealed = true` on channels declaring `orga_conversation` | The five states' `reading_count` plus `abstained`, `classifier_down` and `label_missing` equal the true denominator for the bucket. A turn whose label is withheld in the fixture is seen landing in `label_missing`, and moving to its state on a rebuild once the label arrives |
+| **Lag not declared** | every channel with `lag_seconds IS NULL` | The fixture's undeclared channel (`roster.sql:36`) gets rows written and none sealed, and Slice 2's report counts it (O1) |
 | Closing is ORGA | `proj_sentiment` | A `meca` row with `closing_count > 0` is refused |
 | Rung pairs with type | `proj_actor_metrics` | A `user` row with `'not_applicable'`, a non-`user` row with any other rung, and an `actor_type` that differs from the actor's are each refused |
-| Ghost path | the reconciliation of §7.2 | Given agent, ASA and member refs that resolve to nothing, it creates actors for member refs only, all at rung `ghost`, and never a non-`user` actor |
+| Ghost path | the reconciliation of §7.2 | Given agent, ASA and member refs that resolve to nothing, it creates actors for member refs only, all at rung `ghost`, and never a non-`user` actor. It finds them through `member_refs_seen` (§7.3a), with the feeder's counts at zero for member refs |
 | No namespace literal | every tracked file (`git ls-files`, as the naming test does) | No code path builds a ref with a literal namespace; namespaces come from `channels.source_key` or the deployment record (Q14) |
-| Unmapped is counted | the reference feeder over the fixture | The returned unmapped count is zero. A deliberately unmappable event is injected first, to watch it go non-zero (Q12) |
-| `affected_members` count equality | 3.7's endpoint over a frame | Member count plus anonymous count equals the cell's count for the same frame (Q15) |
+| Unmapped is counted, by route | the reference feeder over the fixture | Both returned counts are zero. Then three injections, one at a time: an unmappable event moves only the route A count; an agent ref with no actor moves only the route B count; a member ref with no actor moves neither (Q12, O4) |
+| `affected_members` count equality | 3.7's endpoint over a frame | Member interaction rows plus anonymous interactions equal the cell's interaction count for the same frame (Q15, O5). The distinct-member figure the panel shows is not part of the equality |
 | Rebuild with linkage | the rebuild test | A linkage inside the rebuilt window leaves `identity_rung_at_interaction` as it was at event time, and the render identical to a full rebuild |
 | No capability from channel type | the codebase and the schema | No code path, view, function or seed derives `channel_capabilities` from `channel_type` (Relevo task 10) |
 
@@ -1042,47 +1332,51 @@ A-05b returns with the first route handler, and the floor that makes the
 behavioural half required lands in that same commit. It is not a later
 promise.
 
-## 11 · Interim measures, and what is open after 0.4
+## 11 · Interim measures, and what is open after 0.5
 
-0.3's sixteen questions are closed (Relevo task 6, 11 Nov).
+0.3's sixteen questions are closed (Relevo task 6, 11 Nov). 0.4's five are
+closed (12 Nov, 08:23). 0.5's four are closed (13 Nov, 21:26).
 
 ### Interim, named so it stays visibly interim
 
 | Interim in Slice 2 | Superseded by | When |
 |---|---|---|
-| The reference feeder counts unmapped events per run and returns the count, under a zero-against-fixture test (§8.6) | Emission to the bus, as audit is under X-10 | Slice 8 |
+| The reference feeder counts unmapped events (route A) and unresolved agent and ASA refs (route B) per run and returns both counts, under a zero-against-fixture test (§8.6) | Emission to the bus, as audit is under X-10: two event kinds, the counts removed in the same change, the guard rewritten (end condition in §8.6) | When the Slice 8 bus accepts events from the feeder |
 | The never-merge guard's behavioural half reports `todo` (§10) | The floor, in A-05b's commit | The first route handler |
 | Retention is not enforced (§3) | `pg_cron` detaching and dropping partitions | Slice 5 |
 
-### Open after 0.4
+The ghost reconciliation is **not** interim. It does its own discovery (§7.2)
+and does not wait for the bus.
 
-These five came out of writing 0.4 against the 11 Nov rulings. None reopens a
-ruling. Each is a gap a ruling leaves.
+### Closed on 12 Nov
 
-- **O1 · Sealing on a channel with no declared lag.** §4's rule needs
-  `lag_seconds`. A-04 forbids treating NULL as zero. So does the feeder never
-  seal a bucket of a channel whose lag is NULL, or does it seal with some
-  other rule? Never sealing is consistent with A-04, and it means that
-  channel's buckets stay open, and unevaluated, until a lag is declared.
-- **O2 · `actor_type` on `interaction_duration`.** An interaction has several
-  actors and one length. FR-22 is *user* availability. Are these rows always
-  `user`, the third degenerate case, or one row per actor type present?
-- **O3 · Does Q11's refusal reach `abandoned_in_queue`?** A queue abandonment is
-  the customer hanging up while queued, which is not detected by the idle bound.
-  The ruling says "no abandonment rows" for a channel without a bound, and does
-  not say whether that includes this one.
-- **O4 · Where the ghost reconciliation reads unmapped member refs.** The feeder
-  returns only a count in Slice 2 (§8.6), never the refs. BOb reads the truth
-  store only through `affected_members`. Does the reconciliation get the refs
-  from the feeder's run result, from `affected_members`, or from the bus in
-  Slice 8? If it is the bus, ghosts do not exist before Slice 8.
-- **O5 · The unit of `affected_members`' count equality.**
-  - Member rows are one per member per interaction.
-  - The anonymous count is in interactions.
-  - The cell's `event_count` counts events, and `hallucinations` can count
-    more than one per interaction.
+| | Ruling | Where |
+|---|---|---|
+| O1 | Never seal with NULL lag; rows still written and rendered; "lag not declared"; a count of such channels | §4, §5 |
+| O2 | `interaction_duration` is always `user`, degenerate, with a CHECK and a test | §6.3 |
+| O3 | Q11's refusal does not reach `abandoned_in_queue` | §9.2 |
+| O4 | Two routes; the reconciliation discovers member refs itself, as `bob_app` | §7.2, §8.6 |
+| O5 | Interactions on both sides; the panel's distinct-member figure is a different number on purpose | §7.3 |
 
-  0.4 reads the equality as interactions on both sides: member interaction rows
-  plus anonymous interactions equals the cell's interaction count. "47 members"
-  on the panel is then distinct members, which can be fewer. Confirm, or name
-  the unit.
+### Closed on 13 Nov
+
+Federico chose (a) on all four (Relevo task 6, 13 Nov, 21:26).
+
+| | Ruling | Where |
+|---|---|---|
+| C1 | The cut is the seal. No second per-channel clock: it would make "sealed" mean two things. A channel whose labels are slower than its counts gets a longer declared lag | §4.1 |
+| C2 | `label_missing` is its own `metric_id`, degenerate `user`. It does not assert a cause; `abstained`, `classifier_down` and `label_missing` have three different owners | §4.1, §6.1 |
+| C3 | A label after the cut is a late event and a D-12 rebuild. Alerts already fired stay. The display question goes to D-33 | §4.1 |
+| O6 | `member_refs_seen(frame)` is its own interface, a fourth deliverable of 3.7. The reveal path and an unattended job are not the same door | §7.3a |
+| Two counts | Accepted, with the end condition written beside the interim shape | §8.6 |
+
+### Open after 0.5
+
+Nothing on Federico's side for 0.5 (13 Nov). One input added elsewhere:
+
+- **D-33** (stays open, deliberately): whether Slice 7 renders "this bucket was
+  rebuilt after it sealed", so that an alert citing a figure the panel no
+  longer shows is explained. The data is already there (`computed_at`,
+  `source_watermark`); only the display is undecided (C3).
+
+What remains is Henry's signature on Relevo task 6. No migration before it.

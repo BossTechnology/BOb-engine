@@ -1474,4 +1474,132 @@ A guard asserts that, holding tenant A's claim, a tenant B row is refused.
 
 ---
 
+## Slice 2 · The projection read contract, 0.5
+
+Draft 0.5 replaces 0.4 in `docs/contracts/projection-contract.md`. It is still
+a draft: Henry signs it on BOB-6, and no migration is written before then.
+Federico ruled O1 to O5 on 12 Nov (08:23), accepted the A-11/A-12 numbering and
+the five choices 0.4 made, and asked for two things: §7.2 split into its two
+routes, and the shape of the D-25 cut. Every item below was checked against that
+post and against BOB-14's of 12 Nov (08:17).
+
+### Rulings written into 0.5
+
+- **O1 · NULL lag never seals.** Rows are still written and rendered; only
+  sealing and evaluation stop. The channel is surfaced as "lag not declared",
+  and Slice 2 reports a count of channels with NULL lag. Contract §4, §5.
+- **O2 · `interaction_duration` is always `user`.** A conversation's length
+  belongs to the conversation. Per-actor split would need a sum across
+  `actor_type`, which the never-merge rule forbids. Third degenerate actor: a
+  CHECK on `proj_durations` and a test. Per-actor held time, if wanted, is a new
+  `measure`. Contract §6.3.
+- **O3 · Q11's refusal does not reach `abandoned_in_queue`.** Queue abandonment
+  is an explicit event and never reads the idle bound. Caveat: on Febor voice it
+  is theory until the call-label problem resolves. Contract §9.2.
+- **O4 · two routes, and the collision was in the ruling.** An unmapped event
+  has no `org_id` (Q12 unchanged). An unresolved actor ref has one. The ghost
+  reconciliation does its own windowed discovery as `bob_app`: no new table, no
+  change to the feeder's grants, no dependence on the Slice 8 bus. Contract §7.2.
+- **O5 · interactions on both sides.** The panel's "47 members" is distinct
+  members, deliberately a different number from the one the test balances.
+  Contract §7.3.
+- **Accepted, no longer proposals:** `'not_applicable'` with the composite
+  foreign key, `handled`, the table CHECKs for the degenerate actors and
+  ORGA-only `closing_count`, lag versus idle bound as a declared relationship,
+  `actors.provider` as the ASA namespace.
+
+### Proposed in 0.5
+
+- **§4.1 · the channel-lag section.** Voice at Febor is ~5–10 min end to end
+  (1.5–6 min delivery and ~3.5 min Whisper, measured; the provider round trip,
+  ~5 s median, is estimated and does not matter). It misses the 30-second
+  watermark and the five-minute bucket with or without a provider. A voice
+  channel's lag must cover the slowest leg behind any fact the eight tables
+  read from it. Lag is declared from the measured tail, not the median.
+- **§4.1 · the D-25 cut.** The cut is the seal. A customer turn still unlabelled
+  when its bucket seals is counted as a new `metric_id`, `label_missing`
+  (degenerate `user`). A label arriving after the cut is a late event and a
+  rebuild. At seal, every customer turn is in exactly one of the five states,
+  `abstained`, `classifier_down` or `label_missing`, and a guard asserts it.
+  Three choices in it are open as C1–C3.
+- **§7.3a · `member_refs_seen(frame)`.** What the reconciliation asks the truth
+  store, as its own named interface. Open as O6 against `affected_members` with
+  no filter.
+- **§8.6 · two counts, not one.** The interim feeder returns unmapped events and
+  unresolved agent and ASA refs separately. Unresolved member refs are in
+  neither.
+
+### Open after 0.5 — on BOB-6, as posted
+
+- **C1:** where the cut sits (seal / second declaration / constant).
+- **C2:** `label_missing` or folded into `classifier_down`.
+- **C3:** a label after the cut rebuilds, or stays a failure.
+- **O6:** `member_refs_seen` as its own interface, or `affected_members`
+  without a filter.
+
+### Ruled on 13 Nov — written into 0.5
+
+Federico ruled all four on BOB-6 (13 Nov, 21:26) and accepted the two-count
+proposal with one condition. He treated the 12 Nov 15:02 and 13 Nov 05:18 posts
+as one round (same text). (a) on all four; where his reasons differ from the
+draft's, his are the ones recorded, since the reason is what carries into the
+next decision. The draft's own reasons are kept where they still hold.
+
+- **C1 · the cut is the seal.** The draft argued "no new setting". The stronger
+  reason: a per-channel `label_cutoff_seconds` makes a bucket complete for
+  counts and incomplete for labels at once, so "sealed" means two things and
+  every consumer must know which (two sources of truth about one fact, the
+  defect `actors.external_ref` was dropped to avoid). It would also be two
+  authored numbers per channel that must agree, with nothing asserting it. A
+  channel whose labels need longer gets a longer declared lag. Cost, accepted:
+  a classifier slower than the lag yields `label_missing` systematically until
+  the lag is raised, a configuration error that shows in a product figure.
+  (c) stays out on the idle-bound precedent. Contract §4.1.
+- **C2 · `label_missing` is its own `metric_id`.** It follows from the 5 Nov
+  finding that split `classifier_down` from `abstained`, one rung further out.
+  Folding it into `classifier_down` asserts a cause nobody observed (the
+  classifier, the drone, the relay, the merge step, or a link between them).
+  The three absences have three owners: `abstained` tuning, `classifier_down`
+  operations, `label_missing` plumbing. Contract §4.1, §6.1.
+- **C3 · a label after the cut triggers a rebuild.** D-12's bounded rebuild
+  already exists; (b) would store an arrival timestamp on every label and make
+  the first reading final, so a classifier recovering from an outage would
+  never repair its history. Alerts already fired stay, made a rule: un-firing
+  is worse. Consequence stated: an alert can cite 12% while the panel reads 9%.
+  The data to explain it exists (`computed_at` past the seal,
+  `source_watermark`); no schema change. **Whether Slice 7 renders "this bucket
+  was rebuilt after it sealed" is not decided here: it is one more input to
+  D-33, which stays open.** Contract §4.1, §11.
+- **O6 · `member_refs_seen(frame)`, its own interface.** The draft framed it as
+  a fourth deliverable against reuse. The deciding factor is what
+  `affected_members` is for: it sits on the reveal path (A-11/A-12, ID-04
+  audit), and the reconciliation is an unattended scheduled job as `bob_app`.
+  Not the same door; the narrow interface exposes less. Also: reuse would
+  couple the two, and "no filter" does not scale from Febor's 482 members to
+  eighty thousand. Cost: a fourth deliverable on 3.7. Contract §7.3a, §7.5.
+- **Two counts until the bus · accepted, with an end condition.** O4 arriving
+  at its consequence: the two routes are different failures with different
+  owners, and one count re-merges them (the same objection as BOB-13's
+  `pbx:h:…` against `pbx:42`). The condition: an interim shape must carry what
+  changes when it ends, or it is correct-when-written. Written into §8.6: the
+  interim ends when the Slice 8 bus accepts events from the feeder (X-10). In
+  one change, under a new contract version, the feeder stops returning the
+  counts and emits one event per failure (never both at once); the routes are
+  two event kinds on the bus (shapes proposed); the §10 route guard is
+  rewritten against the bus and seen failing first; the §11 interim row goes.
+  Unchanged: member refs, the reconciliation, nothing stored, eight
+  projections. Contract §8.6, §11.
+
+`[PROPOSED]` markers removed for these: the cut's shape and the
+`label_missing` name (§4.1), `member_refs_seen` (§7.2, §7.3a), the two counts
+(§8.6). §10's "if C1–C3 stand" is gone. Markers that no ruling touched stay.
+
+### Open after 0.5 — on BOB-6
+
+- Nothing on Federico's side for 0.5.
+- D-33 gains an input (C3); it stays open by design.
+- Henry signs 0.5 on BOB-6. No migration before that.
+
+---
+
 *Boss.Technology · BOb v1 · Internal only*
