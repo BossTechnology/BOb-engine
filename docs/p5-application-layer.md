@@ -3,15 +3,22 @@
 **Status: INPUTS, not a decision. Nothing here is signed.** Prepared on
 2026-11-11 for the P5 question on Relevo task BZZ-3 (Federico, 10 Nov: "the
 whole application layer: the projection schema, the three roles and their
-grants, and the migration mechanism").
+grants, and the migration mechanism"). Updated on 2026-11-18 with Federico's
+answers to Q1–Q3 and Henry's answers to his two questions (Relevo BZZ-19,
+18 Nov). The answers settle the inputs; they do not sign P5.
 
-The decision itself is a BzzzBX decision. It takes the next free number in the
-BzzzBX register when it is signed. The route plan called it D39\*, and D39
-went to retention. Henry signs it. This file is what it is written from.
+The decision itself is a BzzzBX decision: **D62** in the BzzzBX register. The
+route plan called it D39\*, and D39 went to retention. Henry signs it. This
+file is what it is written from.
+
+- *2026-11-18 · numbering.* BZZ-19 gave P5 the number D60. D60 was signed in
+  Bzzz the same day for something else (the batch at the root of SendGrid), so
+  Henry reassigned P5 to D62.
 
 **What it does not do.** It writes no migration, creates no role and touches no
 database. Slice 2's migrations still wait for the projection contract to be
-signed on Relevo task 6. This file must not be read as permission to start them.
+signed on Relevo task 6 (draft 0.5, PR #17, open). This file must not be read
+as permission to start them.
 
 **Markers.**
 - **[DECIDED]**: a signed decision or a ruling already states this. The
@@ -19,6 +26,7 @@ signed on Relevo task 6. This file must not be read as permission to start them.
 - **[PROPOSED]**: a choice these inputs make that no ruling states. It stands
   only if the decision adopts it.
 - **[OPEN]**: a question the decision has to answer. They are listed in §7.
+  As of 2026-11-18 all five are answered there; none is left open.
 - **[FINDING]**: something wrong in what is on `main` today, found while
   writing this. It is recorded in `Documentation/contract-amendments.md`.
 
@@ -30,8 +38,11 @@ signed on Relevo task 6. This file must not be read as permission to start them.
 - `Documentation/contract-amendments.md`: A-05, N-04, N-08, F-18, F-19, and the
   rulings after Slice 1c and after the Slice 2 questions.
 - Relevo task 6, Federico's official replies of 23 Oct, 5, 10 and 11 Nov.
-- Relevo task BZZ-3: Federico's replies of 23 Oct and 10 Nov, and Henry's
-  replies of 26 Oct and 10 Nov.
+- Relevo task BZZ-3: Federico's replies of 23 Oct and 10 Nov, his answers to
+  Q1–Q3 (Q1 on 12 Nov), his acceptance of Q3 in the form of 15 Nov rather than
+  that of 12 Nov, and Henry's replies of 26 Oct and 10 Nov.
+- Relevo task BZZ-19: Henry's replies of 18 Nov (the feeder's home, the
+  numbering).
 - BzzzBX repository, read-only, at `origin/main` on 2026-11-11:
   - `docs/PLAN_ruta_bzzzbx_etapas_0_a_5.md`: §3.5, §3.6, stage 3, tasks 5.3 and
     5.9. This plan is unsigned.
@@ -45,8 +56,11 @@ signed on Relevo task 6. This file must not be read as permission to start them.
 
 | Item | State | Where |
 |---|---|---|
-| The projection schema is the contract, 0.4 | **[DECIDED]** in content, unsigned as a file. Federico: "Nothing is left on Federico's side for this contract" (Relevo task 6, 11 Nov). O1 to O5 are open | §2 |
-| The three roles are `bob_app`, `bob_feeder` and `bob_ai_ro` | **[PROPOSED]** reading. The roles exist; that these are the "three roles" P5 means is the reading to confirm | §3 |
+| The projection schema is the contract, 0.4 | **[DECIDED]** in content, unsigned as a file. Federico: "Nothing is left on Federico's side for this contract" (Relevo task 6, 11 Nov). O1 to O5 are open. Draft 0.5 is PR #17, open | §2 |
+| The three roles are `bob_app`, `bob_feeder` and `bob_ai_ro`, as Handoff §4.3 defines them | **[DECIDED]** (Federico, 12 Nov, Q1) | §3 |
+| The reference feeder holds `bob_feeder` first; 3.7 takes the same credential later | **[DECIDED]** (Henry, BZZ-19, 18 Nov) | §3.1 |
+| `organizations` / `org_id` replace runbook §7.3's `tenants` / `app_entities` for BOb; `organizations.slug` = `bzzz.tenant` | **[DECIDED]** (Federico, Q2) | §5.1 |
+| Development runs on a local Supabase pinned to the box's images and CI's CLI; lab-02 is the integration and rehearsal target; the hosted project is the demo's again and never hosts BOb | **[DECIDED]** (Q3 in its 15 Nov form, accepted by Federico on BZZ-3) | §5.1, §6.2 |
 | PR-4: BOb never writes a projection, enforced by grant | **[DECIDED]** (Handoff §4.3; A-05) | §3.2 |
 | One writer, `bob_feeder`; it reads exactly two views from BOb | **[DECIDED]** (contract §1, §7.4) | §3.2 |
 | The feeder never creates an actor; ghosts are created by BOb as `bob_app` | **[DECIDED]** (Relevo task 6 Q13, 11 Nov) | §3.2 |
@@ -57,7 +71,8 @@ signed on Relevo task 6. This file must not be read as permission to start them.
 | BOb's Postgres is the box's `supabase-db`, schema `bob` | **[PROPOSED]**, following N-04 and the schema move to `bob` | §5.1 |
 | Migrations live in BOb-engine, are append-only, and are tested from an empty database in CI | **[DECIDED]** (repository conventions; F-15) | §6.1 |
 | The box applies them with the same CLI CI uses, lab first | **[PROPOSED]** | §6.2 |
-| Two defects in the feeder's access as built | **[FINDING]** F-21, F-22 | §3.3 |
+| A rehearsed failed migration on lab-02 and a written procedure, before the first window (not before the signature) | **[DECIDED]** as a condition (Federico) | §6.2 |
+| Two defects in the feeder's access as built | **[FINDING]** F-21, F-22. Their fixes travel with Slice 2's migrations, behind the contract's signature | §3.3 |
 
 ---
 
@@ -92,6 +107,8 @@ wins.
 **Status.** Federico closed all sixteen of 0.3's questions on 11 Nov. Five gaps
 are open in contract §11 (O1 to O5). None of them changes a role or a grant.
 The contract is signed by Henry on Relevo task 6, and then published there.
+Draft 0.5 is open as PR #17. That signature, not P5's, is what Slice 2's
+migrations wait for (§6.1).
 
 **What P5 adds to the contract.** Nothing to its content. It answers where the
 eight tables live (§5.1), who may touch them (§3), and how they get there (§6).
@@ -107,16 +124,22 @@ route plan (§D39) asks who requested them and what they are. The roles that
 exist are the three of Handoff §4.3. They were created in Slice 0, in
 `20260902100300_roles_and_grants.sql`, as `NOLOGIN` groups:
 
-| Role | Purpose (from its `COMMENT ON ROLE`) | Who holds the credential **[PROPOSED]** | Route-plan name |
+| Role | Purpose (from its `COMMENT ON ROLE`) | Who holds the credential | Route-plan name |
 |---|---|---|---|
-| `bob_app` | The application. Reads and writes configuration and live state; read-only on projections. PR-4 | The BOb application, one container in the box | `bzzz/apps` |
-| `bob_feeder` | The feeder. Writes projections. No read on configuration | The feeder: the reference feeder, or 3.7, the same credential either way (contract §1) | not in Plan v2 §9.2 |
-| `bob_ai_ro` | The reasoning tier. Read-only on named `v_ai_*` views and nothing else. IR-1 | The inference service, task 5.3 | `bzzz/supabase-ro` |
+| `bob_app` | The application. Reads and writes configuration and live state; read-only on projections. PR-4 | **[PROPOSED]** The BOb application, one container in the box | `bzzz/apps` |
+| `bob_feeder` | The feeder. Writes projections. No read on configuration | **[DECIDED]** The reference feeder first; 3.7 takes the same credential later (contract §1). Henry, BZZ-19, 18 Nov | not in Plan v2 §9.2 |
+| `bob_ai_ro` | The reasoning tier. Read-only on named `v_ai_*` views and nothing else. IR-1 | **[PROPOSED]** The inference service, task 5.3 | `bzzz/supabase-ro` |
 
-**[PROPOSED]** These are the three. The plan's `supabase-ro` ("SELECT only on
-named views", task 3.5) is `bob_ai_ro` under another name. The plan's role for
-the applications is `bob_app`. The feeder is the one the plan does not name,
-because the plan was written before the contract existed. **[OPEN]** §7 Q1.
+**[DECIDED]** (Federico, 12 Nov, Q1) These are the three, as Handoff §4.3
+defines them. The plan's `supabase-ro` ("SELECT only on named views", task 3.5)
+is `bob_ai_ro` under another name. The plan's role for the applications is
+`bob_app`. The feeder is the one the plan does not name, because the plan was
+written before the contract existed.
+
+**Why the reference feeder first** (Henry, BZZ-19). It can be run against the
+local Supabase (§5.1) before 3.7 exists. So F-21 and F-22 are exercised against
+a database, not only read, and 3.7 inherits a credential whose access has
+already been exercised.
 
 `anon`, `authenticated`, `service_role` and the migration owner are Supabase's
 own. They are not among the three, but §3.2 states what each may do here.
@@ -210,6 +233,13 @@ every insert is refused.
 - **Proposed guard:** as `bob_feeder`, with the claim for tenant A, inserting a
   row for tenant B is refused.
 
+**When F-21 and F-22 are fixed.** Behind another signature. The fixes travel
+with Slice 2's migrations, and those wait for the projection contract 0.5
+(PR #17, open) to be signed on Relevo task 6. P5 can be signed first: it
+declares the two fixes and their guards (§6.3), and builds neither. Once the
+reference feeder holds `bob_feeder` on the local Supabase (§3.1), both are run
+against a database before the fix is trusted, not only read.
+
 **`bob_app`** **[PROPOSED]**. The same mechanism. A request handler sets the
 claim from the user's verified JWT. Background work, such as the ghost
 reconciliation, iterates per tenant and sets each one. Whether user reads run as
@@ -258,7 +288,7 @@ asks.
 | `bzzz/supabase` | Migration owner, `JWT_SECRET`, `SERVICE_ROLE_KEY` | `/opt/bzzz/secrets/supabase.env` (exists) | The migration step (§6.2), the database container and operator scripts |
 | `bzzz/supabase-ro` | `bob_ai_ro` login | `/opt/bzzz/secrets/bob/ai-ro.env` | The inference service |
 | `bzzz/apps` | `bob_app` login | `/opt/bzzz/secrets/bob/app.env` | The BOb container |
-| none (new) | `bob_feeder` login | `/opt/bzzz/secrets/bob/feeder.env` | The feeder |
+| none (new) | `bob_feeder` login | `/opt/bzzz/secrets/bob/feeder.env` | The reference feeder first, then 3.7 (§3.1) |
 
 - **One credential per file, and one reader per file.** Rotation follows
   `docs/OPERACION_rotacion_secretos.md`.
@@ -288,16 +318,30 @@ GoTrue's `auth`. There is no second Postgres. The reasons:
   too, which is stage 4 and D41\*'s question. Until then, no production BOb
   connects to the box.
 - **The tenancy model is already settled.** Relevo task 7, ruling (d) made `org_id` the
-  tenant key. Runbook §7.3's `tenants` and `app_entities` (task 3.4) are not
-  built for BOb. BOb's `organizations`, with `slug` = `bzzz.tenant` (A-01,
-  A-02), plays that part. **[OPEN]** §7 Q2.
+  tenant key. **[DECIDED]** (Federico, Q2): for BOb, `organizations` and
+  `org_id` replace runbook §7.3's `tenants` and `app_entities` (task 3.4),
+  which are not built for BOb. `organizations.slug` stays equal to
+  `bzzz.tenant` (A-01, A-02).
 
-**[DECIDED]** In the meantime, the one hosted Supabase project is this
-repository's target (rulings after the Slice 2 questions). That target is
-interim by definition. No migration goes there before a backup exists (N-08),
-and applying the chain there breaks the demo's bridge until that bridge has its
-contract file. **[OPEN]** §7 Q3: what the hosted project is once the box
-carries BOb.
+**[DECIDED]** Q3, in its 15 Nov form, which Federico accepted on BZZ-3 (not the
+form of 12 Nov). Where BOb's schema runs before and beside the boxes:
+
+- **Development** runs against a local Supabase, pinned to the box's images and
+  to the CLI version CI pins (§6.2).
+- **lab-02** (`bzzz-lab-02`) is the integration and rehearsal target. Every
+  migration chain is applied there before `bzzz-model-01` and before any
+  company box.
+- **The hosted project** goes back to being the demo's. It never hosts BOb.
+  This replaces the earlier ruling, after the Slice 2 questions, that made it
+  this repository's interim target; N-08's backup condition for applying there
+  no longer arises.
+
+The reasons:
+
+- Rehearsals and development on the same machine would interfere with each
+  other, and silently.
+- The box's Supabase is identity only, so it is not a place to develop
+  against.
 
 ### 5.2 Networks **[PROPOSED]**
 
@@ -324,7 +368,8 @@ carries BOb.
 - **Every guard is seen failing before it is trusted,** and recorded in
   `contract-amendments.md`.
 - **Order:**
-  - No Slice 2 migration before the contract is signed on Relevo task 6.
+  - No Slice 2 migration before the contract is signed on Relevo task 6
+    (draft 0.5, PR #17, open).
   - Slice 2's migrations bring the contract §10 guards and the role guards in
     §6.3.
 
@@ -337,13 +382,44 @@ carries BOb.
 | As whom | The migration owner (`postgres` in the Supabase image), from `/opt/bzzz/secrets/supabase.env`. It owns every object, which the `SECURITY DEFINER` functions and definer views need |
 | From where | A step in `scripts/actualizar.sh`, after the database and before any service that uses the new schema. That follows BzzzBX's rule of migration before code, as with the centro's 009 |
 | Who runs it | Henry, in a maintenance window with notice to the company (CLAUDE.md: production is Henry's). Never an agent, and never a running service |
-| How it is tried first | `supabase db push --dry-run` on `bzzz-lab-02`, then the real apply there, then `bzzz-model-01`, then the company boxes. This is plan §3.6's `--plan` habit, and D16's rule that tests run on another machine, never on a second copy |
+| How it is tried first | Development runs on a local Supabase pinned to the box's images and to CI's CLI version (§5.1, Q3 **[DECIDED]**). Then `supabase db push --dry-run` on `bzzz-lab-02`, the real apply there, then `bzzz-model-01`, then the company boxes. lab-02 is where every chain is applied first. This is plan §3.6's `--plan` habit, and D16's rule that tests run on another machine, never on a second copy |
 | How it is checked after | A read-only check against the box: the applied versions equal the pinned commit's files, and the role guards of §6.3 that need no fixture. The full suite never runs against a company box: it loads and deletes a fixture |
-| If it fails | The push stops at the failing file. Files already applied stay applied and recorded, and the rest wait. Every migration since `20260902100000` wraps its work in `BEGIN … COMMIT`, and new ones must, so a failed file leaves nothing half-done. Nine older files do not; they have all run in CI from an empty database, and they would run once on a new box. Nothing is rolled back by hand: the fix is a new migration (append-only) |
+| If it fails | See below. Nothing is rolled back by hand |
+
+**If a migration fails mid-chain.** What these inputs say today is read, not
+measured:
+
+- The push stops at the failing file. Files already applied stay applied and
+  recorded, and the rest wait.
+- Every migration since `20260902100000` wraps its work in `BEGIN … COMMIT`,
+  and new ones must, so a failed file should leave nothing half-done. That
+  comes from reading the files; no run has shown it.
+- Nine older files (`20260606115900` to `20260830100000`) are not wrapped. On
+  a new box they run first. They have all run in CI from an empty database.
+  The count is read from the files on `main` on 2026-11-18: nineteen
+  migrations, ten wrapped, nine not.
+
+**[DECIDED]** as a condition (Federico): **before the first maintenance
+window, not before the signature**, two things exist.
+
+1. **A rehearsal on lab-02.** A dump is taken first. Then a chain is applied
+   with one migration rigged to fail in the middle of it. The rehearsal
+   records:
+   - what `supabase_migrations.schema_migrations` says afterwards;
+   - which objects exist;
+   - whether the failing file left anything behind.
+2. **A written procedure for when it happens.** There are two ways forward:
+   - **Go forward with a fix:** a new migration (append-only), applied by the
+     same step.
+   - **`restore.sh`:** it returns the whole database, identity accounts
+     included. That cost is why the choice between the two is written down
+     beforehand and is not worked out during a window.
 
 ### 6.3 Guards the roles add — **[PROPOSED]**
 
-These are in addition to contract §10. Each one is seen failing first.
+These are in addition to contract §10. Each one is seen failing first. P5
+declares them, with the F-21 and F-22 fixes; they are built with Slice 2's
+migrations, after the contract is signed (§3.3).
 
 | Guard | Asserts |
 |---|---|
@@ -359,22 +435,45 @@ These are in addition to contract §10. Each one is seen failing first.
 
 ## 7 · What the decision has to answer
 
-Three questions for Federico, and two for Henry. None reopens a ruling.
+Three questions for Federico, and two for Henry. None reopened a ruling. All
+five are answered (as of 2026-11-18); the decision is still unsigned.
 
 1. **Q1 · Are these the three roles?** `bob_app`, `bob_feeder` and `bob_ai_ro`,
    from Handoff §4.3, with `bzzz/supabase-ro` being `bob_ai_ro`. The route plan
-   asks who requested "the three roles" (`INSUMOS_D29` §7). If something else
-   was meant, the matrix in §3.2 changes.
+   asks who requested "the three roles" (`INSUMOS_D29` §7).
+   **Answered** (Federico, 12 Nov): yes, the three as Handoff §4.3 defines
+   them. The matrix in §3.2 stands.
 2. **Q2 · Is runbook §7.3's tenancy model superseded for BOb?** BOb's
    `organizations` and `org_id` (Relevo task 7, ruling (d)) instead of `tenants` and
    `app_entities`, in the box's `supabase-db`, schema `bob`.
+   **Answered** (Federico): yes. `organizations.slug` stays equal to
+   `bzzz.tenant` (§5.1).
 3. **Q3 · The hosted project.** Does it stay as BOb's development target once a
    box carries BOb, or does it go back to being only the demo's?
+   **Answered** in its 15 Nov form, accepted by Federico on BZZ-3, not the
+   12 Nov form: development on a local Supabase pinned to the box's images and
+   CI's CLI; lab-02 as the integration and rehearsal target; the hosted project
+   is the demo's and never hosts BOb (§5.1, §6.2).
 4. **For Henry · the feeder's home.** Which process holds `bob_feeder` first:
-   the reference feeder or 3.7. The contract says the credential is the same
-   either way, and the decision only needs to say which one gets the file.
-5. **For Henry · the numbering.** The decision takes the next free number in the
-   BzzzBX register when it is signed.
+   the reference feeder or 3.7.
+   **Answered** (Henry, BZZ-19, 18 Nov): the **reference feeder**. It can run
+   against the local Supabase before 3.7 exists, so F-21 and F-22 are run
+   against a database and not only read. 3.7 takes the same credential
+   afterwards (contract §1).
+5. **For Henry · the numbering.**
+   **Answered** (Henry, 18 Nov): **D62**.
+   - *2026-11-18:* BZZ-19 had said D60. D60 was signed in Bzzz that day for
+     another matter (the batch at the root of SendGrid), and Henry reassigned
+     P5 to D62.
+
+**What stands between these inputs and the signature.**
+
+- **Before signing:** `/abogado-del-diablo` on P5.
+- **Not before signing, but before the first window:** the failed-migration
+  rehearsal on lab-02 and the written procedure (§6.2).
+- **Behind another signature:** the F-21 and F-22 fixes and the §6.3 guards
+  travel with Slice 2's migrations, which wait for the projection contract 0.5
+  (PR #17, open). P5 can be signed first, declaring the fixes and their guards.
 
 **Not in P5.** These belong to other decisions:
 
