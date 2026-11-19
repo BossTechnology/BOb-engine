@@ -1435,8 +1435,9 @@ Five, in contract §11. None reopens a ruling.
 Federico asked on BZZ-3 (10 Nov) for the whole application layer: the
 projection schema, the three roles and their grants, and the migration
 mechanism. The inputs are `docs/p5-application-layer.md`. The decision is a
-BzzzBX one, takes the next free number there, and is unsigned. Nothing below
-writes a migration.
+BzzzBX one, numbered **D62** in the BzzzBX register (18 Nov; D60, first
+promised for it on BZZ-19, was signed the same day for another decision), and
+is unsigned. Nothing below writes a migration.
 
 Reading the Slice 0 grants against the roles that will hold them turned up two
 defects. Both were found by reading the migration, not by running it.
@@ -1599,6 +1600,48 @@ next decision. The draft's own reasons are kept where they still hold.
 - Nothing on Federico's side for 0.5.
 - D-33 gains an input (C3); it stays open by design.
 - Henry signs 0.5 on BOB-6. No migration before that.
+
+## Slice 2 · The projection read contract, 0.5.1
+
+Henry's review before signing (18 Nov). Read against the chain on `main`
+(`roles_and_grants`, `actors`) and the 0.5 text. No ruling changes. Four
+`[PROPOSED]` choices that no ruling touched each had a gap; they are tightened
+and stay `[PROPOSED]`, tagged H1–H4, until the signature. The other four
+markers (partition name, `latency_` prefix, the bus event shapes, the linkage
+history table) stand as written.
+
+- **H1 · the partition function refuses anything else (§3, §10).** It is
+  `SECURITY DEFINER` and `bob_feeder` can call it. "Takes a parent from the
+  eight and a month" said what it is for, not what it rejects: as written, any
+  partitioned table could be handed to it and get a partition with the
+  definer's grants. It now checks the parent by OID against the eight in `bob`,
+  and the month as the first day of a UTC month, and raises otherwise. New
+  guard, seen failing first.
+- **H2 · "the measured tail" is p99 over seven days (§4.1).** Without a
+  percentile, a window and an owner the rule could not be checked. The operator
+  measures event time to arrival on the box; the figure, window and date are
+  written beside `lag_seconds`. No measurement means no declared lag, and O1
+  applies: an estimate is not a measurement.
+- **H3 · the ghost window trails and overlaps (§7.2).** "Starts where the last
+  run ended" needed a cursor, which "no new table" rules out, and a window
+  starting exactly at the previous end misses a late member ref (voice, ~10
+  min). Now each run covers `interval + L` (L = the tenant's largest declared
+  lag); ghost creation is idempotent, so the overlap is free. A slower sweep
+  over retention covers missed runs, raised lags and first runs. Its schedule
+  and cost are open for 3.7 (§11); they do not block the signature.
+- **H4 · `valid_to` is derived (§7.4).** `v_feeder_actor_map` listed
+  `valid_to`; §9.4's `actor_ref_history` has `valid_from` only. The view derives
+  it as the next `valid_from` of the same ref, NULL for the current row and for
+  agent and ASA refs.
+
+Also corrected here: the P5 section above said the decision "takes the next
+free number"; it is D62.
+
+### Open after 0.5.1
+
+- H3's sweep: schedule and ClickHouse cost, for 3.7 on BOB-6.
+- D-33 as after 0.5.
+- Henry signs 0.5.1 on BOB-6. No migration before that.
 
 ---
 

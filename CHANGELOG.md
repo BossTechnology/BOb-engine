@@ -3,6 +3,7 @@
 Una línea por cambio entregado, en lenguaje de usuario.
 
 ## Sin publicar
+- Contrato de proyección 0.5.1, la revisión de Henry antes de firmar: la función que crea particiones rechaza cualquier tabla que no sea de las ocho y cualquier mes mal formado; el lag de un canal se declara con el p99 de siete días medido en la caja; la búsqueda de fantasmas usa una ventana que se solapa en vez de un cursor guardado; y `valid_to` se calcula, no se guarda. P5 queda nombrada como D62.
 - Insumos de P5 (D62) al día: Federico decidió los tres roles, el modelo de tenencia y el proyecto hospedado (en su forma del 15 nov); Henry respondió quién tiene `bob_feeder` primero y el número. La migración fallida se ensaya en lab-02 antes de la primera ventana; P5 sigue sin firmar.
 - Contrato de proyección 0.5 con las elecciones de Federico del 13 nov: el corte de etiquetas es el sellado, una etiqueta que falta se cuenta como `label_missing`, una etiqueta tardía reconstruye el bucket sin deshacer alertas, y la reconciliación de fantasmas tiene su propia consulta. Los dos conteos del feeder quedan aceptados y el contrato dice qué cambia cuando llegue el bus.
 - Borrador 0.5 del contrato de proyección: un canal sin lag declarado sigue mostrando cifras pero se marca «lag no declarado»; la duración de la conversación es del cliente; los eventos sin tenant y los actores sin resolver siguen dos caminos separados; se propone el corte tras el cual una etiqueta que falta es un fallo y no un retraso.

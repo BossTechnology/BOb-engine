@@ -1,8 +1,23 @@
 # BOb v1 · Projection read contract
 
-**Status: DRAFT 0.5 — not published, not signed.** Opens Slice 2. Once Henry
+**Status: DRAFT 0.5.1 — not published, not signed.** Opens Slice 2. Once Henry
 signs it on Relevo task 6, it is published there and BzzzBX route-plan task 3.7
 implements against it. No migration is written until then.
+
+**What changed from 0.5** (Henry's review before signing, 18 Nov). Four
+`[PROPOSED]` choices that no ruling touched had a gap, and are tightened. No
+ruling changes. They stay marked `[PROPOSED]`, now with their review tag:
+- **H1 · §3.** The partition function refuses any parent outside the eight and
+  any month that is not the first of a UTC month.
+- **H2 · §4.1.** "The measured tail" is named: p99 over seven days, measured on
+  the box and written next to the channel's `lag_seconds`.
+- **H3 · §7.2.** The ghost reconciliation keeps no cursor: a trailing window
+  that overlaps by the largest declared lag, plus a slower sweep over retention.
+- **H4 · §7.4.** `v_feeder_actor_map` derives `valid_to` from the next
+  `valid_from`; §9.4 stores none.
+
+Also in amendments: the P5 section names its decision, D62. The rest of 0.5
+below is unchanged.
 
 **How it changes.** It is published, not negotiated (Relevo task 6, 23 Oct). If anything
 here is impossible or expensive on the ClickHouse side, it is said on Relevo task 6 and
@@ -193,6 +208,14 @@ rebuild is ruled out.
     granted to `bob_feeder` alone.
   - It takes a parent from the eight and a month, and nothing else
     **[PROPOSED]**.
+  - **It refuses anything else** **[PROPOSED, H1]**. A `SECURITY DEFINER`
+    function that `bob_feeder` can call must not accept an arbitrary table: it
+    would hang partitions, with the definer's grants, off any partitioned table
+    in the database. The parent must be one of the eight, matched by OID in
+    schema `bob`, not by name pattern; the month must be the first day of a
+    UTC month. Anything else raises and creates nothing. A guard calls it with
+    a ninth parent and with a mid-month date, and is seen failing first against
+    a version without the checks (§10).
 - **Retention: thirteen months (C-14)**, matching `business_events` at 395 days
   (Bzzz D39). **Until Slice 5, retention is not enforced.** Nothing drops a
   partition in Slice 2. When `pg_cron` arrives, old partitions are detached and
@@ -290,6 +313,17 @@ task 14, 12 Nov):
 - **Declare lag from the measured tail, not the median** **[PROPOSED]**. A lag
   at the median puts half of a channel's facts behind the seal, and each of
   them is a rebuild.
+  - **The tail is p99 over seven days** **[PROPOSED, H2]**: event time to
+    arrival in the truth store, measured on the box per channel. At p99 about
+    one fact in a hundred lands after its seal and is a rebuild; that is the
+    accepted cost.
+  - Who measures and where it is kept: the operator, on the box, from the
+    truth store's own arrival timestamps. The figure, its window and the date
+    are written beside the channel's `lag_seconds` when it is set, so a lag
+    nobody measured is visible as such.
+  - A channel with no measurement yet has no declared lag, and O1 applies: it
+    never seals and is surfaced as "lag not declared". An estimate is not a
+    measurement.
 
 **The label cut: when a missing label is a failure rather than lag.** A label
 is a fact derived from a fact that has already arrived. In Slice 2 it is the
@@ -944,8 +978,20 @@ a ninth projection. It never applied to route B.
 - **No new table. No change to the feeder's grants. No dependence on Slice 8's
   bus.** With the bus as the source there would be no ghosts for most of v1,
   which guts the member drill-down ghosts were ruled to serve.
-- The window starts where the last run ended, bounded by retention (C-14)
-  **[PROPOSED]**.
+- ~~The window starts where the last run ended, bounded by retention (C-14).~~
+  Replaced by H3: "where the last run ended" needs a stored cursor, which the
+  line above rules out, and a window starting exactly at the previous end
+  misses a member ref that arrives late (voice is ~10 minutes behind, §4.1).
+- **The window trails and overlaps** **[PROPOSED, H3]**. Each run asks for
+  `[now − (interval + L), now]`, where `interval` is the schedule and `L` the
+  largest declared `lag_seconds` among the tenant's channels. Ghost creation is
+  idempotent on `(org_id, ref)`, so the overlap costs a repeated question and
+  nothing else. No cursor is stored.
+- **A slower sweep covers what the trailing window cannot**: a run missed for
+  longer than its window, a channel whose lag was raised, a tenant's first
+  run. It asks over the whole retention window (C-14) on a slower schedule.
+  Its schedule, and whether `member_refs_seen` over thirteen months is cheap
+  enough on the ClickHouse side, is for 3.7 to say on Relevo task 6.
 
 What stays from 0.4:
 - **The feeder still never creates an actor.** It stays read-only on `actors`.
@@ -1059,6 +1105,10 @@ Exactly two views. Anything more is a finding about this contract.
 - **`v_feeder_actor_map`** **[PROPOSED]**: `org_id`, `ref`, `actor_id`,
   `actor_type`, and the linkage history of §9.4 (`identity_rung`, `valid_from`,
   `valid_to`).
+  - `valid_to` is not stored **[PROPOSED, H4]**. §9.4 keeps `valid_from` only.
+    The view derives `valid_to` as the next `valid_from` of the same
+    `(org_id, ref)`, and NULL for the current row. Agent and ASA refs, read
+    from `actor_external_refs`, carry `valid_from` and `valid_to` NULL.
   - From these the feeder derives the actor and the rung as of an event's time.
   - It carries no `display_name` and no `display_id`: the feeder never sees a
     name.
@@ -1307,6 +1357,7 @@ Each one is seen failing on purpose before it is trusted, and recorded in
 | Partitions granted | partitions via `pg_inherits` | Every partition passes `projectionGrantFindings()` |
 | Partitions guarded | `tenantTables()` | Every partition has RLS and the `org_id` policy |
 | Partition function | the function of §3 | Run twice for one month: one partition, granted, with RLS. Executable by `bob_feeder` and no other role |
+| **Partition function refuses** (H1) | the function of §3 | A parent outside the eight, or a date that is not the first of a UTC month, raises and creates nothing. Seen failing first against a version without the checks |
 | `bob_app` grants | every `org_id` table | Non-projections: `bob_app` SELECT, INSERT, UPDATE, DELETE. Projections: SELECT only. Replaces the hand list in `20260902100300` |
 | Pre-rename absence | every schema except `pg_*` and `information_schema` | No `autobotz_bindings` table or policy anywhere; replaces the two `public`-only checks in `slice0-schema.test.mjs` |
 | Grain | every projection with a `bucket_start` column | Carries the bucket-alignment CHECK |
@@ -1378,5 +1429,12 @@ Nothing on Federico's side for 0.5 (13 Nov). One input added elsewhere:
   rebuilt after it sealed", so that an alert citing a figure the panel no
   longer shows is explained. The data is already there (`computed_at`,
   `source_watermark`); only the display is undecided (C3).
+
+### Open after 0.5.1
+
+- **H3, the sweep:** its schedule, and whether `member_refs_seen` over the
+  retention window is cheap enough on the ClickHouse side. For 3.7 to answer on
+  Relevo task 6. It does not block the signature: the trailing window works
+  without it, and Slice 2's ghost-path guard runs on the trailing window.
 
 What remains is Henry's signature on Relevo task 6. No migration before it.

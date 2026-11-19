@@ -4,7 +4,7 @@
 
 ## Tarea actual
 - BZZ-3 de Relevo, P5 («the whole application layer»), decisión D62 de BzzzBX, sin firmar: insumos en `docs/p5-application-layer.md` (PR #16 fusionado; puesta al día en la rama `docs/p5-d62-inputs-updated`). Federico respondió Q1–Q3 (tres roles de Handoff §4.3; `organizations`/`org_id` en vez de `tenants`/`app_entities`; Q3 en su forma del 15 nov: desarrollo en Supabase local, lab-02 para integración y ensayo, el proyecto hospedado vuelve a la demo). Henry respondió en BZZ-19 el 18 nov: el alimentador de referencia tiene `bob_feeder` primero; número D62 (D60 se firmó ese día para otra cosa).
-- Tarea 6 de Relevo («The projection read contract»): borrador 0.5 del contrato de proyección en `docs/contracts/projection-contract.md`, rama `docs/projection-contract-0.5` (PR #17, sin fusionar; lo revisa Henry). Recoge los rulings de Federico del 12 nov (O1–O5, numeración A-11/A-12 y las cinco elecciones de 0.4 aceptadas), separa el §7.2 en dos rutas y propone el corte de D-25 en el nuevo §4.1. Federico ruló el 13 nov (21:26): (a) en C1–C3 y O6, y aceptó los dos conteos con una condición de fin; todo está escrito en 0.5 (§4.1, §6.1, §7.3a, §8.6, §11) y en amendments. Falta revisar el PR, responder en la tarea 6 (borrador en el scratchpad de la sesión) y la firma de Henry. Ninguna migración del Slice 2 antes de la firma.
+- Tarea 6 de Relevo («The projection read contract»): borrador 0.5.1 del contrato de proyección en `docs/contracts/projection-contract.md`, rama `docs/projection-contract-0.5` (PR #17, sin fusionar). Los rulings de Federico del 12 y 13 nov están escritos; 0.5.1 añade la revisión de Henry del 18 nov (H1–H4) y nombra P5 como D62 en amendments. Falta la firma de Henry en la tarea 6. Ninguna migración del Slice 2 antes de la firma.
 - Tarea 7 de Relevo («What is left to build — scope map»): paquete de guards antes del Slice 2, mergeado en PR #11.
 - Tarea 9 de Relevo («Slice 5 · Cooldown and escalation durations», D-05): decisión cerrada por Federico el 27 oct, registrada en `contract-amendments.md` («Slice 5 · Cooldown and escalation»). Acuse publicado con seis puntos abiertos antes de escribir el paso 6a; turno de Federico.
 - Tarea de Relevo «Licence scan on BOb, CHASS1S and Momentum dependency trees»: respuesta publicada el 5 nov con la distribución de licencias de producción y de desarrollo; turno de Federico.
@@ -25,7 +25,7 @@
 ## Pendiente
 - P5: F-21 (el feeder no puede leer `v_feeder_channel_map`: vista `security_invoker` sin grant en `channels`) y F-22 (la política de `org_id` rechaza las escrituras del feeder sin claim). Propuesta en los insumos §3.3; se arreglan con las migraciones del Slice 2. Encontrados leyendo, sin ejecutar.
 - P5 (D62): antes de firmar, `/abogado-del-diablo` sobre P5. Antes de la primera ventana (no de la firma): ensayo en lab-02 de una migración amañada para fallar a mitad de cadena, con dump antes, y procedimiento escrito (arreglo hacia delante o `restore.sh`). F-21 y F-22 van con las migraciones del Slice 2, detrás del contrato 0.5 (PR #17).
-- Contrato de proyección 0.5: nada abierto del lado de Federico. Henry revisa la condición de fin del §8.6 (las formas de los eventos en el bus quedan marcadas [PROPOSED]), responde en la tarea 6 y firma. D-33 recibe una entrada más (si el Slice 7 muestra «este bucket se reconstruyó después de sellarse») y sigue abierta. Interinos nombrados: los dos conteos del feeder hasta que el bus del Slice 8 acepte eventos del feeder, `todo` del guard de no mezclar hasta A-05b, retención sin aplicar hasta Slice 5.
+- Contrato de proyección 0.5.1: nada abierto del lado de Federico. Abierto para 3.7, sin frenar la firma: el horario y el costo del barrido de H3 sobre la retención. D-33 sigue abierta (si el Slice 7 muestra «este bucket se reconstruyó después de sellarse»). Interinos nombrados: los dos conteos del feeder hasta el bus del Slice 8, `todo` del guard de no mezclar hasta A-05b, retención sin aplicar hasta Slice 5.
 - Para el Slice 2: llamar `bob_grant_projection()` y activar RLS en cada partición que se cree; afirmar que hay ocho proyecciones cuando el contrato las nombre; test de los grants de `bob_app`; las dos comprobaciones de ausencia de `slice0-schema` que solo miran `public`.
 - Paso 6a (Migration Order): `cooldown_seconds` y `escalation_after_seconds` en `threshold_configs`, 1800/7200, CHECK `>= 300`. Se construye en Slice 5, no antes. Antes de escribirlo: los seis puntos de D-05 en amendments (DEFAULT vs NULL que hereda, piso del escalamiento, `notification_rules` paralela, sostenido vs sin acuse, recuperación y re-breach, granularidad).
 
@@ -34,7 +34,7 @@
 
 ## Siguiente paso
 - P5: Henry revisa el PR de la puesta al día, corre `/abogado-del-diablo` sobre P5 y, si sigue en pie, firma D62.
-- Henry revisa el PR #17 (rulings del 13 nov y condición de fin del §8.6), publica la respuesta en la tarea 6 y firma 0.5; después la tarea 3.7 de BzzzBX implementa contra el contrato, con `member_refs_seen` como cuarto entregable.
+- Henry firma 0.5.1 en la tarea 6 de Relevo (borrador de la respuesta en el scratchpad de la sesión de Relevo del 18 nov) y se fusiona el PR #17; después empieza el Slice 2 y la tarea 3.7 de BzzzBX implementa contra el contrato, con `member_refs_seen` como cuarto entregable.
 
 ## Notas de sesión
 <!-- AAAA-MM-DD: una o dos líneas -->
@@ -52,3 +52,4 @@
 - 2026-11-13: respuesta de 0.5 publicada en la tarea 6 de Relevo (PR #17, corte de D-25, C1–C3 y O6) y turno pasado a Federico.
 - 2026-11-13: rulings de Federico del 13 nov escritos en 0.5 (C1–C3 y O6 en (a), dos conteos aceptados) y condición de fin del interino en el §8.6; C3 deja la pregunta de mostrar la reconstrucción a D-33. Respuesta sin publicar.
 - 2026-11-18: insumos de P5 al día con las respuestas de Federico (Q1–Q3) y de Henry (BZZ-19): alimentador de referencia primero, número D62. Conteo leído: 19 migraciones, 10 envueltas en `BEGIN … COMMIT`, 9 sin envolver. P5 sigue sin firmar.
+- 2026-11-18: revisión de Henry de los ocho [PROPOSED] de 0.5: cuatro quedan como estaban y cuatro se ajustan (H1 la función de particiones rechaza lo que no es de las ocho; H2 lag con p99 de 7 días medido; H3 ventana de fantasmas que se solapa, sin cursor; H4 `valid_to` derivado). Versión 0.5.1; `main` fusionado en la rama.
