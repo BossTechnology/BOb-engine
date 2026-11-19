@@ -111,6 +111,37 @@ export async function loadRoster(client) {
   await client.query('COMMIT')
 }
 
+// The reference feeder's world (Slice 2): tenant B's emitting channel,
+// capabilities, agents, ASA and members with their refs. Loaded after the
+// two-tenant fixture and the roster.
+export async function loadFeederWorld(client) {
+  const sql = readFileSync(
+    resolve(REPO_ROOT, 'supabase/tests/fixtures/feeder_world.sql'),
+    'utf8',
+  )
+  await client.query('BEGIN')
+  try {
+    await client.query(sql)
+    await client.query('COMMIT')
+  } catch (e) {
+    await client.query('ROLLBACK')   // or every later query waits behind it
+    throw e
+  }
+}
+
+// A second connection that acts as one of BOb's roles for its whole session,
+// the way the feeder and the reconciliation hold their credential. It takes no
+// fixture lock: the file that opens it already holds one through connect(),
+// and taking it again here would wait on itself. The caller grants the role to
+// the migration owner first and revokes it after.
+export async function connectAs(role) {
+  const client = new pg.Client({ connectionString: CONNECTION })
+  await client.connect()
+  await client.query(`SET ROLE ${role}`)
+  await client.query('SET search_path = bob, public, extensions')
+  return client
+}
+
 // The five BR-3 rulings (F-07). Separate from the two-tenant fixture for the
 // same reason as the roster: the tenancy suite keeps its smallest fixture.
 // loadFixture deletes every autobotz row in both tenants, so reloading after it

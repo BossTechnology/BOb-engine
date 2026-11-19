@@ -5,7 +5,9 @@ The demo dashboard stays in [BossTechnology/Bob-New](https://github.com/BossTech
 
 This repository currently holds the database layer and its acceptance suite: the
 migration chain (schema `bob`, including the eight projections of Slice 2),
-row-level security, the availability functions, and the tests that verify them. There is no application layer yet.
+row-level security, the availability functions, and the tests that verify them,
+plus the Slice 2 reference feeder and ghost reconciliation that exercise the
+projection contract against an in-memory truth store. There is no application layer yet.
 
 ## Requirements
 
@@ -27,8 +29,8 @@ Read all four summary lines. A `cancelled` count above zero means tests did not
 run, and it does not increment `fail`:
 
 ```
-# tests 142
-# pass 141
+# tests 166
+# pass 165
 # fail 0
 # cancelled 0
 # todo 1
@@ -45,7 +47,9 @@ CI also runs two subsets: `pnpm run test:tenancy` and `pnpm run test:availabilit
 | Path | Contents |
 |---|---|
 | `supabase/migrations/` | The migration chain. Append-only. |
-| `supabase/tests/fixtures/` | The two-tenant fixture and the Slice 1 roster |
+| `supabase/tests/fixtures/` | The two-tenant fixture, the Slice 1 roster, and the feeder's world and events |
+| `feeder/` | The reference feeder (contract §8) and the in-memory truth store it reads |
+| `reconciliation/` | The ghost reconciliation (contract §7.2) and member linkage |
 | `tests/` | Acceptance suite on `node:test`, one database, run serially |
 | `.github/workflows/ci.yml` | Four jobs, each meant to be a required status check |
 | `Documentation/contract-amendments.md` | Every finding and amendment with its reasoning. Read it before changing anything. |

@@ -511,7 +511,7 @@ describe('F-21 · the feeder reads its two views, and nothing else', () => {
       assert.deepEqual(channels.rows.map((r) => r.org_id).sort(), [TENANT_A, TENANT_B])
       const cols = Object.keys((await db.query('SELECT * FROM bob.v_feeder_channel_map LIMIT 1')).rows[0])
       assert.deepEqual(cols, ['channel_id', 'org_id', 'tenant_slug', 'source_key',
-        'lag_seconds', 'adapter_kind', 'idle_bound_seconds'])
+        'lag_seconds', 'adapter_kind', 'idle_bound_seconds', 'capabilities'])
       const actors = await db.query('SELECT DISTINCT org_id::text FROM bob.v_feeder_actor_map')
       assert.deepEqual(actors.rows.map((r) => r.org_id).sort(), [TENANT_A, TENANT_B])
     })
