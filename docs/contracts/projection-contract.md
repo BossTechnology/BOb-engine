@@ -1,8 +1,22 @@
 # BOb v1 · Projection read contract
 
-**Status: 0.5.2.** Henry signed 0.5.1 on Relevo task 6 (18 Nov). 0.5.2 adds
-two corrections that building Slice 2 found and Henry accepted the same day.
-BzzzBX route-plan task 3.7 implements against this version.
+**Status: 0.5.3.** Henry signed 0.5.1 on Relevo task 6 (18 Nov). 0.5.2 and
+0.5.3 add corrections that building Slice 2 found and Henry accepted. BzzzBX
+route-plan task 3.7 implements against this version.
+
+**What changed from 0.5.2** (Slice 2's second pull request, accepted by Henry
+as option (a)). One place where the contract could not be built as written:
+- **F-25 · §7.4, §9.1.** §4.1 writes `label_missing` only on a channel that
+  declares `orga_conversation`, but the feeder reads exactly two views and
+  neither carried capabilities. `v_feeder_channel_map` gains one column,
+  `capabilities TEXT[]`: the channel's rows of `channel_capabilities`,
+  sorted, empty when it declares none. Still two views.
+- **§9.1.** `channel_capabilities` is created in Slice 2. `bob_app` writes it,
+  under the tenant policy every table uses (§2).
+- **§10.** "Every turn accounted at seal" is checked on both sides of the
+  capability: a sealed, unlabelled turn on a channel that declares
+  `orga_conversation` is `label_missing`, and one on a channel that does not
+  writes no label row at all.
 
 **What changed from 0.5.1** (Slice 2's first pull request, accepted by Henry
 on 18 Nov). Two places where the signed text could not be built as written:
@@ -1126,7 +1140,10 @@ Exactly two views. Anything more is a finding about this contract.
 
 - **`v_feeder_channel_map`** (exists): `channel_id`, `org_id`, `tenant_slug`,
   `source_key`, `lag_seconds`, `adapter_kind`. It gains `idle_bound_seconds`
-  (§9.2).
+  (§9.2) and **`capabilities TEXT[]`** (0.5.3, F-25): the channel's
+  capabilities from §9.1, sorted, an empty array when it declares none. The
+  feeder needs `orga_conversation` to know where `label_missing` is written
+  (§4.1).
 - **`v_feeder_actor_map`** **[PROPOSED]**: `org_id`, `ref`, `actor_id`,
   `actor_type`, and the linkage history of §9.4 (`identity_rung`, `valid_from`,
   `valid_to`).
@@ -1262,6 +1279,10 @@ channel_capabilities (org_id, channel_id, capability)
 
 **A row means this channel can produce this class; no row means it cannot.**
 Presence only, with no `enabled` boolean (C-16's reasoning).
+
+Created in Slice 2 (0.5.3). `bob_app` writes it; RLS by `org_id`, as every
+tenant table (§2). The feeder reads it only through the `capabilities` column
+of `v_feeder_channel_map` (§7.4).
 
 | Capability | Declares |
 |---|---|
@@ -1403,7 +1424,7 @@ Each one is seen failing on purpose before it is trusted, and recorded in
 | Tenant key | every projection | Carries `org_id UUID NOT NULL`, no slug column |
 | **Never merged across `actor_type` or `measure`** | every view and function whose definition reads `proj_durations` (`pg_depend`, `pg_proc`) | Structural, in Slice 2: `actor_type` and `measure` are `NOT NULL` and in the primary key. Behavioural: over a fixture with `user` and `human` rows, and with both measures, in one channel and bucket, every discovered reader returns separate distributions. While it discovers zero readers it reports **`todo`, printed and counted in CI**, never `pass` (Q16) |
 | Degenerate actor | `proj_metric_counts`, `proj_durations` | A `proj_metric_counts` row with `abandoned_in_queue`, `abstained`, `classifier_down` or `label_missing` and any `actor_type` but `user` is refused. So is a `proj_durations` row with `interaction_duration` and any `actor_type` but `user` (O2) |
-| **Every turn accounted at seal** (§4.1, C1–C3) | the rows the feeder writes with `sealed = true` on channels declaring `orga_conversation` | The five states' `reading_count` plus `abstained`, `classifier_down` and `label_missing` equal the true denominator for the bucket. A turn whose label is withheld in the fixture is seen landing in `label_missing`, and moving to its state on a rebuild once the label arrives |
+| **Every turn accounted at seal** (§4.1, C1–C3) | the rows the feeder writes with `sealed = true` on channels declaring `orga_conversation` | The five states' `reading_count` plus `abstained`, `classifier_down` and `label_missing` equal the true denominator for the bucket. A turn whose label is withheld in the fixture is seen landing in `label_missing`, and moving to its state on a rebuild once the label arrives. A sealed, unlabelled turn on a channel without `orga_conversation` writes no label row (0.5.3) |
 | **Lag not declared** | every channel with `lag_seconds IS NULL` | The fixture's undeclared channel (`roster.sql:36`) gets rows written and none sealed, and Slice 2's report counts it (O1) |
 | Closing is ORGA | `proj_sentiment` | A `meca` row with `closing_count > 0` is refused |
 | Rung pairs with type | `proj_actor_metrics` | A `user` row with `'not_applicable'`, a non-`user` row with any other rung, and an `actor_type` that differs from the actor's are each refused |

@@ -1867,6 +1867,189 @@ The keys, and the condition that comes with them, are what 3.7 implements
 against. A draft note to Federico on Relevo task 6 is prepared for Henry, and
 is not posted.
 
+## Slice 2 · The reference feeder, built
+
+The second pull request of Slice 2, against contract 0.5.2. It adds the
+reference feeder (`feeder/reference-feeder.mjs`), an in-memory stand-in for the
+truth store (`feeder/memory-truth-store.mjs`), the ghost reconciliation
+(`reconciliation/ghosts.mjs`), one migration, and the §10 guards that need rows
+the feeder wrote (`tests/slice2-feeder.test.mjs`).
+
+What the reference feeder covers:
+- §8's obligations over customer and business turns, ORGA labels, closes,
+  detections and delivery attempts. It fills `proj_metric_counts`,
+  `proj_sentiment`, `proj_actor_metrics`, `proj_detections` and
+  `proj_deliveries`.
+- It writes no `proj_durations`, `proj_channel_health` or `proj_rum_signals`
+  rows. The fixture models no instrumentation for them, and the feeder writes
+  no zeros it did not observe (§5).
+
+How it works:
+- One tenant per transaction, under that tenant's claim (F-22).
+- Partitions through `bob.proj_ensure_partition`.
+- Delete-and-refill of a five-minute-aligned window, so one code path serves
+  the run, the replay and the rebuild (§8.5).
+- `sealed` by the rule of §4; `label_missing` only at seal and only on
+  channels declaring `orga_conversation` (§4.1).
+- The two counts of §8.6 returned apart.
+- §8.7 checked before the window is cleared, against everything stored for the
+  tenant.
+
+### F-25 · The feeder cannot see `orga_conversation` — CLOSED in 0.5.3
+
+§4.1 writes `label_missing` only on a channel that declares `orga_conversation`
+(§9.1). §7.4 gives the feeder exactly two views, and neither carries
+capabilities. `channel_capabilities` was not in the migration chain at all.
+Henry chose option (a), and the contract goes to 0.5.3 ("Opción (a), 0.5.3"):
+- `bob.channel_capabilities` per §9.1, with RLS. SIUD goes to `bob_app` and
+  `authenticated`.
+- `v_feeder_channel_map` gains one column, `capabilities TEXT[]`. The column
+  is the channel's capabilities, sorted. Still two views, still a definer view
+  readable by `bob_feeder` alone (F-21).
+- `tests/slice2-schema.test.mjs` asserts the new column list.
+
+The other options put to Henry:
+- (b) write `label_missing` everywhere and filter at read time. That writes a
+  "zero" where §5 says "not configured".
+- (c) defer the label cut.
+
+§7.4 and §9.1 change in 0.5.3, in this pull request (the section below).
+
+### F-26 · `bob_app` cannot name its tenant — accepted as a finding
+
+The reconciliation runs as `bob_app` (§7.2), and needs the tenant's slug for
+the `member_refs_seen` frame (§7.3a). `organizations` is readable under RLS by
+`authenticated` and `supabase_auth_admin` only, so `bob_app` can neither list
+tenants nor read a slug. That is right for a tenant-scoped credential.
+- What was built: the reconciliation's scheduler hands it
+  `(org_id, tenant_slug)`. It reads `channels` itself, under the claim.
+- No grant was widened. Henry agreed that the reconciliation receives its
+  list of `org_id`s from whoever schedules it.
+- Who runs the scheduler, and from where it reads the tenant list, is a P5
+  (D62) question.
+
+### The declaration report
+
+`bob.v_channel_declaration_gaps` is an invoker view, so each tenant sees its
+own channels. It lists channels whose lag is not declared (O1: never sealed,
+never evaluated) and channels whose lag is below their idle bound (§9.2). It
+reports them and refuses nothing.
+
+### Choices the contract left to the build
+
+- **Conversation context.** A window that cuts through a conversation still
+  needs the conversation's last ORGA state and its actors. The feeder reads
+  24 hours before the window, and up to the watermark for labels that arrive
+  after their turn. It keeps only the rows inside the window.
+  - A conversation longer than 24 hours is the reference feeder's limit.
+    3.7 keeps conversation state in the truth store.
+- **The rung of a member** is taken at the member's turn, from the linkage
+  history as of event time. The actor is the one the ref points to now
+  (§6.6, D-12).
+- **`handled`** is one per actor per interaction, at the close's bucket.
+- **Ghost display ids** are `GH-` and twelve hex digits of a hash of
+  `(org_id, ref)`. They are stable for a ref and carry nothing about the
+  person.
+- **Ghost creation and linkage return the window to rebuild**, aligned to five
+  minutes, starting at the ref's first `valid_from`.
+- **§8.7 is stricter than "reported".** The feeder refuses the run for that
+  tenant, and the transaction rolls back.
+
+### Verified by sabotage
+
+Each case was applied to the feeder, to the reconciliation or to the database.
+Then `tests/slice2-feeder.test.mjs` was run, and the change was undone.
+
+| Sabotage | Red |
+|---|---|
+| Sealing ignores the declared lag | every bucketed row is sealed exactly when its channel lag and watermark say (**first run: nothing red**, see below) |
+| NULL lag seals (O1 dropped) | the website writes rows and none of them is sealed |
+| `label_missing` written before the seal | `label_missing` exists only at seal |
+| An unlabelled turn is not counted as `label_missing` | the accounting adds up; the withheld label lands in `label_missing` |
+| Label accounting written on every channel | no label accounting on a channel that does not expect labels (**first run: nothing red**, see below); `label_missing` on a channel with `orga_conversation`, never on one without |
+| No label accounting even with `orga_conversation` | the accounting adds up; `label_missing` only at seal; `label_missing` on a channel with `orga_conversation`, never on one without; the withheld label |
+| The two counts summed into one | an unmappable event moves route A only |
+| An unresolved member ref counted in route B | zero against the fixture; the three injections |
+| The rung taken from the current mapping, not event time | the rung stays as it was at event time |
+| §8.7 check removed | an id that comes back with another time is refused |
+| §8.7 check after the window delete | the same test: a rebuild could move an id inside its own window |
+| F-22: every tenant written under the first tenant's claim | every insert runs under the claim of the tenant it writes, and the rest of the file |
+| The watermark stamped as the time of the run | sealed at write time; provenance; replay; render identical |
+| A replay inserts without clearing its window | replay; the injections; the late label; the linkage rebuild |
+| A ghost created at rung `identified` | member refs only, all at rung ghost, never a non-user actor |
+| The reconciliation creates a non-user actor | the same test, and the rest of the ghost path |
+| The trailing window ignores the declared lag (H3) | the window trails by interval plus the largest declared lag |
+| The declaration report drops undeclared lag | the declaration report names the channel, per tenant |
+
+**Two guards were blind on their first run, and were rewritten.**
+- *Sealed at write time* compared each row to the feeder's own `isSealed()`.
+  It asked the feeder whether the feeder was right, so it passed any rule the
+  feeder chose. It now writes §4's rule again in SQL.
+- *`label_missing` only where labels are expected* looked at `label_missing`
+  rows only. With the sabotage, voice got zero-valued `abstained` and
+  `classifier_down` rows, and its one bucket was unsealed. The guard now
+  refuses any label accounting, including orga sentiment, on a channel
+  without `orga_conversation`.
+
+### Found by the guards
+
+- **The capability-from-type guard** (Relevo task 10) flagged this pull
+  request's own migration. The comment on `channel_capabilities` named
+  `channel_type` ("never mapped from channel_type"). The guard reads tracked
+  files only, so it saw the migration once it was committed, and CI went red.
+  The comment was reworded. A guard that matches on words cannot tell a
+  derivation from a sentence that forbids one, and that is the trade it makes
+  on purpose: a human looks.
+
+### F-22, exercised
+
+The feeder writes tenants A and B in separate transactions. A wrapper on its
+connection asserts that every `INSERT` carries the `org_id` of the claim set in
+that transaction. A run under one claim for both tenants is refused by RLS,
+and the guard goes red.
+
+### Not in this pull request
+
+- The bus emission of the two counts (§8.6's end condition, Slice 8).
+- The sweep's schedule, and its cost on ClickHouse (H3, for 3.7).
+- `proj_durations`, `proj_channel_health` and `proj_rum_signals` rows: no
+  fixture instrumentation.
+
+**Counts.** 142 → 167: 166 pass and 1 is `todo`.
+
+## Slice 2 · The projection read contract, 0.5.3
+
+Henry chose option (a) for F-25 ("Opción (a), 0.5.3"), relayed from the
+session he drives. 0.5.3 writes it into the contract, in the same change as the
+migration that already follows it. No ruling changes.
+
+- **F-25 → §7.4.** `v_feeder_channel_map` gains `capabilities TEXT[]`. It holds
+  the channel's capabilities, sorted, and is empty when the channel declares
+  none. The feeder still reads two views.
+- **F-25 → §9.1.** `channel_capabilities` is created in Slice 2. `bob_app`
+  writes it, under RLS by `org_id`.
+- **§10.** The accounting row names both sides of the capability.
+
+### The capability guard, seen failing on both sides
+
+The fixture gains t9: an unlabelled customer turn on voice at 14:02. Voice
+declares no `orga_conversation`, and its 900 s lag seals the 14:00 bucket at
+14:20. Only the capability can keep `label_missing` out of it. On the other
+side, t4 is unlabelled on WhatsApp, in a sealed bucket.
+
+| Sabotage | Red |
+|---|---|
+| The feeder ignores the capability | `label_missing` on a channel with `orga_conversation`, never on one without (voice writes) |
+| The feeder looks for a capability no channel declares | the same test (WhatsApp does not write), and the accounting guards |
+
+**Counts.** 167: 166 pass and 1 is `todo`.
+
+### For 3.7
+
+The new column of `v_feeder_channel_map` is what 3.7 reads to know where
+`label_missing` is written. A draft note to Federico on Relevo task 6 is
+prepared for Henry, and is not posted.
+
 ---
 
 *Boss.Technology · BOb v1 · Internal only*

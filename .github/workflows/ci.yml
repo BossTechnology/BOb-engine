@@ -108,6 +108,10 @@ jobs:
         env:
           SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
         run: node --test --test-concurrency=1 tests/slice2-schema.test.mjs
+      - name: Slice 2 · reference feeder, two counts, ghost reconciliation, rebuild — contract §8, §10
+        env:
+          SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+        run: node --test --test-concurrency=1 tests/slice2-feeder.test.mjs
       - name: BR-3 · the mutative exemption is closed, and the F-07 rulings are a fixture
         env:
           SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
