@@ -11,7 +11,8 @@ Updated again on 2026-11-19, after Slice 2 merged (PR #20 and PR #21, contract
 0.5.3), to bring the state, the grant matrix and the migration count up to what
 is on `main`. That pass also recorded F-26, which Slice 2 handed to P5 (§7,
 Q6), and the seven objections from the devil's-advocate review that comes
-before the signature (§8). All eight are **[OPEN]**. Henry answers them; this
+before the signature (§8). Objection 1 is answered (§8). Q6 and the other six
+are **[OPEN]**. Henry answers them; this
 file does not.
 
 The decision itself is a BzzzBX decision: **D62** in the BzzzBX register. The
@@ -554,6 +555,20 @@ Ordered from the most damaging to the least.
      app as a container in every box, and that work has no estimate.
    - **Cheapest check:** say in one line where BOb v1 runs for Febor on
      delivery day.
+   - **Answered** (Henry, 2026-11-19): **(A) inside Febor's box.** P5's §5
+     stands as written. The other option was rejected: BOb on Vercel reading
+     the box through an exposed read path. It would break §5.1 and §5.2 and
+     N-04, and the projections would leave the box (D59, R-05).
+   - **Consequences, still to be scheduled. This answer does not decide
+     them.** A minimum of stage 4 is pulled forward for Febor alone, ahead of
+     the route plan's dates (2027-01-25 → 2027-04-16):
+     - `forwardAuth` before the first application route (4B.1, C4.3);
+     - a pinned BOb image (4B.2);
+     - its compose on `bzzz-app` (4B.3);
+     - BOb validating its session against the box's Supabase (D41\* C4.2
+       (c)).
+   - Until stage 4A exists, BOb updates and migrations on Febor are applied
+     by hand. Objection 4 stays open on that basis.
 2. **BOb and the portal's identity recover together.**
    - `restore.sh` returns the whole database, identity accounts included
      (§6.2). A BOb migration bad enough to need it costs the portal every
