@@ -4,8 +4,8 @@ BOb v1, the interaction observability framework, built as a new application.
 The demo dashboard stays in [BossTechnology/Bob-New](https://github.com/BossTechnology/Bob-New).
 
 This repository currently holds the database layer and its acceptance suite: the
-migration chain, row-level security, the availability functions, and the tests
-that verify them. There is no application layer yet.
+migration chain (schema `bob`, including the eight projections of Slice 2),
+row-level security, the availability functions, and the tests that verify them. There is no application layer yet.
 
 ## Requirements
 
@@ -27,11 +27,16 @@ Read all four summary lines. A `cancelled` count above zero means tests did not
 run, and it does not increment `fail`:
 
 ```
-# tests 100
-# pass 100
+# tests 142
+# pass 141
 # fail 0
 # cancelled 0
+# todo 1
 ```
+
+The one `todo` is contract §10's never-merge guard: its behavioural half has no
+reader of `proj_durations` to test until the first route handler (A-05b). It is
+counted on purpose and never reported as a pass.
 
 CI also runs two subsets: `pnpm run test:tenancy` and `pnpm run test:availability`.
 

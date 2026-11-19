@@ -3,6 +3,7 @@
 > Actualizar al cerrar cada sesión. Es lo primero que lee la siguiente.
 
 ## Tarea actual
+- Slice 2, contra el contrato 0.5.2: PR 1 de 2 (#20: esquema, función de particiones, refs de actores, vistas del feeder y los guards del §10 que no necesitan feeder). Henry aceptó F-24 (a) y F-23 el 18 nov; el contrato pasa a 0.5.2 con §8.7 (la hora de evento de un id no cambia) y su guard. El PR 2 es el alimentador de referencia.
 - BZZ-3 de Relevo, P5 («the whole application layer»), decisión D62 de BzzzBX, sin firmar: insumos en `docs/p5-application-layer.md` (PR #16 fusionado; puesta al día en la rama `docs/p5-d62-inputs-updated`). Federico respondió Q1–Q3 (tres roles de Handoff §4.3; `organizations`/`org_id` en vez de `tenants`/`app_entities`; Q3 en su forma del 15 nov: desarrollo en Supabase local, lab-02 para integración y ensayo, el proyecto hospedado vuelve a la demo). Henry respondió en BZZ-19 el 18 nov: el alimentador de referencia tiene `bob_feeder` primero; número D62 (D60 se firmó ese día para otra cosa).
 - Tarea 6 de Relevo («The projection read contract»): contrato de proyección **0.5.1 firmado** por Henry en la tarea 6 el 2026-11-18 (marca «Decisión firmada») y fusionado en `main` (PR #17, `5e2966d`). Turno pasado a Federico para la pregunta de H3. El Slice 2 puede empezar contra esta versión.
 - Tarea 7 de Relevo («What is left to build — scope map»): paquete de guards antes del Slice 2, mergeado en PR #11.
@@ -10,6 +11,7 @@
 - Tarea de Relevo «Licence scan on BOb, CHASS1S and Momentum dependency trees»: respuesta publicada el 5 nov con la distribución de licencias de producción y de desarrollo; turno de Federico.
 
 ## Hecho
+- Slice 2, PR 1 (rama `slice-2-projection-schema`): tres migraciones. Las tablas y vistas pasan de `public` a `bob` (las funciones se quedan en `public` con `search_path = bob, public`). Las ocho `proj_*`. `bob.proj_ensure_partition` con H1. `actor_external_refs`, `actor_ref_history` (solo agregar, por trigger), `idle_bound_seconds`, `v_feeder_channel_map` y `v_feeder_actor_map` como vistas definer solo para `bob_feeder` (F-21 cerrado), y F-22 probado en el esquema. Los guards de `bob_app` encontraron seis tablas sin grants y quedan concedidas. Cada guard se vio fallar; la tabla está en amendments. Suite: 142 (141 pasan, 1 `todo`).
 - Guards (a) y (c) de la revisión de la tarea 7 de Relevo, y lo barato de (b), (e) y (f): la tenancy descubre el esquema, hay un piso (`TENANCY_FLOOR`), las sondas de los meta-tests corren en `public` y en `bob`, PR-4 revisa particiones, PUBLIC y la escritura del feeder, el test de agregados y la limpieza del fixture descubren sus tablas, y el glob y `ci-coverage` son recursivos. Suite: 100.
 - Cada guard se vio fallar a propósito; la tabla está en `contract-amendments.md` (F-17 a F-19).
 - Conteo de archivos: 44 rastreados en `71c5fea`. El «57» era el número de entradas del zip (44 archivos + 13 directorios); el «60 files» del zip de `aa696e2` tiene el mismo error (47 + 13).
@@ -23,10 +25,11 @@
   - CHASS1S (repo `CHS`): 137 de producción. jszip tiene doble licencia (MIT o GPL), duck declara solo «BSD» y Chromium se descarga en tiempo de ejecución.
 
 ## Pendiente
-- P5: F-21 (el feeder no puede leer `v_feeder_channel_map`: vista `security_invoker` sin grant en `channels`) y F-22 (la política de `org_id` rechaza las escrituras del feeder sin claim). Propuesta en los insumos §3.3; se arreglan con las migraciones del Slice 2. Encontrados leyendo, sin ejecutar.
+- Slice 2, PR 1 (#20): CI en verde y la orden de Henry para fusionar. Borrador para Federico en la tarea 6 de Relevo (llaves de 0.5.2 y §8.7 para 3.7) listo para Henry, sin publicar.
+- Slice 2, PR 2: el alimentador de referencia (un tenant por transacción con su claim, F-22; particiones con `bob.proj_ensure_partition`; `sealed` por la regla del §4; los dos conteos del §8.6) y sus guards: sellado al escribir, cada turno contado al sellar, lag no declarado y su conteo, no mapeado por ruta, camino de fantasmas con un sustituto de `member_refs_seen`, reconstrucción con linkage.
+- Fuera de los dos PRs: `channel_capabilities` (§9.1) no está en la cadena; dónde se escribe la medición p99 de H2; la línea de estado del contrato (dice «not signed») se corrige en su próxima versión; la igualdad de `affected_members` espera el endpoint de 3.7.
 - P5 (D62): antes de firmar, `/abogado-del-diablo` sobre P5. Antes de la primera ventana (no de la firma): ensayo en lab-02 de una migración amañada para fallar a mitad de cadena, con dump antes, y procedimiento escrito (arreglo hacia delante o `restore.sh`). F-21 y F-22 van con las migraciones del Slice 2, detrás del contrato 0.5 (PR #17).
 - Contrato de proyección 0.5.1 (firmado): en la tarea 6, turno de Federico, abierta para 3.7 la pregunta de H3 (horario y costo en ClickHouse del barrido de `member_refs_seen` sobre la retención); no frena el Slice 2. D-33 sigue abierta (si el Slice 7 muestra «este bucket se reconstruyó después de sellarse»). Interinos nombrados: los dos conteos del feeder hasta el bus del Slice 8, `todo` del guard de no mezclar hasta A-05b, retención sin aplicar hasta Slice 5.
-- Para el Slice 2: llamar `bob_grant_projection()` y activar RLS en cada partición que se cree; afirmar que hay ocho proyecciones cuando el contrato las nombre; test de los grants de `bob_app`; las dos comprobaciones de ausencia de `slice0-schema` que solo miran `public`.
 - Paso 6a (Migration Order): `cooldown_seconds` y `escalation_after_seconds` en `threshold_configs`, 1800/7200, CHECK `>= 300`. Se construye en Slice 5, no antes. Antes de escribirlo: los seis puntos de D-05 en amendments (DEFAULT vs NULL que hereda, piso del escalamiento, `notification_rules` paralela, sostenido vs sin acuse, recuperación y re-breach, granularidad).
 
 ## Bloqueado
@@ -34,7 +37,7 @@
 
 ## Siguiente paso
 - P5: Henry revisa el PR de la puesta al día, corre `/abogado-del-diablo` sobre P5 y, si sigue en pie, firma D62.
-- Slice 2, en una sesión nueva: las ocho tablas `proj_*` en el esquema `bob` (el paso de esquema incluido), la función de particiones con las comprobaciones de H1, `actor_external_refs` y `actor_ref_history`, las vistas `v_feeder_channel_map` (con `idle_bound_seconds`) y `v_feeder_actor_map`, el alimentador de referencia con sus dos conteos, F-21 y F-22, y los guards del §10, cada uno visto fallar. La tarea 3.7 de BzzzBX implementa contra el contrato, con `member_refs_seen` como cuarto entregable.
+- Slice 2: Henry revisa el PR 1 y publica (o ajusta) el aviso a Federico en la tarea 6 de Relevo; después, el PR 2 con el alimentador de referencia y sus guards. La tarea 3.7 de BzzzBX implementa contra el contrato, con `member_refs_seen` como cuarto entregable.
 
 ## Notas de sesión
 <!-- AAAA-MM-DD: una o dos líneas -->
@@ -54,3 +57,5 @@
 - 2026-11-18: insumos de P5 al día con las respuestas de Federico (Q1–Q3) y de Henry (BZZ-19): alimentador de referencia primero, número D62. Conteo leído: 19 migraciones, 10 envueltas en `BEGIN … COMMIT`, 9 sin envolver. P5 sigue sin firmar.
 - 2026-11-18: revisión de Henry de los ocho [PROPOSED] de 0.5: cuatro quedan como estaban y cuatro se ajustan (H1 la función de particiones rechaza lo que no es de las ocho; H2 lag con p99 de 7 días medido; H3 ventana de fantasmas que se solapa, sin cursor; H4 `valid_to` derivado). Versión 0.5.1; `main` fusionado en la rama.
 - 2026-11-18: 0.5.1 firmado por Henry en la tarea 6 y PR #17 fusionado (`5e2966d`); turno de la tarea 6 pasado a Federico.
+- 2026-11-18: Slice 2, PR 1: esquema `bob`, ocho proyecciones, función de particiones (H1), refs y vistas del feeder (F-21, F-22); 100 → 140 tests, cada guard visto fallar. F-23 y F-24 preguntados a Henry. Puertos locales movidos a 583xx en el worktree, sin commitear (54322 lo ocupa otro proyecto).
+- 2026-11-18: Henry acepta F-24 (a) y F-23; contrato 0.5.2 con §8.7 y el guard de hora de evento inmutable, visto fallar; 142 tests.

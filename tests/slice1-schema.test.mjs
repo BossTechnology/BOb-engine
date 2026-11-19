@@ -104,7 +104,7 @@ describe('C-07 · channel_actor_mix', () => {
   test('the table carries present and no share or bias column', async () => {
     const { rows } = await db.query(`
       SELECT column_name FROM information_schema.columns
-       WHERE table_schema = 'public' AND table_name = 'channel_actor_mix'`)
+       WHERE table_schema = 'bob' AND table_name = 'channel_actor_mix'`)
     const cols = new Set(rows.map((r) => r.column_name))
 
     assert.ok(cols.has('present'), 'channel_actor_mix has no present column')
@@ -190,7 +190,7 @@ describe('the availability functions cannot bypass tenancy', () => {
     const { rows } = await db.query(`
       SELECT proname FROM pg_proc p
        JOIN pg_namespace n ON n.oid = p.pronamespace
-       WHERE n.nspname = 'public'
+       WHERE n.nspname NOT LIKE 'pg\\_%'
          AND p.proname LIKE 'bob_availability%'
          AND p.prosecdef`)
     assert.deepEqual(rows.map((r) => r.proname), [],
