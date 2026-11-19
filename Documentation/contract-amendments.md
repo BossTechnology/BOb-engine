@@ -1645,4 +1645,179 @@ free number"; it is D62.
 
 ---
 
+## Slice 2 · The projection schema, built
+
+Built against contract 0.5.1 as signed by Henry on Relevo task 6 (18 Nov),
+branch `slice-2-projection-schema`. This is the first of two pull requests:
+the schema, the partition function, the actor refs, the feeder views and every
+§10 guard that needs no feeder. The reference feeder and the guards that need
+rows it writes come in the second.
+
+Three migrations:
+
+- `20261118100000_bob_schema.sql`: the 27 tables and 2 views move from
+  `public` to `bob`.
+- `20261118100100_actor_refs_and_feeder_views.sql`: §9.2, §9.3, §9.4, §7.4,
+  and the fix for F-21.
+- `20261118100200_projections.sql`: the eight tables of §6 and
+  `bob.proj_ensure_partition()` with H1's checks.
+
+### Choices the contract left to the build
+
+- **The functions stay in `public`.** GoTrue calls the access-token hook at the
+  address in `config.toml`, and the suite and the application call the rest by
+  name. Each function that reads a table gets `search_path = bob, public`. The
+  two whose bodies named `public.users` (`handle_new_auth_user`,
+  `custom_access_token_hook`) are recreated naming `bob.users`. The six
+  availability functions had no pinned `search_path` and now have one.
+- **Who reaches `bob`.** USAGE goes to the three roles, `authenticated` and
+  `supabase_auth_admin`. `anon` and `service_role` get none (P5 inputs §3.2,
+  §3.4). The table grants Supabase's defaults gave them in `public` are
+  revoked on the moved tables, so a later USAGE grant cannot bring them back.
+- **The tables are named in the move, and discovered in the guard.** A
+  migration records what it did. The guard asserts that nothing is left in
+  `public`.
+- **`actor_ref_history` is append-only by trigger, not by grant.** Contract
+  §10 asserts that `bob_app` holds SELECT, INSERT, UPDATE and DELETE on every
+  non-projection. P5's matrix (proposed) withholds UPDATE and DELETE on the
+  history instead. The contract wins over P5 where they differ, so the grant
+  is uniform and a trigger refuses UPDATE, and any DELETE that is not a cascade
+  from the organisation or the actor. The trigger also refuses a non-`user`
+  actor (§9.4: members only). It binds every role, the owner included, which
+  a grant does not.
+- **`authenticated` gets on `actor_external_refs` and `actor_ref_history` what
+  it has on every other configuration table.** Whether user reads go through
+  PostgREST at all is A-05b's choice.
+- **`v_feeder_actor_map` gives agent and ASA refs the rung `'not_applicable'`**,
+  the value the feeder writes for them (§6.6 (a)). The feeder then holds no
+  rule of its own about which actor types have a rung.
+- **The partition function takes `(regclass, date)`.** A `date` has no zone,
+  and the bounds are midnight UTC. A `timestamptz` does not resolve to it,
+  because the cast to `date` is not implicit.
+- **The partition name is `<parent>_yYYYYmMM`** (§3, `[PROPOSED]`).
+
+### F-21 · Closed
+
+Both feeder views are definer views (`security_invoker = false`), owned by the
+migration owner. They expose their named columns and grant SELECT to
+`bob_feeder` alone. Read as `bob_feeder`, both return rows from both fixture
+tenants, and every other table and view in `bob` refuses it.
+
+One more thing turned up: a definer view in `public` would have carried
+Supabase's default `anon` and `service_role` grants. That would have handed the
+cross-tenant channel map to the API's anonymous role. The grants are revoked
+explicitly. A guard asserts that no role gains cross-tenant reach through
+either view unless it could already read the tables behind it.
+
+### F-22 · Closed in the schema; exercised by the feeder in the second PR
+
+The policy is unchanged. As `bob_feeder`, holding tenant A's claim, a tenant A
+row is accepted and a tenant B row is refused. With no claim, every write is
+refused. A direct write to the partition is held to the same claim, because
+the partition function gives every month its own policy.
+
+### F-23 · The grain CHECK rounded
+
+§3 writes the CHECK as `extract(epoch FROM bucket_start)::bigint % 300 = 0`.
+`extract` returns `numeric`, and the cast rounds. So `14:05:00.4` passes, and
+becomes a second bucket next to `14:05:00` under the same primary key. The
+migration takes the remainder of the exact epoch,
+`extract(epoch FROM bucket_start) % 300 = 0`, which refuses it. On whole
+seconds it accepts exactly what the contract's form accepts. A guard inserts
+the fraction, and goes red against the contract's form (table below).
+**Disposition:** applied, and asked of Henry. If it stands, the contract text
+follows in its next version.
+
+### F-24 · §6.7 and §6.8 cannot be created as written — OPEN, asked of Henry
+
+`proj_detections` keys on `(org_id, detection_id)` and partitions by
+`detected_at`. `proj_deliveries` keys on `(org_id, attempt_id)` and partitions
+by `attempted_at`. Postgres requires the partition key in every primary key and
+unique constraint of a partitioned table, so neither DDL runs. The options:
+
+- **(a), built here, pending his answer.** Add the partition column to the
+  key: `(org_id, detection_id, detected_at)` and
+  `(org_id, attempt_id, attempted_at)`. Uniqueness then holds within a month,
+  and a feeder that upserts on event time sees no difference.
+- **(b)** Do not partition the two. That contradicts §3: all eight are
+  partitioned, and retention is by partition.
+- **(c)** Partition them with no primary key, and leave uniqueness to the
+  feeder.
+
+### Found by the guards
+
+- **`bob_app` held nothing on six tables inherited from Bob-New**:
+  `baselines`, `interactions`, `metric_snapshots`, `patterns`,
+  `rootcause_log` and `sentiment_readings`. The hand list in `20260902100300`
+  had missed them since Slice 0. The discovered guard found them, and they are
+  granted. The hand list stays in its migration, which is append-only, and the
+  guard replaces it as the check.
+
+### Verified by sabotage
+
+Each defect below was applied alone to the database, these four files were run
+(`slice2-schema`, `slice0-schema`, `tenancy`, `tenancy-meta`), and the defect
+was undone. The red column lists what failed. No row came back with nothing red.
+
+| Sabotage | Red |
+|---|---|
+| H1's two checks removed from the partition function | all five refusals: a ninth parent in `bob`, a same-named table in `public`, a configuration table, mid-month, last day of the month |
+| The function skips `bob_grant_projection()` | run twice: one partition, granted, with RLS; a month of every projection passes PR-4; the `bob_app` grants |
+| The function skips RLS and the policy | run twice; a month of every projection; a direct write to the partition is held to the claim |
+| A projection renamed (a ninth name, one of the eight missing) | exactly eight, and every test that names that table |
+| A table left in `public` | nothing BOb owns is left in `public` |
+| `bob_app` loses DELETE on a configuration table | the `bob_app` grants |
+| `bob_app` gains INSERT on a projection | the `bob_app` grants; PR-4 on the partitions; the tenancy suite's PR-4 test |
+| The grain CHECK dropped | the grain CHECK is present; an off-boundary bucket is refused |
+| The grain CHECK in the contract's `::bigint` form (F-23) | an off-boundary bucket is refused (the fraction) |
+| A derived column, `error_rate` | no derived figures |
+| `feeder_version` made nullable | provenance |
+| `sealed` dropped | sealed is stored |
+| A `tenant_slug` column | tenant key |
+| `measure` taken out of the `proj_durations` key | never merged, structural |
+| A view that reads `proj_durations` | never merged, behavioural: no longer `todo`, red until it is written |
+| The degenerate-actor CHECK dropped | the four user-only metrics |
+| The `interaction_duration` CHECK dropped | `interaction_duration` is user only (O2) |
+| The closing-is-ORGA CHECK dropped | closing is ORGA |
+| The rung-pairs CHECK dropped | rung pairs with type |
+| The composite actor foreign key dropped | rung pairs with type (the type that differs from the actor's) |
+| F-21 as found: the channel map back to an invoker view | as `bob_feeder`, both views return rows |
+| A definer view granted to `authenticated` | no role but `bob_feeder` gains reach through the views |
+| `bob_feeder` granted SELECT on `channels` | as `bob_feeder`, every other table refuses |
+| F-22's rejected fix: a permissive policy for `bob_feeder` | tenant B refused under A's claim; no claim, refused |
+| The history trigger disabled | the history is append-only, and members only |
+| `valid_to` returned as NULL | the actor map derives `valid_to` (H4) |
+| `autobotz_bindings` recreated in `bob` | pre-rename absence, now over every schema |
+
+The two file guards, no namespace literal and no capability from channel type,
+carry their own probes in the test file. Each probe shape must be reported,
+and a source-key-built ref must not be.
+
+### Not in this pull request
+
+- **The reference feeder**, with the guards that need rows it writes:
+  - sealed at write time;
+  - every turn accounted at seal;
+  - lag not declared, and the count of such channels;
+  - unmapped is counted, by route (the two counts);
+  - the ghost path through a `member_refs_seen` stand-in;
+  - rebuild with linkage.
+- **`affected_members` count equality.** It runs against 3.7's endpoint and
+  waits for it.
+- **`channel_capabilities` (§9.1) is not in the chain.** The guard against
+  deriving capabilities from `channel_type` therefore has nothing in the
+  schema to read yet. It reads every tracked file, with a probe, and will
+  read the table's views and functions once they exist.
+- **Where the p99 measurement of H2 is written** beside `lag_seconds` is not
+  decided: a column or the operator's record. Nothing is added to the schema
+  for it here.
+- **The contract's status line** still reads "not published, not signed". It
+  is changed with the contract's next version, not here.
+
+**Counts.** The suite goes from 100 tests to 140: 139 pass and 1 is `todo`.
+The `todo` is the behavioural half of the never-merge guard, as §10 requires.
+
+
+---
+
 *Boss.Technology · BOb v1 · Internal only*

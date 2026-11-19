@@ -35,6 +35,11 @@ export async function connect() {
   // so that someone changing that flag later gets a slow suite rather than a
   // dishonest one. Session-scoped: released when the connection closes.
   await client.query('SELECT pg_advisory_lock(hashtext($1))', ['bob-test-fixtures'])
+
+  // BOb's tables live in schema `bob` (Slice 2). The fixtures and the tests
+  // name them unqualified, as the application will; the functions stay in
+  // `public`. Discovery never relies on this: it reads the catalog.
+  await client.query('SET search_path = bob, public, extensions')
   return client
 }
 
@@ -57,6 +62,20 @@ export async function loadFixture(client) {
 // cannot see. A table added later is cleared without anyone extending a list.
 async function clearTenants(client) {
   const tenants = [TENANT_A, TENANT_B]
+  // Projections hold foreign keys to channels and actors with no cascade
+  // (contract §6), so their rows go first, from every partitioned table that
+  // carries org_id. Found, not listed.
+  const { rows: parted } = await client.query(`
+    SELECT format('%I.%I', n.nspname, c.relname) AS qualified
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE c.relkind = 'p' AND NOT c.relispartition
+       AND n.nspname NOT LIKE 'pg\\_%'
+       AND EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.oid
+                      AND a.attname = 'org_id' AND NOT a.attisdropped)`)
+  for (const p of parted) {
+    await client.query(
+      `DELETE FROM ${p.qualified} WHERE org_id = ANY($1::uuid[])`, [tenants])
+  }
   await client.query(
     `DELETE FROM ${await organizationsTable(client)} WHERE id = ANY($1::uuid[])`,
     [tenants])

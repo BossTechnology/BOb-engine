@@ -187,17 +187,21 @@ describe('F-08 · a website is a channel type', () => {
 })
 
 describe('R-01, R-02, R-03 · the autobotz corrections', () => {
+  // Pre-rename absence (contract §10). Every schema but the catalogs: a check
+  // pinned to `public` passes trivially once the tables live in `bob` (F-19).
   test('the old table name survives nowhere', async () => {
     const { rows } = await db.query(`
-      SELECT 'table' AS kind, c.relname AS name
+      SELECT 'table' AS kind, format('%I.%I', n.nspname, c.relname) AS name
         FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-       WHERE n.nspname = 'public' AND c.relname LIKE '%autobotz_bindings%'
+       WHERE n.nspname NOT LIKE 'pg\\_%' AND n.nspname <> 'information_schema'
+         AND c.relname LIKE '%autobotz_bindings%'
       UNION ALL
       SELECT 'constraint', conname FROM pg_constraint
        WHERE conname LIKE '%autobotz_bindings%'
       UNION ALL
-      SELECT 'policy', policyname FROM pg_policies
-       WHERE schemaname = 'public' AND policyname LIKE '%autobotz_bindings%'`)
+      SELECT 'policy', format('%I.%I', schemaname, policyname) FROM pg_policies
+       WHERE schemaname NOT LIKE 'pg\\_%' AND schemaname <> 'information_schema'
+         AND policyname LIKE '%autobotz_bindings%'`)
     assert.deepEqual(
       rows, [],
       'artefacts still carry the pre-rename name:\n' +
@@ -208,7 +212,7 @@ describe('R-01, R-02, R-03 · the autobotz corrections', () => {
   test('autobotz carries the Data Model §3.4 columns', async () => {
     const { rows } = await db.query(`
       SELECT column_name FROM information_schema.columns
-       WHERE table_schema = 'public' AND table_name = 'autobotz'`)
+       WHERE table_schema = 'bob' AND table_name = 'autobotz'`)
     const cols = new Set(rows.map((r) => r.column_name))
 
     for (const c of ['reference', 'binding', 'verified_at', 'scope_kind',
