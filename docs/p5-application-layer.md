@@ -11,8 +11,8 @@ Updated again on 2026-11-19, after Slice 2 merged (PR #20 and PR #21, contract
 0.5.3), to bring the state, the grant matrix and the migration count up to what
 is on `main`. That pass also recorded F-26, which Slice 2 handed to P5 (§7,
 Q6), and the seven objections from the devil's-advocate review that comes
-before the signature (§8). Objection 1 is answered (§8). Q6 and the other six
-are **[OPEN]**. Henry answers them; this
+before the signature (§8). Objections 1 and 2 are answered (§8). Q6 and the other
+five are **[OPEN]**. Henry answers them; this
 file does not.
 
 The decision itself is a BzzzBX decision: **D62** in the BzzzBX register. The
@@ -446,9 +446,21 @@ window, not before the signature**, two things exist.
 2. **A written procedure for when it happens.** There are two ways forward:
    - **Go forward with a fix:** a new migration (append-only), applied by the
      same step.
-   - **`restore.sh`:** it returns the whole database, identity accounts
+   - ~~**`restore.sh`:** it returns the whole database, identity accounts
      included. That cost is why the choice between the two is written down
-     beforehand and is not worked out during a window.
+     beforehand and is not worked out during a window.~~
+   - **[FINDING] 2026-11-19.** That line was wrong, read against Bzzz
+     `scripts/restore.sh` and `scripts/backup.sh` on `main`:
+     - `restore.sh --restaurar` restores ClickHouse (`bzzz.*`) only. For the
+       portal's identity it prints "restaurar a mano", following
+       `docs/OPERACION_restaurar_identidad.md`. A restore over an initialised
+       `auth` schema leaves `auth.users` created and empty, measured on
+       2026-09-07.
+     - `backup.sh` dumps all of `supabase-db`'s `postgres` database nightly
+       and verifies only the `auth.users` count. Any `bob` schema would ride
+       in that dump unverified.
+     - Today no automated path restores Postgres in the box. What replaces
+       this line is §8, objection 2, as answered.
 
 ### 6.3 Guards the roles add — **[PROPOSED]**
 
@@ -580,6 +592,23 @@ Ordered from the most damaging to the least.
      of `bob` alone work with the definer views and the `SECURITY DEFINER`
      functions. Estimate Febor's rows over thirteen months: buckets ×
      measures × channels.
+   - **Answered** (Henry, 2026-11-19): **(a) a shared database, with `bob`
+     recovered on its own.** A separate Postgres for BOb was rejected. The
+     answer rests on one property: the eight projections are derived from
+     ClickHouse, and the feeder rebuilds them (Slice 2). Only `bob`'s
+     configuration and live state are BOb's alone: actors, refs and their
+     history, channels and capabilities, thresholds.
+     - **Backup.** `backup.sh` dumps `bob` on its own, with the data of the
+       `proj_*` tables left out. The dump is verified by effect, counted
+       against the live database, as the identity dump already is.
+     - **Recovery.** Fix forward first, with a new migration. If that is not
+       enough, restore `bob` alone, then rebuild the projections from
+       ClickHouse with the feeder. `auth` is never touched because of BOb.
+     - **Rehearsal.** The lab-02 rehearsal (§6.2) also restores `bob` alone,
+       with its definer views and its `SECURITY DEFINER` functions, and
+       records that it works.
+     - **Still open, for D38\*:** the sizing of thirteen months of partitions
+       in the Postgres that authenticates the portal.
 3. **RLS by a self-set claim is not tenant isolation against the process.**
    - `bob_feeder` and `bob_app` set `request.jwt.claims` themselves (§3.3). A
      feeder that picks the wrong `org_id` picks it for the claim and the row
