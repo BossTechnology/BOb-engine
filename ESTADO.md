@@ -25,7 +25,7 @@
   - CHASS1S (repo `CHS`): 137 de producción. jszip tiene doble licencia (MIT o GPL), duck declara solo «BSD» y Chromium se descarga en tiempo de ejecución.
 
 ## Pendiente
-- Slice 2, PR 1 (#20): CI en verde y la orden de Henry para fusionar. Borrador para Federico en BOB-6 (llaves de 0.5.2 y §8.7 para 3.7) listo para Henry, sin publicar.
+- Slice 2, PR 1 (#20): CI en verde y la orden de Henry para fusionar. Borrador para Federico en la tarea 6 de Relevo (llaves de 0.5.2 y §8.7 para 3.7) listo para Henry, sin publicar.
 - Slice 2, PR 2: el alimentador de referencia (un tenant por transacción con su claim, F-22; particiones con `bob.proj_ensure_partition`; `sealed` por la regla del §4; los dos conteos del §8.6) y sus guards: sellado al escribir, cada turno contado al sellar, lag no declarado y su conteo, no mapeado por ruta, camino de fantasmas con un sustituto de `member_refs_seen`, reconstrucción con linkage.
 - Fuera de los dos PRs: `channel_capabilities` (§9.1) no está en la cadena; dónde se escribe la medición p99 de H2; la línea de estado del contrato (dice «not signed») se corrige en su próxima versión; la igualdad de `affected_members` espera el endpoint de 3.7.
 - P5 (D62): antes de firmar, `/abogado-del-diablo` sobre P5. Antes de la primera ventana (no de la firma): ensayo en lab-02 de una migración amañada para fallar a mitad de cadena, con dump antes, y procedimiento escrito (arreglo hacia delante o `restore.sh`). F-21 y F-22 van con las migraciones del Slice 2, detrás del contrato 0.5 (PR #17).
@@ -37,7 +37,7 @@
 
 ## Siguiente paso
 - P5: Henry revisa el PR de la puesta al día, corre `/abogado-del-diablo` sobre P5 y, si sigue en pie, firma D62.
-- Slice 2: Henry revisa el PR 1 y publica (o ajusta) el aviso a Federico en BOB-6; después, el PR 2 con el alimentador de referencia y sus guards. La tarea 3.7 de BzzzBX implementa contra el contrato, con `member_refs_seen` como cuarto entregable.
+- Slice 2: Henry revisa el PR 1 y publica (o ajusta) el aviso a Federico en la tarea 6 de Relevo; después, el PR 2 con el alimentador de referencia y sus guards. La tarea 3.7 de BzzzBX implementa contra el contrato, con `member_refs_seen` como cuarto entregable.
 
 ## Notas de sesión
 <!-- AAAA-MM-DD: una o dos líneas -->
