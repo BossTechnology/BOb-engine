@@ -39,7 +39,7 @@ CREATE POLICY "org_channel_capabilities" ON bob.channel_capabilities FOR ALL
 GRANT SELECT, INSERT, UPDATE, DELETE ON bob.channel_capabilities TO bob_app, authenticated;
 
 COMMENT ON TABLE bob.channel_capabilities IS
-  'Contract §9.1. Declared per channel, never mapped from channel_type. A row '
+  'Contract §9.1. Declared per channel, never derived from the channel kind. A row '
   'means the channel can produce this class; no row means not configured (§5).';
 
 -- ── §7.4 · the channel map carries the capabilities (F-25) ──────────────────

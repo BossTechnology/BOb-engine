@@ -29,6 +29,7 @@ const TO = '2026-11-18T14:30:00Z'
 const NOW = TO
 const WHATSAPP_A = 'aaaaaaaa-2222-4000-8000-000000000001'
 const WEBSITE_A = 'aaaaaaaa-2222-4000-8000-00000000000b'
+const VOICE_A = 'aaaaaaaa-2222-4000-8000-00000000000a'
 const CHAT_B = 'bbbbbbbb-2222-4000-8000-00000000000c'
 const TENANTS = [TENANT_A, TENANT_B]
 
@@ -235,6 +236,34 @@ describe('§4.1 · every turn accounted at seal', () => {
         WHERE metric_id = 'label_missing' AND org_id = ANY($1::uuid[])`, [TENANTS])
     assert.ok(rows.length > 0)
     for (const r of rows) assert.ok(r.sealed, JSON.stringify(r))
+  })
+
+  // Both sides of the capability, each in a sealed bucket with an unlabelled
+  // customer turn: WhatsApp declares orga_conversation and writes the row;
+  // voice does not, and writes nothing (§4.1, contract 0.5.3).
+  test('label_missing on a channel with orga_conversation, never on one without', async () => {
+    const { rows: c } = await db.query(
+      `SELECT c.id AS channel_id, c.lag_seconds,
+              EXISTS (SELECT 1 FROM bob.channel_capabilities cc WHERE cc.channel_id = c.id
+                        AND cc.capability = 'orga_conversation') AS orga
+         FROM bob.channels c WHERE c.id = ANY($1::uuid[])`, [[WHATSAPP_A, VOICE_A]])
+    const ch = Object.fromEntries(c.map((r) => [r.channel_id, r]))
+    assert.equal(ch[WHATSAPP_A].orga, true)
+    assert.equal(ch[VOICE_A].orga, false)
+
+    // With it: t4, unlabelled, in a sealed bucket.
+    const withIt = await metric(WHATSAPP_A, '2026-11-18T14:05:00Z', 'label_missing')
+    assert.ok(withIt?.sealed, 'WhatsApp 14:05 is sealed')
+    assert.equal(Number(withIt.event_count), 1)
+
+    // Without it: t9, unlabelled, in a bucket its 900 s lag has already sealed.
+    const sealable = new Date('2026-11-18T14:05:00Z').getTime() + ch[VOICE_A].lag_seconds * 1000 <=
+      new Date(FIXTURE.watermark).getTime()
+    assert.ok(sealable, 'voice 14:00 is behind its lag, so only the capability can keep it out')
+    const { rows: voice } = await db.query(
+      `SELECT metric_id FROM bob.proj_metric_counts
+        WHERE channel_id = $1 AND bucket_start = '2026-11-18 14:00:00+00'`, [VOICE_A])
+    assert.deepEqual(voice, [])
   })
 
   // No label accounting at all, not even zeros, on a channel that does not

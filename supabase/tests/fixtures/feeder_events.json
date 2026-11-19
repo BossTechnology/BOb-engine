@@ -1,5 +1,5 @@
 {
-  "_note": "Business events as the truth store holds them, for the reference feeder suite. Invented. Pairs with feeder_world.sql. The label for turn t4 is withheld on purpose: at seal it is label_missing (contract 4.1).",
+  "_note": "Business events as the truth store holds them, for the reference feeder suite. Invented. Pairs with feeder_world.sql. The label for turn t4 is withheld on purpose: at seal it is label_missing (contract 4.1). Turn t9 on voice is unlabelled too, in a bucket that seals: voice declares no orga_conversation, so it is never label_missing.",
   "watermark": "2026-11-18T14:30:00Z",
   "events": [
     { "event_time": "2026-11-18T14:01:00Z", "bzzz.tenant": "tenant-a", "source_key": "tenant-a.whatsapp", "correlation_id": "c1", "event_name": "turn", "attributes": { "side": "customer", "turn_id": "t1", "miembro.id": "m:a001" } },
@@ -24,6 +24,7 @@
     { "event_time": "2026-11-18T14:22:00Z", "bzzz.tenant": "tenant-a", "source_key": "tenant-a.web", "correlation_id": "c3", "event_name": "turn", "attributes": { "side": "business", "actor.ref": "botplatform:web-01", "actor.type": "asa" } },
     { "event_time": "2026-11-18T14:23:00Z", "bzzz.tenant": "tenant-a", "source_key": "tenant-a.web", "correlation_id": "c3", "event_name": "conversation_close", "attributes": { "outcome": "resolved", "actor.ref": "botplatform:web-01", "actor.type": "asa" } },
 
+    { "event_time": "2026-11-18T14:02:00Z", "bzzz.tenant": "tenant-a", "source_key": "tenant-a.voice", "correlation_id": "c6", "event_name": "turn", "attributes": { "side": "customer", "turn_id": "t9", "miembro.id": "m:a001" } },
     { "event_time": "2026-11-18T14:24:00Z", "bzzz.tenant": "tenant-a", "source_key": "tenant-a.voice", "correlation_id": "c4", "event_name": "turn", "attributes": { "side": "customer", "turn_id": "t7", "miembro.id": "m:a001" } },
     { "event_time": "2026-11-18T14:25:00Z", "bzzz.tenant": "tenant-a", "source_key": "tenant-a.voice", "correlation_id": "c4", "event_name": "turn", "attributes": { "side": "business", "actor.ref": "tenant-a.whatsapp:2001", "actor.type": "human" } },
     { "event_time": "2026-11-18T14:26:00Z", "bzzz.tenant": "tenant-a", "source_key": "tenant-a.voice", "correlation_id": "c4", "event_name": "conversation_close", "attributes": { "outcome": "resolved", "actor.ref": "tenant-a.whatsapp:2001", "actor.type": "human" } },

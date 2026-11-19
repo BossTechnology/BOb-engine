@@ -1895,12 +1895,12 @@ How it works:
 - §8.7 checked before the window is cleared, against everything stored for the
   tenant.
 
-### F-25 · The feeder cannot see `orga_conversation` — OPEN, asked of Henry
+### F-25 · The feeder cannot see `orga_conversation` — CLOSED in 0.5.3
 
 §4.1 writes `label_missing` only on a channel that declares `orga_conversation`
 (§9.1). §7.4 gives the feeder exactly two views, and neither carries
 capabilities. `channel_capabilities` was not in the migration chain at all.
-Built under option (a), pending Henry's answer:
+Henry chose option (a), and the contract goes to 0.5.3 ("Opción (a), 0.5.3"):
 - `bob.channel_capabilities` per §9.1, with RLS. SIUD goes to `bob_app` and
   `authenticated`.
 - `v_feeder_channel_map` gains one column, `capabilities TEXT[]`. The column
@@ -1913,10 +1913,9 @@ The other options put to Henry:
   "zero" where §5 says "not configured".
 - (c) defer the label cut.
 
-If (a) stands, §7.4 and §9.1 change in contract 0.5.3. The contract is not
-edited in this pull request.
+§7.4 and §9.1 change in 0.5.3, in this pull request (the section below).
 
-### F-26 · `bob_app` cannot name its tenant
+### F-26 · `bob_app` cannot name its tenant — accepted as a finding
 
 The reconciliation runs as `bob_app` (§7.2), and needs the tenant's slug for
 the `member_refs_seen` frame (§7.3a). `organizations` is readable under RLS by
@@ -1924,7 +1923,8 @@ the `member_refs_seen` frame (§7.3a). `organizations` is readable under RLS by
 tenants nor read a slug. That is right for a tenant-scoped credential.
 - What was built: the reconciliation's scheduler hands it
   `(org_id, tenant_slug)`. It reads `channels` itself, under the claim.
-- No grant was widened.
+- No grant was widened. Henry agreed that the reconciliation receives its
+  list of `org_id`s from whoever schedules it.
 - Who runs the scheduler, and from where it reads the tenant list, is a P5
   (D62) question.
 
@@ -1966,7 +1966,8 @@ Then `tests/slice2-feeder.test.mjs` was run, and the change was undone.
 | NULL lag seals (O1 dropped) | the website writes rows and none of them is sealed |
 | `label_missing` written before the seal | `label_missing` exists only at seal |
 | An unlabelled turn is not counted as `label_missing` | the accounting adds up; the withheld label lands in `label_missing` |
-| Label accounting written on every channel | no label accounting on a channel that does not expect labels (**first run: nothing red**, see below) |
+| Label accounting written on every channel | no label accounting on a channel that does not expect labels (**first run: nothing red**, see below); `label_missing` on a channel with `orga_conversation`, never on one without |
+| No label accounting even with `orga_conversation` | the accounting adds up; `label_missing` only at seal; `label_missing` on a channel with `orga_conversation`, never on one without; the withheld label |
 | The two counts summed into one | an unmappable event moves route A only |
 | An unresolved member ref counted in route B | zero against the fixture; the three injections |
 | The rung taken from the current mapping, not event time | the rung stays as it was at event time |
@@ -1990,6 +1991,16 @@ Then `tests/slice2-feeder.test.mjs` was run, and the change was undone.
   refuses any label accounting, including orga sentiment, on a channel
   without `orga_conversation`.
 
+### Found by the guards
+
+- **The capability-from-type guard** (Relevo task 10) flagged this pull
+  request's own migration. The comment on `channel_capabilities` named
+  `channel_type` ("never mapped from channel_type"). The guard reads tracked
+  files only, so it saw the migration once it was committed, and CI went red.
+  The comment was reworded. A guard that matches on words cannot tell a
+  derivation from a sentence that forbids one, and that is the trade it makes
+  on purpose: a human looks.
+
 ### F-22, exercised
 
 The feeder writes tenants A and B in separate transactions. A wrapper on its
@@ -2004,7 +2015,40 @@ and the guard goes red.
 - `proj_durations`, `proj_channel_health` and `proj_rum_signals` rows: no
   fixture instrumentation.
 
-**Counts.** 142 → 166: 165 pass and 1 is `todo`.
+**Counts.** 142 → 167: 166 pass and 1 is `todo`.
+
+## Slice 2 · The projection read contract, 0.5.3
+
+Henry chose option (a) for F-25 ("Opción (a), 0.5.3"), relayed from the
+session he drives. 0.5.3 writes it into the contract, in the same change as the
+migration that already follows it. No ruling changes.
+
+- **F-25 → §7.4.** `v_feeder_channel_map` gains `capabilities TEXT[]`. It holds
+  the channel's capabilities, sorted, and is empty when the channel declares
+  none. The feeder still reads two views.
+- **F-25 → §9.1.** `channel_capabilities` is created in Slice 2. `bob_app`
+  writes it, under RLS by `org_id`.
+- **§10.** The accounting row names both sides of the capability.
+
+### The capability guard, seen failing on both sides
+
+The fixture gains t9: an unlabelled customer turn on voice at 14:02. Voice
+declares no `orga_conversation`, and its 900 s lag seals the 14:00 bucket at
+14:20. Only the capability can keep `label_missing` out of it. On the other
+side, t4 is unlabelled on WhatsApp, in a sealed bucket.
+
+| Sabotage | Red |
+|---|---|
+| The feeder ignores the capability | `label_missing` on a channel with `orga_conversation`, never on one without (voice writes) |
+| The feeder looks for a capability no channel declares | the same test (WhatsApp does not write), and the accounting guards |
+
+**Counts.** 167: 166 pass and 1 is `todo`.
+
+### For 3.7
+
+The new column of `v_feeder_channel_map` is what 3.7 reads to know where
+`label_missing` is written. A draft note to Federico on Relevo task 6 is
+prepared for Henry, and is not posted.
 
 ---
 
