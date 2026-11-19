@@ -3,8 +3,8 @@
 > Actualizar al cerrar cada sesión. Es lo primero que lee la siguiente.
 
 ## Tarea actual
-- Slice 2, contra el contrato 0.5.2. El PR 1 (#20) ya está fusionado (`9fbd367`). El PR 2, en la rama `slice-2-reference-feeder`, trae el alimentador de referencia, la reconciliación de fantasmas y los guards del §10 que necesitan filas del feeder. Henry eligió la opción (a) de F-25, así que el contrato pasa a 0.5.3: `channel_capabilities` y la columna `capabilities` en el mapa de canales.
-- BZZ-3 de Relevo, P5 («the whole application layer»), decisión D62 de BzzzBX, sin firmar: insumos en `docs/p5-application-layer.md` (PR #16 fusionado; puesta al día en la rama `docs/p5-d62-inputs-updated`). Federico respondió Q1–Q3 (tres roles de Handoff §4.3; `organizations`/`org_id` en vez de `tenants`/`app_entities`; Q3 en su forma del 15 nov: desarrollo en Supabase local, lab-02 para integración y ensayo, el proyecto hospedado vuelve a la demo). Henry respondió en BZZ-19 el 18 nov: el alimentador de referencia tiene `bob_feeder` primero; número D62 (D60 se firmó ese día para otra cosa).
+- Slice 2 terminado y en `main`: PR #20 (`9fbd367`) y PR #21 (`c4ebf1d`), contrato 0.5.3. El aviso de 0.5.3 a Federico se publicó en la tarea 6 de Relevo el 19 nov, y el turno es de Federico (3.7).
+- BZZ-3 de Relevo, P5 («the whole application layer»), decisión D62 de BzzzBX, sin firmar: insumos en `docs/p5-application-layer.md`. El 19 nov se pusieron al día después del Slice 2, con F-26 como Q6 y las siete objeciones del abogado del diablo en el §8, todo abierto (rama `docs/p5-d62-after-slice-2`). Federico respondió Q1–Q3 (tres roles de Handoff §4.3; `organizations`/`org_id` en vez de `tenants`/`app_entities`; Q3 en su forma del 15 nov: desarrollo en Supabase local, lab-02 para integración y ensayo, el proyecto hospedado vuelve a la demo). Henry respondió en BZZ-19 el 18 nov: el alimentador de referencia tiene `bob_feeder` primero; número D62 (D60 se firmó ese día para otra cosa).
 - Tarea 6 de Relevo («The projection read contract»): contrato de proyección **0.5.1 firmado** por Henry en la tarea 6 el 2026-11-18 (marca «Decisión firmada») y fusionado en `main` (PR #17, `5e2966d`). Turno pasado a Federico para la pregunta de H3. El Slice 2 puede empezar contra esta versión.
 - Tarea 7 de Relevo («What is left to build — scope map»): paquete de guards antes del Slice 2, mergeado en PR #11.
 - Tarea 9 de Relevo («Slice 5 · Cooldown and escalation durations», D-05): decisión cerrada por Federico el 27 oct, registrada en `contract-amendments.md` («Slice 5 · Cooldown and escalation»). Acuse publicado con seis puntos abiertos antes de escribir el paso 6a; turno de Federico.
@@ -25,8 +25,8 @@
   - CHASS1S (repo `CHS`): 137 de producción. jszip tiene doble licencia (MIT o GPL), duck declara solo «BSD» y Chromium se descarga en tiempo de ejecución.
 
 ## Pendiente
-- Slice 2, PR 2 (#21): falta CI en verde y la orden de Henry para fusionar.
-- Borrador del aviso de 0.5.3 para Federico en la tarea 6 de Relevo (la columna nueva de la vista, para 3.7): listo para Henry, sin publicar.
+- P5 (D62): Henry responde Q6 (F-26) y las siete objeciones del §8 antes de firmar. La primera objeción es dónde corre BOb v1 el día de la entrega a Febor.
+- Tres guards del §6.3 de P5 no están construidos: tres roles y no más, `bob_ai_ro` solo vistas, y sin salida a red desde la base.
 - F-26: Henry está de acuerdo en que quien programa la reconciliación le entregue `(org_id, tenant_slug)`. Quién la programa es pregunta de P5 (D62).
 - Fuera del Slice 2: dónde se escribe la medición p99 de H2; la línea de estado del contrato (dice «not signed») se corrige en su próxima versión; la igualdad de `affected_members` espera el endpoint de 3.7.
 - P5 (D62): antes de firmar, `/abogado-del-diablo` sobre P5. Antes de la primera ventana (no de la firma): ensayo en lab-02 de una migración amañada para fallar a mitad de cadena, con dump antes, y procedimiento escrito (arreglo hacia delante o `restore.sh`). F-21 y F-22 van con las migraciones del Slice 2, detrás del contrato 0.5 (PR #17).
@@ -37,8 +37,8 @@
 - Nada.
 
 ## Siguiente paso
-- P5: Henry revisa el PR de la puesta al día, corre `/abogado-del-diablo` sobre P5 y, si sigue en pie, firma D62.
-- Slice 2: Henry revisa el PR 2 (#21) y publica, o ajusta, el aviso de 0.5.3 a Federico. La tarea 3.7 de BzzzBX implementa contra el contrato, con `member_refs_seen` como cuarto entregable.
+- P5: Henry revisa el PR de la puesta al día y responde el §8 y Q6. Si P5 sigue en pie, firma D62.
+- La tarea 3.7 de BzzzBX implementa contra el contrato 0.5.3, con `member_refs_seen` como cuarto entregable (turno de Federico).
 
 ## Notas de sesión
 <!-- AAAA-MM-DD: una o dos líneas -->
@@ -62,3 +62,4 @@
 - 2026-11-18: Henry acepta F-24 (a) y F-23; contrato 0.5.2 con §8.7 y el guard de hora de evento inmutable, visto fallar; 142 tests.
 - 2026-11-18: Slice 2, PR 2: alimentador de referencia, reconciliación de fantasmas, `channel_capabilities` (F-25) y reporte de declaraciones. De 142 a 166 tests. Cada guard se vio fallar; dos estaban ciegos en la primera corrida y se reescribieron. F-26 registrado.
 - 2026-11-18: Henry elige la opción (a) de F-25 y el contrato pasa a 0.5.3. El guard de capacidad se vio fallar en los dos lados. 167 tests.
+- 2026-11-19: PR #21 fusionado (`c4ebf1d`) y aviso de 0.5.3 publicado en la tarea 6. Abogado del diablo sobre P5 con siete objeciones, y los insumos de P5 puestos al día con F-26 (Q6). Nada firmado.

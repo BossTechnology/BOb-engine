@@ -7,6 +7,13 @@ grants, and the migration mechanism"). Updated on 2026-11-18 with Federico's
 answers to Q1–Q3 and Henry's answers to his two questions (Relevo BZZ-19,
 18 Nov). The answers settle the inputs; they do not sign P5.
 
+Updated again on 2026-11-19, after Slice 2 merged (PR #20 and PR #21, contract
+0.5.3), to bring the state, the grant matrix and the migration count up to what
+is on `main`. That pass also recorded F-26, which Slice 2 handed to P5 (§7,
+Q6), and the seven objections from the devil's-advocate review that comes
+before the signature (§8). All eight are **[OPEN]**. Henry answers them; this
+file does not.
+
 The decision itself is a BzzzBX decision: **D62** in the BzzzBX register. The
 route plan called it D39\*, and D39 went to retention. Henry signs it. This
 file is what it is written from.
@@ -16,23 +23,29 @@ file is what it is written from.
   Henry reassigned P5 to D62.
 
 **What it does not do.** It writes no migration, creates no role and touches no
-database. Slice 2's migrations still wait for the projection contract to be
-signed on Relevo task 6 (draft 0.5, PR #17, open). This file must not be read
-as permission to start them.
+database. Slice 2's migrations were built against the projection contract,
+not against P5. The contract was signed at 0.5.1 on Relevo task 6, and 0.5.2
+and 0.5.3 add what Henry accepted while it was built (F-23 to F-25). They are
+on `main`, in the repository and in CI only. No box has them. This file must
+not be read as permission to apply them to any box.
 
 **Markers.**
 - **[DECIDED]**: a signed decision or a ruling already states this. The
   source is named next to it. This file does not reopen it.
 - **[PROPOSED]**: a choice these inputs make that no ruling states. It stands
   only if the decision adopts it.
-- **[OPEN]**: a question the decision has to answer. They are listed in §7.
-  As of 2026-11-18 all five are answered there; none is left open.
+- **[OPEN]**: a question the decision has to answer. They are listed in §7
+  and §8. As of 2026-11-19, Q1–Q5 are answered; Q6 and the seven objections
+  of §8 are open.
 - **[FINDING]**: something wrong in what is on `main` today, found while
   writing this. It is recorded in `Documentation/contract-amendments.md`.
 
 **Sources.**
-- `docs/contracts/projection-contract.md`, draft 0.4 (PR #15, merged as
-  `be12e2d`).
+- `docs/contracts/projection-contract.md`: draft 0.4 (PR #15, merged as
+  `be12e2d`) when these inputs were written. On 2026-11-19 it is 0.5.3, on
+  `main` at `c4ebf1d`.
+- `supabase/migrations/` and `tests/` on `main` at `c4ebf1d` (Slice 2
+  merged), for the 2026-11-19 pass.
 - `supabase/migrations/20260902100300_roles_and_grants.sql`: Handoff §4.3, the
   three-role split.
 - `Documentation/contract-amendments.md`: A-05, N-04, N-08, F-18, F-19, and the
@@ -56,7 +69,7 @@ as permission to start them.
 
 | Item | State | Where |
 |---|---|---|
-| The projection schema is the contract, 0.4 | **[DECIDED]** in content, unsigned as a file. Federico: "Nothing is left on Federico's side for this contract" (Relevo task 6, 11 Nov). O1 to O5 are open. Draft 0.5 is PR #17, open | §2 |
+| The projection schema is the contract, 0.5.3 | **[DECIDED]** Signed at 0.5.1 by Henry on Relevo task 6, 18 Nov (PR #17). 0.5.2 (F-23, F-24, §8.7) and 0.5.3 (F-25, `channel_capabilities`) were accepted by Henry while Slice 2 was built and notified to Federico on task 6. Slice 2 is on `main` (PR #20, PR #21) | §2 |
 | The three roles are `bob_app`, `bob_feeder` and `bob_ai_ro`, as Handoff §4.3 defines them | **[DECIDED]** (Federico, 12 Nov, Q1) | §3 |
 | The reference feeder holds `bob_feeder` first; 3.7 takes the same credential later | **[DECIDED]** (Henry, BZZ-19, 18 Nov) | §3.1 |
 | `organizations` / `org_id` replace runbook §7.3's `tenants` / `app_entities` for BOb; `organizations.slug` = `bzzz.tenant` | **[DECIDED]** (Federico, Q2) | §5.1 |
@@ -72,13 +85,15 @@ as permission to start them.
 | Migrations live in BOb-engine, are append-only, and are tested from an empty database in CI | **[DECIDED]** (repository conventions; F-15) | §6.1 |
 | The box applies them with the same CLI CI uses, lab first | **[PROPOSED]** | §6.2 |
 | A rehearsed failed migration on lab-02 and a written procedure, before the first window (not before the signature) | **[DECIDED]** as a condition (Federico) | §6.2 |
-| Two defects in the feeder's access as built | **[FINDING]** F-21, F-22. Their fixes travel with Slice 2's migrations, behind the contract's signature | §3.3 |
+| Two defects in the feeder's access as built | **[FINDING]** F-21, F-22. Fixed in Slice 2 (PR #20) and run against a database by the reference feeder (PR #21); each guard seen failing | §3.3 |
+| Who schedules the ghost reconciliation, and where it reads the tenant list | **[OPEN]** F-26, handed to P5 by Slice 2 | §7, Q6 |
+| The seven objections of the devil's-advocate review | **[OPEN]** | §8 |
 
 ---
 
 ## 2 · The projection schema
 
-The schema is `docs/contracts/projection-contract.md`, draft 0.4. These inputs
+The schema is `docs/contracts/projection-contract.md`, 0.5.3. These inputs
 copy none of it. If this file and the contract ever disagree, the contract
 wins.
 
@@ -104,11 +119,12 @@ wins.
 - **One property.** A projection stores counts, sums and distributions, never a
   figure derived from them.
 
-**Status.** Federico closed all sixteen of 0.3's questions on 11 Nov. Five gaps
-are open in contract §11 (O1 to O5). None of them changes a role or a grant.
-The contract is signed by Henry on Relevo task 6, and then published there.
-Draft 0.5 is open as PR #17. That signature, not P5's, is what Slice 2's
-migrations wait for (§6.1).
+**Status (2026-11-19).** Henry signed the contract at 0.5.1 on Relevo task 6
+on 18 Nov (PR #17, `5e2966d`). Then Slice 2 was built against it, and three
+places could not be built as written. Henry accepted the fixes, which are
+0.5.2 (F-23, F-24, §8.7) and 0.5.3 (F-25). Federico was notified on task 6.
+Both Slice 2 PRs are merged (PR #20 `9fbd367`, PR #21 `c4ebf1d`). H3's sweep
+question is open with Federico for 3.7. It changes no role or grant.
 
 **What P5 adds to the contract.** Nothing to its content. It answers where the
 eight tables live (§5.1), who may touch them (§3), and how they get there (§6).
@@ -154,8 +170,10 @@ migration owner is the only role that owns objects or bypasses RLS.
 | Configuration and live state (every `org_id` table that is not a projection) | SELECT, INSERT, UPDATE, DELETE | none | none | A-05b's choice (§3.3) | none |
 | The eight projections and every partition | SELECT | SELECT, INSERT, UPDATE, DELETE | none | SELECT | none |
 | `actors` | SELECT, INSERT, UPDATE, DELETE (ghost reconciliation) | none (reads through the view) | none | A-05b's choice | none |
-| `actor_external_refs`, `actor_ref_history` (Slice 2) | SELECT, INSERT, UPDATE (`actor_ref_history` takes INSERT only) | none | none | none | none |
-| `v_feeder_channel_map` | none | SELECT | none | none | none |
+| `actor_external_refs`, `actor_ref_history` (Slice 2) | As built: SELECT, INSERT, UPDATE, DELETE. `actor_ref_history` is append-only by trigger, not by grant (see below) | none | none | As built: SELECT, INSERT, UPDATE, DELETE, under RLS (A-05b's choice) | none |
+| `channel_capabilities` (Slice 2, 0.5.3) | SELECT, INSERT, UPDATE, DELETE | none (reads the column on its view) | none | SELECT, INSERT, UPDATE, DELETE, under RLS | none |
+| `v_channel_declaration_gaps` (Slice 2) | SELECT | none | none | SELECT | none |
+| `v_feeder_channel_map` (with `capabilities`, 0.5.3) | none | SELECT | none | none | none |
 | `v_feeder_actor_map` (Slice 2) | none | SELECT | none | none | none |
 | `v_ai_*` views (none exist yet) | none | none | SELECT | none | none |
 | `v_roster` | SELECT | none | none | none | none |
@@ -187,6 +205,15 @@ Each entry and its source:
 - **`actor_external_refs` and `actor_ref_history`** **[PROPOSED]**, following
   contract §9.3–§9.4. The history is append-only, so `bob_app` gets no UPDATE or
   DELETE on it. The grant enforces that.
+  - *2026-11-19 · as built.* Slice 2 granted both tables in full to `bob_app`
+    and `authenticated`, following F-19's rule (full grants on every `org_id`
+    non-projection). A trigger keeps the history append-only: UPDATE and
+    DELETE are refused with `23514`, and the guard was seen failing. The
+    effect is the one proposed. The mechanism is different, and the decision
+    should state which one it adopts.
+- **`channel_capabilities`** (Slice 2, contract 0.5.3, F-25). `bob_app` writes
+  it under RLS by `org_id`. The feeder never reads the table, only the
+  `capabilities` column of `v_feeder_channel_map`. That keeps its two views.
 - **No network from Postgres** **[PROPOSED]**, following BZZ-3 Ruling 2.
   `pg_net` and `http` are not granted to any of the three, so no trigger in
   BOb's database can notify a customer outside Node-RED.
@@ -233,12 +260,17 @@ every insert is refused.
 - **Proposed guard:** as `bob_feeder`, with the claim for tenant A, inserting a
   row for tenant B is refused.
 
-**When F-21 and F-22 are fixed.** Behind another signature. The fixes travel
+**When F-21 and F-22 are fixed.** ~~Behind another signature. The fixes travel
 with Slice 2's migrations, and those wait for the projection contract 0.5
-(PR #17, open) to be signed on Relevo task 6. P5 can be signed first: it
-declares the two fixes and their guards (§6.3), and builds neither. Once the
-reference feeder holds `bob_feeder` on the local Supabase (§3.1), both are run
-against a database before the fix is trusted, not only read.
+(PR #17, open) to be signed on Relevo task 6.~~
+
+- *2026-11-19.* Both fixes are built:
+  - F-21 recreated the feeder views as definer views (PR #20).
+  - F-22 makes the feeder write one tenant per transaction under that
+    tenant's claim (PR #20).
+- The reference feeder holds `bob_feeder` and ran both against a database
+  (PR #21). Each guard was seen failing first (`contract-amendments.md`).
+- That happened in the repository and in CI only. No box has them.
 
 **`bob_app`** **[PROPOSED]**. The same mechanism. A request handler sets the
 claim from the user's verified JWT. Background work, such as the ghost
@@ -368,10 +400,10 @@ The reasons:
 - **Every guard is seen failing before it is trusted,** and recorded in
   `contract-amendments.md`.
 - **Order:**
-  - No Slice 2 migration before the contract is signed on Relevo task 6
-    (draft 0.5, PR #17, open).
+  - No Slice 2 migration before the contract is signed on Relevo task 6. Done:
+    signed at 0.5.1 on 18 Nov, and Slice 2 was merged after that.
   - Slice 2's migrations bring the contract §10 guards and the role guards in
-    §6.3.
+    §6.3. Four of the seven are built; §6.3 says which.
 
 ### 6.2 How the box applies them — **[PROPOSED]**
 
@@ -398,6 +430,8 @@ measured:
   a new box they run first. They have all run in CI from an empty database.
   The count is read from the files on `main` on 2026-11-18: nineteen
   migrations, ten wrapped, nine not.
+  - *2026-11-19:* twenty-three on `main` at `c4ebf1d`, fourteen wrapped and
+    nine not. The four new ones are Slice 2's, and all are wrapped.
 
 **[DECIDED]** as a condition (Federico): **before the first maintenance
 window, not before the signature**, two things exist.
@@ -418,25 +452,26 @@ window, not before the signature**, two things exist.
 ### 6.3 Guards the roles add — **[PROPOSED]**
 
 These are in addition to contract §10. Each one is seen failing first. P5
-declares them, with the F-21 and F-22 fixes; they are built with Slice 2's
-migrations, after the contract is signed (§3.3).
+declares them, with the F-21 and F-22 fixes. Slice 2 built four of them; the
+other three are still owed, and the third column says which.
 
-| Guard | Asserts |
-|---|---|
-| Three roles, no more | The only non-Supabase LOGIN roles with any privilege in `bob` are `bob_app`, `bob_feeder` and `bob_ai_ro`. None is SUPERUSER or BYPASSRLS |
-| Feeder views readable | As `bob_feeder`, both feeder views return rows for both fixture tenants, and the base tables refuse (F-21) |
-| Feeder scoped by claim | As `bob_feeder` with tenant A's claim, a tenant B row is refused (F-22) |
-| Feeder reads nothing else | As `bob_feeder`, every non-projection table and every view other than the two refuses SELECT |
-| `bob_ai_ro` reads views only | As `bob_ai_ro`, UPDATE is refused, and any base table refuses SELECT (route-plan test, IR-1) |
-| History is append-only | As `bob_app`, UPDATE and DELETE on `actor_ref_history` are refused |
-| No egress from the database | None of the three holds EXECUTE on any function of the `pg_net` or `http` extensions, wherever they are installed |
+| Guard | Asserts | State on 2026-11-19 |
+|---|---|---|
+| Three roles, no more | The only non-Supabase LOGIN roles with any privilege in `bob` are `bob_app`, `bob_feeder` and `bob_ai_ro`. None is SUPERUSER or BYPASSRLS | Not built. Slice 2 checks only that no role but `bob_feeder` gains cross-tenant reach through the definer views |
+| Feeder views readable | As `bob_feeder`, both feeder views return rows for both fixture tenants, and the base tables refuse (F-21) | Built (PR #20) |
+| Feeder scoped by claim | As `bob_feeder` with tenant A's claim, a tenant B row is refused (F-22) | Built (PR #20, PR #21) |
+| Feeder reads nothing else | As `bob_feeder`, every non-projection table and every view other than the two refuses SELECT | Built (PR #20) |
+| `bob_ai_ro` reads views only | As `bob_ai_ro`, UPDATE is refused, and any base table refuses SELECT (route-plan test, IR-1) | Not built. No `v_ai_*` view exists yet |
+| History is append-only | As `bob_app`, UPDATE and DELETE on `actor_ref_history` are refused | Built, by trigger (§3.2) |
+| No egress from the database | None of the three holds EXECUTE on any function of the `pg_net` or `http` extensions, wherever they are installed | Not built |
 
 ---
 
 ## 7 · What the decision has to answer
 
-Three questions for Federico, and two for Henry. None reopened a ruling. All
-five are answered (as of 2026-11-18); the decision is still unsigned.
+Three questions for Federico, and three for Henry. None reopened a ruling.
+Q1–Q5 are answered (as of 2026-11-18). Q6 came from Slice 2 on 2026-11-19 and
+is open. The decision is still unsigned.
 
 1. **Q1 · Are these the three roles?** `bob_app`, `bob_feeder` and `bob_ai_ro`,
    from Handoff §4.3, with `bzzz/supabase-ro` being `bob_ai_ro`. The route plan
@@ -465,15 +500,30 @@ five are answered (as of 2026-11-18); the decision is still unsigned.
    - *2026-11-18:* BZZ-19 had said D60. D60 was signed in Bzzz that day for
      another matter (the batch at the root of SendGrid), and Henry reassigned
      P5 to D62.
+6. **For Henry · F-26, who schedules the ghost reconciliation.** **[OPEN]**
+   The reconciliation runs as `bob_app` (contract §7.2). It needs each
+   tenant's `org_id` and slug, and `bob_app` cannot list tenants under RLS.
+   That is correct for a tenant-scoped credential. What Slice 2 built: the
+   scheduler hands it `(org_id, tenant_slug)`, and no grant was widened. Henry
+   agreed to this on 18 Nov. P5 has to say:
+   - which process runs the scheduler;
+   - where it runs;
+   - with what credential it reads the tenant list.
+   It cannot be `bob_app` (RLS) or the service role (§3.4).
 
 **What stands between these inputs and the signature.**
 
-- **Before signing:** `/abogado-del-diablo` on P5.
+- **Before signing:**
+  - The devil's-advocate review on P5. It was run on 2026-11-19, and its seven
+    objections are in §8.
+  - Henry's answers to §8 and to Q6.
 - **Not before signing, but before the first window:** the failed-migration
-  rehearsal on lab-02 and the written procedure (§6.2).
-- **Behind another signature:** the F-21 and F-22 fixes and the §6.3 guards
+  rehearsal on lab-02 and the written procedure (§6.2). §8, objection 5 asks
+  whether that should move before the signature.
+- ~~**Behind another signature:** the F-21 and F-22 fixes and the §6.3 guards
   travel with Slice 2's migrations, which wait for the projection contract 0.5
-  (PR #17, open). P5 can be signed first, declaring the fixes and their guards.
+  (PR #17, open).~~ Done: Slice 2 is merged, and the fixes and four of the
+  seven §6.3 guards are built (§3.3, §6.3).
 
 **Not in P5.** These belong to other decisions:
 
@@ -482,3 +532,97 @@ five are answered (as of 2026-11-18); the decision is still unsigned.
 - the evidence packages' ClickHouse shape (3.7, against the contract);
 - the centro's phases 3 and 4 (D40\*, D41\*);
 - the MCP (D50).
+
+---
+
+## 8 · Devil's-advocate review, 2026-11-19 — **[OPEN]**
+
+The review ran before the signature, as §7 required. It argues *against* P5
+on purpose. Each objection is the strongest form of it, not a balanced view.
+None is answered here. Henry answers each one, either with a change to P5 or
+with a reason it does not apply, before D62 is signed.
+
+Ordered from the most damaging to the least.
+
+1. **P5 fixes where the database lives before deciding where the application
+   runs.**
+   - N-04's direct connection only works if BOb's application runs inside the
+     box (§5.1), and that is D41\*'s question, still open. Today v1's base is
+     the Bob-New demo, a Next.js app that does not run in a box.
+   - If D41\* leaves it outside, P5 forces exposing Postgres or PostgREST
+     through `bzzz-edge`, which §5.2 forbids. The other way is to package the
+     app as a container in every box, and that work has no estimate.
+   - **Cheapest check:** say in one line where BOb v1 runs for Febor on
+     delivery day.
+2. **BOb and the portal's identity recover together.**
+   - `restore.sh` returns the whole database, identity accounts included
+     (§6.2). A BOb migration bad enough to need it costs the portal every
+     login and invitation made since the dump.
+   - The feeder's thirteen months of partitions share the Postgres that
+     authenticates the portal. Sizing (D38\*) is outside P5, and P5 commits to
+     the shared instance anyway.
+   - **Cheapest check:** on lab-02, see whether `pg_dump -n bob` and a restore
+     of `bob` alone work with the definer views and the `SECURITY DEFINER`
+     functions. Estimate Febor's rows over thirteen months: buckets ×
+     measures × channels.
+3. **RLS by a self-set claim is not tenant isolation against the process.**
+   - `bob_feeder` and `bob_app` set `request.jwt.claims` themselves (§3.3). A
+     feeder that picks the wrong `org_id` picks it for the claim and the row
+     alike, and the database accepts both. F-22 guards a narrower bug than
+     §3.3 says.
+   - If one box holds one company (D31.1), a box may hold a single
+     organization, and then the claim protocol costs every transaction and
+     protects nothing.
+   - **Cheapest check:** how many `organizations` will Febor's box hold? If
+     one, write the RLS down as defence in depth. If several, isolation needs
+     something other than a claim the process sets on itself.
+4. **Every migration runs through one person, times the number of boxes.**
+   - The rule is Henry, in a window, with notice to the company (§6.2). That
+     is lab-02, model-01, Febor, Zerrano and Pinch: five applies per chain,
+     with Slices 3 to 8 still to come.
+   - When Henry is unavailable, no box moves. Boxes drift onto different SHAs,
+     and 3.7 ends up reading different schemas.
+   - **Cheapest check:** migrations per slice so far × five boxes × one
+     window. If that passes a day a month, the model does not scale.
+5. **Signing before the rehearsal signs a mechanism nobody has seen work.**
+   - The text says it itself: the failure behaviour is read, not measured.
+     Nine migrations are not wrapped. `supabase db push` against a
+     self-hosted Supabase, writing `schema_migrations` the way CI does (F-15),
+     has not been run.
+   - If the rehearsal goes badly, a signed BzzzBX decision has to be reopened.
+   - **Cheapest check:** the lab-02 rehearsal is a few hours. Run it before
+     the signature rather than before the window.
+6. **The secrets file breaks its own rule.**
+   - §4 says one credential per file and one reader per file. Yet
+     `supabase.env` holds the migration owner (`postgres`, a superuser),
+     `JWT_SECRET` and `SERVICE_ROLE_KEY`, and three things read it.
+   - Whoever reads it can mint a JWT for any `org_id`, and is a superuser too.
+     The migration step also lives in `actualizar.sh`, the routine script.
+   - **Cheapest check:** list who reads `/opt/bzzz/secrets/supabase.env` on
+     Febor today. If it is more than one process or script, move the
+     migration owner to its own file before signing.
+7. **These inputs described a world that no longer existed.**
+   - Before the 2026-11-19 pass they said the contract was unsigned and that
+     F-21 and F-22 were not built. They did not list `channel_capabilities`,
+     and they did not answer F-26.
+   - Signing stale text leaves an audit trail that contradicts itself.
+   - **Status:** the 2026-11-19 pass is meant to close this. Henry checks it
+     against `main` when he reviews this PR. F-26 is Q6 above.
+
+**The most likely failure (written as a post-mortem six months out).**
+
+- D62 was signed in November. The lab-02 rehearsal stayed "before the first
+  window".
+- BOb v1 shipped to Febor from the same Next.js app, because putting it in the
+  box was a separate project. Someone exposed PostgREST through Traefik
+  "temporarily" so that it could read.
+- On the third window, an unwrapped migration failed mid-chain on Zerrano. The
+  only rehearsed way back was `restore.sh`, which returned a two-day-old
+  database, and the portal lost the week's invited users.
+- Henry ran that window alone, at midnight, because nobody else held the
+  credential. Since then the boxes run different SHAs, and 3.7 has a branch
+  for each schema.
+
+**The question not yet asked.** Where does BOb v1 run on the day it is
+delivered to Febor, and if it is not inside Febor's box, which part of P5 is
+still true that day?
