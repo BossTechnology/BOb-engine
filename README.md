@@ -27,8 +27,8 @@ Read all four summary lines. A `cancelled` count above zero means tests did not
 run, and it does not increment `fail`:
 
 ```
-# tests 140
-# pass 139
+# tests 142
+# pass 141
 # fail 0
 # cancelled 0
 # todo 1

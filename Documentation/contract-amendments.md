@@ -1716,7 +1716,7 @@ row is accepted and a tenant B row is refused. With no claim, every write is
 refused. A direct write to the partition is held to the same claim, because
 the partition function gives every month its own policy.
 
-### F-23 · The grain CHECK rounded
+### F-23 · The grain CHECK rounded — CLOSED in 0.5.2
 
 §3 writes the CHECK as `extract(epoch FROM bucket_start)::bigint % 300 = 0`.
 `extract` returns `numeric`, and the cast rounds. So `14:05:00.4` passes, and
@@ -1725,17 +1725,17 @@ migration takes the remainder of the exact epoch,
 `extract(epoch FROM bucket_start) % 300 = 0`, which refuses it. On whole
 seconds it accepts exactly what the contract's form accepts. A guard inserts
 the fraction, and goes red against the contract's form (table below).
-**Disposition:** applied, and asked of Henry. If it stands, the contract text
-follows in its next version.
+**Disposition:** accepted by Henry on 18 Nov and written into contract 0.5.2
+§3.
 
-### F-24 · §6.7 and §6.8 cannot be created as written — OPEN, asked of Henry
+### F-24 · §6.7 and §6.8 cannot be created as written — CLOSED in 0.5.2
 
 `proj_detections` keys on `(org_id, detection_id)` and partitions by
 `detected_at`. `proj_deliveries` keys on `(org_id, attempt_id)` and partitions
 by `attempted_at`. Postgres requires the partition key in every primary key and
 unique constraint of a partitioned table, so neither DDL runs. The options:
 
-- **(a), built here, pending his answer.** Add the partition column to the
+- **(a), built here, and accepted by Henry on 18 Nov.** Add the partition column to the
   key: `(org_id, detection_id, detected_at)` and
   `(org_id, attempt_id, attempted_at)`. Uniqueness then holds within a month,
   and a feeder that upserts on event time sees no difference.
@@ -1743,6 +1743,10 @@ unique constraint of a partitioned table, so neither DDL runs. The options:
   partitioned, and retention is by partition.
 - **(c)** Partition them with no primary key, and leave uniqueness to the
   feeder.
+
+Henry accepted (a) with a condition, written into 0.5.2 as §8.7. An id's event
+time never changes. If it did, (a) would hold two rows for one id. A guard
+checks it (see "0.5.2" below).
 
 ### Found by the guards
 
@@ -1811,12 +1815,57 @@ and a source-key-built ref must not be.
 - **Where the p99 measurement of H2 is written** beside `lag_seconds` is not
   decided: a column or the operator's record. Nothing is added to the schema
   for it here.
-- **The contract's status line** still reads "not published, not signed". It
-  is changed with the contract's next version, not here.
+- **The contract's status line** read "not published, not signed". 0.5.2
+  corrects it.
 
 **Counts.** The suite goes from 100 tests to 140: 139 pass and 1 is `todo`.
 The `todo` is the behavioural half of the never-merge guard, as §10 requires.
 
+
+
+## Slice 2 · The projection read contract, 0.5.2
+
+Henry accepted both build findings from Slice 2's first pull request on 18 Nov
+("Sí, acepto ambos"), relayed from the session he drives. 0.5.2 writes them
+into the contract, in the same change as the migrations that already follow
+them. No ruling changes.
+
+- **F-24 → §6.7, §6.8.** The keys become `(org_id, detection_id, detected_at)`
+  and `(org_id, attempt_id, attempted_at)`.
+- **F-24's condition → §8.7, new.** For one id, the event time never changes.
+  The feeder and 3.7 both owe it. A correction to an event's time is a new id.
+- **F-23 → §3.** The grain CHECK is `extract(epoch FROM bucket_start) % 300 = 0`,
+  with no cast.
+- **§10 gains one row, and one row is extended.**
+  - Event time is immutable (new).
+  - Grain names the 14:00:00.4 case.
+- **The status line** says what is true: 0.5.1 is signed, and 0.5.2 carries the
+  two accepted corrections.
+
+### The event-time guard, seen failing first
+
+`eventTimeFindings()` in `tests/slice2-schema.test.mjs` groups each
+event-grained projection by `(org_id, <id>)` and reports any group with more
+than one time. The tables and their id columns are found from the primary key:
+the key's columns, minus `org_id` and minus the partition column. They are not
+listed.
+
+| Sabotage | Red |
+|---|---|
+| The finding groups by the whole key, time included, so a second time is a second group | an id written with two times is reported, for both tables |
+| The finding reads only `proj_detections` | the same test, for `proj_deliveries` |
+
+The grain test now inserts 14:00:00.4 as well as 14:05:00.4. Under 0.5.1's
+`::bigint` form 14:00:00.4 is accepted, and the test goes red on it. Under
+0.5.2's form both are refused.
+
+**Counts.** 140 → 142: 141 pass and 1 is `todo`.
+
+### For 3.7
+
+The keys, and the condition that comes with them, are what 3.7 implements
+against. A draft note to Federico on Relevo task 6 is prepared for Henry, and
+is not posted.
 
 ---
 

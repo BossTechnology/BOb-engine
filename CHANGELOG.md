@@ -3,6 +3,7 @@
 Una línea por cambio entregado, en lenguaje de usuario.
 
 ## Sin publicar
+- Contrato de proyección 0.5.2: las llaves de detecciones y entregas llevan su hora de evento, que no puede cambiar para un mismo id, y el bucket de cinco minutos rechaza fracciones de segundo.
 - Slice 2, primera parte: las tablas de BOb pasan al esquema `bob`, existen las ocho proyecciones y la función que crea sus meses (rechaza cualquier otra tabla y cualquier fecha que no sea día 1), los identificadores externos de los actores con su historia, y las dos vistas que lee el alimentador, legibles por él y por nadie más. El alimentador ya puede leer su mapa de canales (F-21) y solo escribe bajo el claim del tenant (F-22).
 - Contrato de proyección 0.5.1, la revisión de Henry antes de firmar: la función que crea particiones rechaza cualquier tabla que no sea de las ocho y cualquier mes mal formado; el lag de un canal se declara con el p99 de siete días medido en la caja; la búsqueda de fantasmas usa una ventana que se solapa en vez de un cursor guardado; y `valid_to` se calcula, no se guarda. P5 queda nombrada como D62.
 - Insumos de P5 (D62) al día: Federico decidió los tres roles, el modelo de tenencia y el proyecto hospedado (en su forma del 15 nov); Henry respondió quién tiene `bob_feeder` primero y el número. La migración fallida se ensaya en lab-02 antes de la primera ventana; P5 sigue sin firmar.

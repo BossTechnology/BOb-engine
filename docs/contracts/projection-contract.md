@@ -1,8 +1,22 @@
 # BOb v1 · Projection read contract
 
-**Status: DRAFT 0.5.1 — not published, not signed.** Opens Slice 2. Once Henry
-signs it on Relevo task 6, it is published there and BzzzBX route-plan task 3.7
-implements against it. No migration is written until then.
+**Status: 0.5.2.** Henry signed 0.5.1 on Relevo task 6 (18 Nov). 0.5.2 adds
+two corrections that building Slice 2 found and Henry accepted the same day.
+BzzzBX route-plan task 3.7 implements against this version.
+
+**What changed from 0.5.1** (Slice 2's first pull request, accepted by Henry
+on 18 Nov). Two places where the signed text could not be built as written:
+- **F-24 · §6.7, §6.8.** `proj_detections` and `proj_deliveries` are
+  partitioned by their event time, and Postgres requires the partition column
+  in every primary key of a partitioned table. The keys become
+  `(org_id, detection_id, detected_at)` and
+  `(org_id, attempt_id, attempted_at)`.
+- **The condition that comes with F-24, §8.7.** An id's event time never
+  changes. If it did, the new key would hold two rows for one id. The feeder
+  and 3.7 both owe this, and a guard reports any id that appears with two
+  times (§10).
+- **F-23 · §3.** The grain CHECK drops its `::bigint` cast. The cast rounds,
+  so 14:00:00.4 passed and became a second bucket beside 14:00.
 
 **What changed from 0.5** (Henry's review before signing, 18 Nov). Four
 `[PROPOSED]` choices that no ruling touched had a gap, and are tightened. No
@@ -153,7 +167,9 @@ holds that credential, the contract is the same.
 - **Grain: five-minute buckets, UTC-aligned (C-13)**, for the six aggregate
   tables (§6.1 to §6.6). Column `bucket_start TIMESTAMPTZ NOT NULL`, covering
   `[bucket_start, bucket_start + 5 min)`, with
-  `CHECK (extract(epoch FROM bucket_start)::bigint % 300 = 0)`.
+  `CHECK (extract(epoch FROM bucket_start) % 300 = 0)`. The remainder is
+  taken on the exact epoch: 0.5.1's `::bigint` cast rounded, so 14:00:00.4
+  passed (F-23, 0.5.2).
 - **Two tables are event-grained, not bucketed** (§3.3; confirmed 11 Nov, Q2).
   - `proj_detections` has one row per detection, partitioned by `detected_at`.
   - `proj_deliveries` has one row per delivery attempt, partitioned by
@@ -856,9 +872,15 @@ CREATE TABLE bob.proj_detections (
   acted_upon        BOOLEAN     NOT NULL DEFAULT false,
   correlation_id    TEXT        NOT NULL,
   -- provenance (no sealed, no bucket_start)
-  PRIMARY KEY (org_id, detection_id)
+  PRIMARY KEY (org_id, detection_id, detected_at)          -- 0.5.2, F-24
 ) PARTITION BY RANGE (detected_at);
 ```
+
+**The key carries `detected_at`** (0.5.2, F-24). Postgres requires the
+partition column in every primary key of a partitioned table, so
+`(org_id, detection_id)` alone cannot be declared. With the time in the key,
+uniqueness of `detection_id` rests on §8.7: a detection's `detected_at` never
+changes.
 
 Verbatim from §3.3. `rule_id` is absent by design: a stream detection has no
 authored rule. Named anomaly rules stay in BOb and alert through the evaluation
@@ -885,9 +907,12 @@ CREATE TABLE bob.proj_deliveries (
   guardrail_bound  TEXT,        -- which limit applied, if any
   report           JSONB,       -- the typed return payload, Handoff §7.4
   -- provenance (no sealed, no bucket_start)
-  PRIMARY KEY (org_id, attempt_id)
+  PRIMARY KEY (org_id, attempt_id, attempted_at)           -- 0.5.2, F-24
 ) PARTITION BY RANGE (attempted_at);
 ```
+
+**The key carries `attempted_at`**, for the same reason as §6.7, and on the
+same condition (§8.7).
 
 - Verbatim from §3.3.
 - **`correlation_id` here is deliberate, and it carries weight** (11 Nov, Q2).
@@ -1208,6 +1233,16 @@ So 3.7 delivers things that do not merge:
      when it did not. The interim is tied to a test, not a log, so it cannot
      quietly become permanent, and the end condition above says what replaces
      it.
+7. **An event-grained id keeps its event time** (0.5.2, F-24; Henry, 18 Nov).
+   - For one `(org_id, detection_id)`, `detected_at` never changes. For one
+     `(org_id, attempt_id)`, `attempted_at` never changes. The feeder and 3.7
+     both owe this.
+   - The two keys carry the time (§6.7, §6.8). If an id came back with
+     another time, the upsert would add a second row instead of replacing the
+     first: one detection counted twice, and possibly in two months.
+   - A correction to an event's time is a new id, never a rewrite of the old
+     one.
+   - A guard reports any id present with more than one time (§10).
 
 The recommended shape (System Flows §3) is a scheduled ClickHouse query on a
 timer, not a stream: idempotency comes from the upsert, and rebuild is the same
@@ -1360,7 +1395,8 @@ Each one is seen failing on purpose before it is trusted, and recorded in
 | **Partition function refuses** (H1) | the function of §3 | A parent outside the eight, or a date that is not the first of a UTC month, raises and creates nothing. Seen failing first against a version without the checks |
 | `bob_app` grants | every `org_id` table | Non-projections: `bob_app` SELECT, INSERT, UPDATE, DELETE. Projections: SELECT only. Replaces the hand list in `20260902100300` |
 | Pre-rename absence | every schema except `pg_*` and `information_schema` | No `autobotz_bindings` table or policy anywhere; replaces the two `public`-only checks in `slice0-schema.test.mjs` |
-| Grain | every projection with a `bucket_start` column | Carries the bucket-alignment CHECK |
+| Grain | every projection with a `bucket_start` column | Carries the bucket-alignment CHECK. A bucket at 14:00:00.4 is refused; seen accepted under 0.5.1's `::bigint` form first (F-23) |
+| **Event time is immutable** (§8.7, 0.5.2) | `proj_detections`, `proj_deliveries` | No `(org_id, detection_id)` or `(org_id, attempt_id)` appears with two times. An id written twice with different times is reported. Seen failing first |
 | **No derived figures** | every projection column | No column named like `p\d+`, `percentile`, `median`, `avg`, `mean`, `health_pct`, **`_rate`**, **`_pct`**. With the last two it would have caught `error_rate` and `uptime_pct` by itself (Q10) |
 | Provenance | every projection | Carries the three columns of §4, `NOT NULL` |
 | **Sealed at write time** | every projection with a `sealed` column | Over the rows the feeder writes in the test run, and only those, every row written with `sealed` satisfies §4's rule **with the channel's declared lag at that moment**. Not a standing scan of history (Q1) |
@@ -1437,4 +1473,6 @@ Nothing on Federico's side for 0.5 (13 Nov). One input added elsewhere:
   Relevo task 6. It does not block the signature: the trailing window works
   without it, and Slice 2's ghost-path guard runs on the trailing window.
 
-What remains is Henry's signature on Relevo task 6. No migration before it.
+0.5.1 was signed by Henry on Relevo task 6 (18 Nov). 0.5.2's two corrections
+(F-23, F-24 with §8.7) were accepted by him the same day, from Slice 2's first
+pull request.

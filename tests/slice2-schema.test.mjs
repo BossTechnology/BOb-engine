@@ -259,7 +259,9 @@ describe('§10 · the shape of every projection', () => {
   test('grain: a bucket off the five-minute boundary is refused, a fraction included', async () => {
     await inTx(async () => {
       await ensurePartition('bob.proj_rum_signals')
-      for (const at of ['2026-11-18 14:03:00+00', '2026-11-18 14:05:00.4+00']) {
+      // 14:00:00.4 is F-23: 0.5.1's `::bigint` form rounded it onto 14:00.
+      for (const at of ['2026-11-18 14:03:00+00', '2026-11-18 14:00:00.4+00',
+        '2026-11-18 14:05:00.4+00']) {
         const code = await refusal(`
           INSERT INTO bob.proj_rum_signals (org_id, channel_id, signal, bucket_start,
             source_watermark, feeder_version)
@@ -425,6 +427,68 @@ describe('§10 · constraints the rows must keep', () => {
         assert.equal(await insert(sql, [TENANT_A, actor, type, CHANNEL_A, rung, BUCKET]),
           want, name)
       }
+    })
+  })
+})
+
+// §8.7 (0.5.2, F-24's condition). The event-grained keys carry the event time,
+// so an id that came back with another time would be a second row, not an
+// update. Tables and id columns are found from the catalog: an event-grained
+// projection is one without bucket_start; its id is its primary key minus
+// org_id and minus the partition column.
+async function eventTimeFindings() {
+  const { rows: tables } = await db.query(`
+    SELECT format('%I.%I', n.nspname, c.relname) AS qualified,
+           (SELECT a.attname FROM pg_attribute a
+             WHERE a.attrelid = c.oid AND a.attnum = pt.partattrs[0])::text AS time_col,
+           ARRAY(SELECT a.attname FROM pg_index i
+                   JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+                  WHERE i.indrelid = c.oid AND i.indisprimary
+                    AND a.attnum <> pt.partattrs[0] AND a.attname <> 'org_id'
+                  ORDER BY a.attnum)::text[] AS id_cols
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      JOIN pg_partitioned_table pt ON pt.partrelid = c.oid
+     WHERE c.relname LIKE 'proj\\_%' AND NOT c.relispartition
+       AND NOT EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.oid
+                          AND a.attname = 'bucket_start' AND NOT a.attisdropped)
+     ORDER BY 1`)
+  assert.equal(tables.length, 2, 'expected the two event-grained projections')
+  const findings = []
+  for (const t of tables) {
+    const ids = t.id_cols.map((c) => `"${c}"`).join(', ')
+    const { rows } = await db.query(`
+      SELECT org_id, ${ids}, count(DISTINCT "${t.time_col}")::int AS times
+        FROM ${t.qualified} GROUP BY org_id, ${ids}
+      HAVING count(DISTINCT "${t.time_col}") > 1`)
+    for (const r of rows) findings.push(`${t.qualified}: ${t.id_cols.map((c) => r[c]).join(',')} at ${r.times} times`)
+  }
+  return findings
+}
+
+describe('§8.7 · an event-grained id keeps its event time', () => {
+  test('no detection or delivery id appears with two times', async () => {
+    assert.deepEqual(await eventTimeFindings(), [])
+  })
+
+  test('an id written with two times is reported, for both tables', async () => {
+    await inTx(async () => {
+      for (const p of ['bob.proj_detections', 'bob.proj_deliveries']) {
+        await ensurePartition(p, '2026-11-01')
+        await ensurePartition(p, '2026-12-01')
+      }
+      for (const at of ['2026-11-30 23:59:00+00', '2026-12-01 00:01:00+00']) {
+        await db.query(`INSERT INTO bob.proj_detections (org_id, detection_id, detection,
+          detected_at, correlation_id, source_watermark, feeder_version)
+          VALUES ($1, 'det-1', 'spike', $2, 'corr-1', now(), 'test')`, [TENANT_A, at])
+        await db.query(`INSERT INTO bob.proj_deliveries (org_id, attempt_id, outbound_id,
+          correlation_id, kind, provider, attempted_at, outcome, source_watermark, feeder_version)
+          VALUES ($1, 'att-1', gen_random_uuid(), 'corr-1', 'autocomm', 'email', $2,
+                  'delivered', now(), 'test')`, [TENANT_A, at])
+      }
+      const found = await eventTimeFindings()
+      assert.ok(found.some((f) => f.startsWith('bob.proj_detections: det-1')), found.join('\n'))
+      assert.ok(found.some((f) => f.startsWith('bob.proj_deliveries: att-1')), found.join('\n'))
     })
   })
 })
