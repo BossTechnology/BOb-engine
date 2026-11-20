@@ -218,6 +218,18 @@ Each entry and its source:
 - **No network from Postgres** **[PROPOSED]**, following BZZ-3 Ruling 2.
   `pg_net` and `http` are not granted to any of the three, so no trigger in
   BOb's database can notify a customer outside Node-RED.
+  - **[FINDING] F-27 · 2026-11-20 · "Not granted" does not hold once they are
+    installed.** Measured on the local Supabase, the image CI uses, by
+    installing both in a transaction that was rolled back:
+    - every function of `pg_net` (in `net`) and of `http` (wherever it is
+      installed) is executable by PUBLIC, and so by all three roles;
+    - `net` gives USAGE to PUBLIC, and `pg_net`'s tables are readable by
+      `bob_ai_ro`.
+    Today neither extension is installed locally or in CI. What protects BOb is
+    "not installed", not "not granted". Whether the box's `supabase-db` has
+    `pg_net` (self-hosted Supabase installs it for webhooks) has not been
+    checked. The box check prints which egress extensions are installed. The
+    decision is Henry's.
 
 ### 3.3 How each role meets RLS
 
@@ -466,18 +478,18 @@ window, not before the signature**, two things exist.
 ### 6.3 Guards the roles add — **[PROPOSED]**
 
 These are in addition to contract §10. Each one is seen failing first. P5
-declares them, with the F-21 and F-22 fixes. Slice 2 built four of them; the
-other three are still owed, and the third column says which.
+declares them, with the F-21 and F-22 fixes. Slice 2 built four of them, and
+the other three were built on 2026-11-20. The third column says where each one stands.
 
 | Guard | Asserts | State on 2026-11-19 |
 |---|---|---|
-| Three roles, no more | The only non-Supabase LOGIN roles with any privilege in `bob` are `bob_app`, `bob_feeder` and `bob_ai_ro`. None is SUPERUSER or BYPASSRLS | Not built. Slice 2 checks only that no role but `bob_feeder` gains cross-tenant reach through the definer views |
+| Three roles, no more | The only non-Supabase LOGIN roles with any privilege in `bob` are `bob_app`, `bob_feeder` and `bob_ai_ro`. None is SUPERUSER or BYPASSRLS | Built (2026-11-20, `tests/p5-roles.test.mjs`). Discovered from the catalog, LOGIN or not, through ownership, grants, column grants, default privileges and membership. Also checks the three are not CREATEDB or CREATEROLE (§3.2), and none can become another role. Runs in the box check |
 | Feeder views readable | As `bob_feeder`, both feeder views return rows for both fixture tenants, and the base tables refuse (F-21) | Built (PR #20) |
 | Feeder scoped by claim | As `bob_feeder` with tenant A's claim, a tenant B row is refused (F-22) | Built (PR #20, PR #21) |
 | Feeder reads nothing else | As `bob_feeder`, every non-projection table and every view other than the two refuses SELECT | Built (PR #20) |
-| `bob_ai_ro` reads views only | As `bob_ai_ro`, UPDATE is refused, and any base table refuses SELECT (route-plan test, IR-1) | Not built. No `v_ai_*` view exists yet |
+| `bob_ai_ro` reads views only | As `bob_ai_ro`, UPDATE is refused, and any base table refuses SELECT (route-plan test, IR-1) | Built (2026-11-20). There are no `v_ai_*` views yet, so the guard asserts `bob_ai_ro` reads exactly the `v_ai_*` views, which today is none |
 | History is append-only | As `bob_app`, UPDATE and DELETE on `actor_ref_history` are refused | Built, by trigger (§3.2) |
-| No egress from the database | None of the three holds EXECUTE on any function of the `pg_net` or `http` extensions, wherever they are installed | Not built |
+| No egress from the database | None of the three holds EXECUTE on any function of the `pg_net` or `http` extensions, wherever they are installed | Built over what is installed (2026-11-20), and green because neither is installed. **[FINDING] F-27:** installing either one gives PUBLIC EXECUTE, so all three can call them. The guard for the installed case is a `todo` until Henry decides |
 
 ---
 
@@ -649,12 +661,17 @@ Ordered from the most damaging to the least.
      - **What is kept.** The claim protocol stays as built. BOb's code and
        the two-tenant fixture behave the same in development, in CI and in
        the box.
-     - **What catches the wrong-`org_id` bug instead (proposed guards, not
-       built):**
+     - **What catches the wrong-`org_id` bug instead** (proposed; built on
+       2026-11-20):
        - in a customer box, `organizations` holds exactly one row, and its
          `slug` equals the box's `bzzz.tenant`;
        - the feeder sends any event whose tenant is not the box's to route A
          (unmapped), instead of writing it.
+       - *Built.* The first is `scripts/box-check.mjs`. It runs read-only, as
+         the migration owner, after the migration step (§6.2). The suite tests
+         it, including that it refuses the two-tenant fixture. The second is
+         the reference feeder's `boxTenant` option, guarded in
+         `tests/slice2-feeder.test.mjs`.
      - **When it reopens.** A customer that needs several organizations in
        one box (a group with several brands) reopens P5. A self-set claim
        does not isolate them.

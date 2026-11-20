@@ -2050,6 +2050,130 @@ The new column of `v_feeder_channel_map` is what 3.7 reads to know where
 `label_missing` is written. A draft note to Federico on Relevo task 6 is
 prepared for Henry, and is not posted.
 
+## P5 · The role guards, built
+
+The three guards of P5 §6.3 that Slice 2 did not build, and the two guards that
+the answer to objection 3 (P5 §8) proposes. No migration and no contract change.
+- `tests/p5-roles.test.mjs`: three roles and no more, `bob_ai_ro` reads views
+  only, no egress, and the tests of the box check.
+- `scripts/box-checks.mjs`: the queries. Shared by the suite and the box.
+- `scripts/box-check.mjs`: the read-only check a customer box runs after its
+  migration step (P5 §6.2).
+- `feeder/reference-feeder.mjs`: the `boxTenant` option. Its guard is in
+  `tests/slice2-feeder.test.mjs`.
+
+### What each guard asserts
+
+- **Three roles, no more.** Every role that holds anything in `bob` is found
+  from the catalog: ownership, grants on the schema, relations, columns,
+  sequences and functions, default privileges, and membership. Membership
+  counts with or without INHERIT, because a member can SET ROLE. Leaving out
+  `pg_*` and Supabase's own roles, what is found must be exactly `bob_app`,
+  `bob_feeder` and `bob_ai_ro`. Equal, not a subset, so finding nothing is red.
+  - The check covers NOLOGIN roles too. In the repository the three are
+    NOLOGIN, so a check restricted to LOGIN roles would read an empty set. A
+    LOGIN role is held to the same rule.
+  - The three are NOSUPERUSER, NOBYPASSRLS, NOCREATEDB and NOCREATEROLE
+    (§3.2), and none is a member of any other role.
+  - Supabase's roles are a fixed list. It fails closed: a role missing from it
+    is reported, never passed.
+- **`bob_ai_ro` reads views only.** As `bob_ai_ro`, every base table and
+  partition refuses SELECT and UPDATE, in every schema that is not a catalog.
+  - The set of tables is checked first against every `org_id` table and the
+    tenancy floor.
+  - Writes on other columns, and INSERT, DELETE and TRUNCATE, are read from the
+    catalog.
+  - No `v_ai_*` view exists yet. The guard asserts that what `bob_ai_ro` can
+    read equals the `v_ai_*` views. Today that set is empty, and with no views
+    the role reads nothing at all, which is checked rather than assumed. When
+    a view appears, it must be readable.
+- **No egress.** Over the functions of `pg_net` and `http`, found by their
+  extension dependency wherever they are installed: none of the three holds
+  EXECUTE, PUBLIC included.
+  - A second test installs both in a transaction that rolls back, `http` in
+    an unexpected schema, and asserts that discovery finds both.
+- **One organization per box.** `organizations` has exactly one row, and its
+  `slug` is the box's `bzzz.tenant`.
+  - Where it lives: in `scripts/box-check.mjs`, not in the suite, because the
+    fixture holds two tenants on purpose.
+  - P5 §6.2 already names "a read-only check against the box" after the
+    migration step, as the migration owner, the one credential that can read
+    `organizations` across RLS. The script runs in one `READ ONLY`
+    transaction, and it also runs the two role guards that need no fixture.
+  - The suite tests the check: it refuses the fixture, passes with one
+    organization whose slug matches, and refuses a wrong slug, none, or no
+    tenant given.
+- **The feeder sends a foreign tenant to route A.** Run with `boxTenant`, every
+  event of another `bzzz.tenant` is counted in route A and never mapped. That
+  holds even when BOb holds a channel for that tenant. The box tenant's rows
+  are identical to a run for it alone.
+  - A run without `boxTenant` must write tenant B, so the test cannot pass
+    against a fixture with nothing to refuse.
+
+### F-27 · `pg_net` and `http` are executable by PUBLIC once installed — waiting on Henry
+
+P5 §3.2 says `pg_net` and `http` "are not granted to any of the three". Measured
+on the local Supabase, which runs the same image as CI, by installing both in
+a transaction that was rolled back:
+- every function of both extensions is executable by PUBLIC, so all three
+  roles can call them (12 in `pg_net`, 19 in `http`);
+- schema `net` gives USAGE to PUBLIC, and `bob_ai_ro` can read `pg_net`'s
+  tables.
+
+Neither extension is installed locally or in CI, so the guard over what is
+installed is green. What protects BOb today is "not installed", not "not
+granted". Self-hosted Supabase installs `pg_net` for webhooks, and whether the
+box has it has not been checked. The box check prints which egress extensions
+are installed.
+
+The installed case is in the suite as a `todo` that fails. The options put to
+Henry:
+- (a) leave it as it is: the guard covers what is installed, and the `todo`
+  stays until there is a decision;
+- (b) a migration that, where the extensions are installed, revokes EXECUTE
+  from PUBLIC and grants it back to Supabase's roles only. A later install is
+  not covered;
+- (c) the guard requires that neither extension is installed.
+
+### Verified by sabotage
+
+Each change was applied to the database or to the code. The suite was run, and
+the change was undone.
+
+| Sabotage | Red |
+|---|---|
+| A LOGIN role with USAGE on `bob` | three roles, no more |
+| `bob_app` BYPASSRLS | the same |
+| `bob_feeder` a member of `service_role` | the same |
+| A role holding only a default privilege in `bob` | the same |
+| A role holding only a column grant | the same |
+| The Supabase list widened to swallow every role | a fourth role is reported |
+| Membership read as USAGE (a NOINHERIT member missed) | the same |
+| `bob_ai_ro` SELECT on `channels` | every base table refuses SELECT; reads exactly the `v_ai_*` views |
+| `bob_ai_ro` UPDATE on `alerts` | every base table refuses UPDATE (**first run: nothing red**, see below) |
+| `bob_ai_ro` UPDATE on one column that is not the first | no write privilege on any column |
+| `bob_ai_ro` INSERT on `alerts` | the same |
+| A `v_ai_*` view `bob_ai_ro` cannot read | reads exactly the `v_ai_*` views (granted, it goes green) |
+| Base-table discovery narrowed to `public` | the base tables found include every tenant table |
+| `http` installed, committed | none of the three can execute, as installed |
+| `pg_net` installed, committed | the same, and three `bob_ai_ro` tests (its tables) |
+| The feeder ignores `boxTenant` | boxed to tenant A; boxed to a tenant BOb does not hold |
+| `boxTenant` filters but does not count | the same |
+| `boxTenant` not passed through to the projection | the same |
+| The box check against the two-tenant database | exit 1: `organizations holds 2 rows` |
+
+**One guard was blind on its first run, and was rewritten.** The UPDATE probe
+wrote `SET c = c`. Reading `c` needs SELECT, so the probe was refused even with
+UPDATE granted, and it passed. It now writes `SET c = DEFAULT WHERE false`,
+which needs only the UPDATE grant. Because the probe touches one column per
+table, a catalog check covers the other columns.
+
+**Not seen failing.** If the egress filter ignored PUBLIC, nothing in CI would
+go red, because nothing is installed there. That is F-27, and the `todo`
+covers it once Henry decides.
+
+**Counts.** 167 → 186: 184 pass and 2 are `todo`.
+
 ---
 
 *Boss.Technology · BOb v1 · Internal only*

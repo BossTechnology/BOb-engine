@@ -94,7 +94,13 @@ function bump(map, key, base, field, by = 1) {
 // `events` may reach before the window (conversation context) and past it
 // (labels that arrive after their turn); only events inside [from, to) are
 // counted, and only rows inside it are kept by the caller.
-export function project(events, maps, watermark, { from, to }) {
+//
+// `boxTenant` is the box's own `bzzz.tenant` (P5 §8, objection 3: one
+// organization per customer box). When it is set, an event of any other tenant
+// is counted in route A and never mapped, even if BOb happens to hold a channel
+// for it: a feeder that picks the wrong tenant cannot write it under the
+// right-looking claim.
+export function project(events, maps, watermark, { from, to, boxTenant = null }) {
   const counts = { routeA: 0, routeB: 0 }
   const lo = new Date(from).getTime(); const hi = new Date(to).getTime()
   const inWindow = (e) => { const t = new Date(e.event_time).getTime(); return t >= lo && t < hi }
@@ -104,6 +110,10 @@ export function project(events, maps, watermark, { from, to }) {
 
   const mapped = []
   for (const e of events) {
+    if (boxTenant !== null && e['bzzz.tenant'] !== boxTenant) {
+      if (inWindow(e)) counts.routeA++
+      continue
+    }
     const ch = maps.channelByKey.get(`${e['bzzz.tenant']}\u0000${e.source_key}`)
     if (!ch) { if (inWindow(e)) counts.routeA++; continue }   // §7.2 route A
     if (!tenants.has(ch.org_id)) tenants.set(ch.org_id, emptyTenant(ch.org_id))
@@ -326,10 +336,11 @@ async function writeTenant(db, t, { from, to, watermark, feederVersion }) {
 }
 
 // Run (or rebuild) the window [from, to) for every tenant, or for `orgIds`.
+// In a customer box it runs with `boxTenant`, the box's `bzzz.tenant`.
 // Returns the two counts of §8.6, never one sum, and what it wrote.
 export async function runFeeder(db, truth, {
   from, to, orgIds = null, feederVersion = DEFAULT_FEEDER_VERSION,
-  contextSeconds = DEFAULT_CONTEXT_SECONDS,
+  contextSeconds = DEFAULT_CONTEXT_SECONDS, boxTenant = null,
 } = {}) {
   for (const t of [from, to]) {
     if (new Date(t).getTime() % BUCKET_MS !== 0) {
@@ -341,7 +352,7 @@ export async function runFeeder(db, truth, {
   const readFrom = new Date(new Date(from).getTime() - contextSeconds * 1000)
   const readTo = new Date(Math.max(new Date(to).getTime(), watermark.getTime()))
   const { counts, tenants } = project(truth.events({ from: readFrom, to: readTo }), maps,
-    watermark, { from, to })
+    watermark, { from, to, boxTenant })
   const lo = new Date(from).getTime(); const hi = new Date(to).getTime()
   for (const t of tenants) {
     for (const table of Object.keys(TIME_COLUMN)) {

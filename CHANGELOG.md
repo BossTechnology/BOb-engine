@@ -3,6 +3,7 @@
 Una línea por cambio entregado, en lenguaje de usuario.
 
 ## Sin publicar
+- Guards de P5: solo los tres roles de BOb tienen permisos en `bob`, `bob_ai_ro` no lee ni escribe ninguna tabla, y ningún rol puede llamar a `pg_net` ni a `http`. Hay un chequeo de solo lectura para correr en la caja después de migrar (una organización, con el tenant de la caja). El alimentador, configurado para el tenant de la caja, cuenta los eventos de otro tenant en la ruta A y no los escribe.
 - Insumos de P5 (D62) al día después del Slice 2: el contrato firmado en 0.5.1 y ya en 0.5.3, F-21 y F-22 construidos, `channel_capabilities` en la matriz de permisos, los guards de roles que faltan y la pregunta de quién programa la reconciliación de fantasmas. Las siete objeciones de la revisión previa a la firma quedan abiertas para Henry.
 - Contrato de proyección 0.5.3: cada canal declara sus capacidades, y el alimentador las lee en su mapa de canales. Así una etiqueta que falta solo se cuenta como `label_missing` en los canales que esperan etiquetas.
 - Slice 2, segunda parte: el alimentador de referencia escribe las proyecciones tenant por tenant bajo su claim, sella cada bucket cuando su lag lo permite, cuenta como `label_missing` el turno que se quedó sin etiqueta y devuelve aparte los eventos sin tenant y los agentes sin actor. La reconciliación crea un fantasma por cada miembro desconocido, y una vinculación posterior conserva el peldaño que tenía el miembro en su momento. Hay un reporte de canales sin lag declarado.
