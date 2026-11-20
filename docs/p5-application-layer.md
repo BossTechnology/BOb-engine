@@ -11,8 +11,8 @@ Updated again on 2026-11-19, after Slice 2 merged (PR #20 and PR #21, contract
 0.5.3), to bring the state, the grant matrix and the migration count up to what
 is on `main`. That pass also recorded F-26, which Slice 2 handed to P5 (§7,
 Q6), and the seven objections from the devil's-advocate review that comes
-before the signature (§8). Objections 1 to 4 are answered (§8). Q6 and the other
-three are **[OPEN]**. Henry answers them; this
+before the signature (§8). Objections 1 to 5 are answered (§8). Q6 and objections 6
+and 7 are **[OPEN]**. Henry answers them; this
 file does not.
 
 The decision itself is a BzzzBX decision: **D62** in the BzzzBX register. The
@@ -530,9 +530,9 @@ is open. The decision is still unsigned.
   - The devil's-advocate review on P5. It was run on 2026-11-19, and its seven
     objections are in §8.
   - Henry's answers to §8 and to Q6.
-- **Not before signing, but before the first window:** the failed-migration
-  rehearsal on lab-02 and the written procedure (§6.2). §8, objection 5 asks
-  whether that should move before the signature.
+- **Before signing as well** (Henry, 2026-11-19, §8 objection 5): the
+  failed-migration rehearsal on lab-02, including a restore of `bob` alone,
+  and the written procedure (§6.2).
 - ~~**Behind another signature:** the F-21 and F-22 fixes and the §6.3 guards
   travel with Slice 2's migrations, which wait for the projection contract 0.5
   (PR #17, open).~~ Done: Slice 2 is merged, and the fixes and four of the
@@ -677,6 +677,26 @@ Ordered from the most damaging to the least.
    - If the rehearsal goes badly, a signed BzzzBX decision has to be reopened.
    - **Cheapest check:** the lab-02 rehearsal is a few hours. Run it before
      the signature rather than before the window.
+   - **Answered** (Henry, 2026-11-19): **before the signature.** This
+     tightens Federico's condition, which asked only that the rehearsal come
+     before the first window. D62 is signed with measured facts, not read
+     ones. Nothing waits on the signature today, because the first window in
+     Febor first needs the stage 4 minimum of objection 1.
+   - **The rehearsal on lab-02 records:**
+     - a chain with one migration rigged to fail in the middle, with a dump
+       taken first: what `supabase_migrations.schema_migrations` says
+       afterwards, which objects exist, and whether the failing file left
+       anything behind;
+     - the nine older migrations that are not wrapped in `BEGIN … COMMIT`;
+     - `supabase db push` against the self-hosted Supabase, at CI's CLI
+       version, writing `schema_migrations` as CI does (F-15);
+     - a restore of `bob` alone, with its definer views and its `SECURITY
+       DEFINER` functions, followed by a rebuild of the projections
+       (objection 2).
+   - **Who runs it.** Henry, or someone he authorizes. Never an agent on its
+     own.
+   - **If it contradicts §6.2.** These inputs are corrected before the
+     signature. Nothing signed has to be reopened.
 6. **The secrets file breaks its own rule.**
    - §4 says one credential per file and one reader per file. Yet
      `supabase.env` holds the migration owner (`postgres`, a superuser),
