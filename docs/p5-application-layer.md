@@ -11,8 +11,8 @@ Updated again on 2026-11-19, after Slice 2 merged (PR #20 and PR #21, contract
 0.5.3), to bring the state, the grant matrix and the migration count up to what
 is on `main`. That pass also recorded F-26, which Slice 2 handed to P5 (§7,
 Q6), and the seven objections from the devil's-advocate review that comes
-before the signature (§8). Objections 1 to 3 are answered (§8). Q6 and the other
-four are **[OPEN]**. Henry answers them; this
+before the signature (§8). Objections 1 to 4 are answered (§8). Q6 and the other
+three are **[OPEN]**. Henry answers them; this
 file does not.
 
 The decision itself is a BzzzBX decision: **D62** in the BzzzBX register. The
@@ -649,6 +649,26 @@ Ordered from the most damaging to the least.
      and 3.7 ends up reading different schemas.
    - **Cheapest check:** migrations per slice so far × five boxes × one
      window. If that passes a day a month, the model does not scale.
+   - **Measured (2026-11-19).** Migrations reached `main` in four batches,
+     one per slice or major phase:
+     - Slices 0, 1 and 1b, imported on 2026-09-10;
+     - BR-3, on 2026-10-25;
+     - Slice 2, in two PRs, on 2026-11-18.
+     Slices 3 to 8 are still to come, roughly six more batches.
+     Objection 1 put BOb v1 in Febor's box only, so each batch is applied to
+     **three** boxes (lab-02, model-01, Febor), not five.
+   - **Answered** (Henry, 2026-11-19): **(a) one window per slice.**
+     - A slice's migrations are applied together, in one window per box, in
+       order: lab-02, then model-01, then Febor.
+     - The three boxes stay on the same pinned SHA, so 3.7 reads one schema.
+     - Henry applies them, as §6.2 says.
+     - The procedure is written down so that someone else can follow it the
+       day Henry authorizes that person.
+     - **Trigger.** When a second customer box carries BOb, stage 4A (the
+       signed update path: `pausar`, `reanudar`, `actualizar`, package
+       signature, lab → reference → customers) stops being optional, and P5
+       reopens. Pulling 4A forward now was rejected: about four weeks of the
+       route plan, which block nothing while there is one customer box.
 5. **Signing before the rehearsal signs a mechanism nobody has seen work.**
    - The text says it itself: the failure behaviour is read, not measured.
      Nine migrations are not wrapped. `supabase db push` against a
