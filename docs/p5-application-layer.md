@@ -11,9 +11,9 @@ Updated again on 2026-11-19, after Slice 2 merged (PR #20 and PR #21, contract
 0.5.3), to bring the state, the grant matrix and the migration count up to what
 is on `main`. That pass also recorded F-26, which Slice 2 handed to P5 (§7,
 Q6), and the seven objections from the devil's-advocate review that comes
-before the signature (§8). Objections 1 to 6 are answered (§8). Q6 and objection 7
-are **[OPEN]**. Henry answers them; this
-file does not.
+before the signature (§8). Henry answered Q6 and all seven objections the
+same day; his answers are recorded under each one. What is left before the
+signature is the lab-02 rehearsal (§8, objection 5).
 
 The decision itself is a BzzzBX decision: **D62** in the BzzzBX register. The
 route plan called it D39\*, and D39 went to retention. Henry signs it. This
@@ -36,8 +36,8 @@ not be read as permission to apply them to any box.
 - **[PROPOSED]**: a choice these inputs make that no ruling states. It stands
   only if the decision adopts it.
 - **[OPEN]**: a question the decision has to answer. They are listed in §7
-  and §8. As of 2026-11-19, Q1–Q5 are answered; Q6 and the seven objections
-  of §8 are open.
+  and §8. As of 2026-11-19, all are answered: Q1–Q6 and the seven
+  objections of §8.
 - **[FINDING]**: something wrong in what is on `main` today, found while
   writing this. It is recorded in `Documentation/contract-amendments.md`.
 
@@ -87,8 +87,8 @@ not be read as permission to apply them to any box.
 | The box applies them with the same CLI CI uses, lab first | **[PROPOSED]** | §6.2 |
 | A rehearsed failed migration on lab-02 and a written procedure, before the first window (not before the signature) | **[DECIDED]** as a condition (Federico) | §6.2 |
 | Two defects in the feeder's access as built | **[FINDING]** F-21, F-22. Fixed in Slice 2 (PR #20) and run against a database by the reference feeder (PR #21); each guard seen failing | §3.3 |
-| Who schedules the ghost reconciliation, and where it reads the tenant list | **[OPEN]** F-26, handed to P5 by Slice 2 | §7, Q6 |
-| The seven objections of the devil's-advocate review | **[OPEN]** | §8 |
+| Who schedules the ghost reconciliation, and where it reads the tenant list | **[DECIDED]** (Henry, 19 Nov) the BOb container, with the box's single `org_id` and slug from provisioning (F-26) | §7, Q6 |
+| The seven objections of the devil's-advocate review | **[DECIDED]** (Henry, 19 Nov), all seven answered. The lab-02 rehearsal comes before the signature | §8 |
 
 ---
 
@@ -484,8 +484,8 @@ other three are still owed, and the third column says which.
 ## 7 · What the decision has to answer
 
 Three questions for Federico, and three for Henry. None reopened a ruling.
-Q1–Q5 are answered (as of 2026-11-18). Q6 came from Slice 2 on 2026-11-19 and
-is open. The decision is still unsigned.
+Q1–Q5 were answered by 2026-11-18. Q6 came from Slice 2 on 2026-11-19 and was
+answered the same day. The decision is still unsigned.
 
 1. **Q1 · Are these the three roles?** `bob_app`, `bob_feeder` and `bob_ai_ro`,
    from Handoff §4.3, with `bzzz/supabase-ro` being `bob_ai_ro`. The route plan
@@ -514,7 +514,7 @@ is open. The decision is still unsigned.
    - *2026-11-18:* BZZ-19 had said D60. D60 was signed in Bzzz that day for
      another matter (the batch at the root of SendGrid), and Henry reassigned
      P5 to D62.
-6. **For Henry · F-26, who schedules the ghost reconciliation.** **[OPEN]**
+6. **For Henry · F-26, who schedules the ghost reconciliation.**
    The reconciliation runs as `bob_app` (contract §7.2). It needs each
    tenant's `org_id` and slug, and `bob_app` cannot list tenants under RLS.
    That is correct for a tenant-scoped credential. What Slice 2 built: the
@@ -524,13 +524,29 @@ is open. The decision is still unsigned.
    - where it runs;
    - with what credential it reads the tenant list.
    It cannot be `bob_app` (RLS) or the service role (§3.4).
+   **Answered** (Henry, 2026-11-19): **(a) the BOb container.**
+   - Objection 3 settled one organization per customer box, so the box
+     already knows its only tenant. Its `org_id` and slug are fixed when the
+     box is provisioned. Nothing has to list organizations from the
+     database.
+   - A timer inside the BOb application runs the reconciliation as
+     `bob_app`, under that `org_id`'s claim.
+   - The `org_id` and slug reach it as box configuration, written at
+     provisioning. They are not secrets, so they live in a configuration
+     file, not in `bob/app.env`.
+   - No new credential and no widened grant. If the container is not
+     running, neither is the reconciliation, and nobody is there to see the
+     ghosts either.
+   - The rejected option was a host timer (systemd or cron). It would be one
+     more process reading `bob/app.env`, which breaks §4's one reader per
+     file.
 
 **What stands between these inputs and the signature.**
 
 - **Before signing:**
   - The devil's-advocate review on P5. It was run on 2026-11-19, and its seven
     objections are in §8.
-  - Henry's answers to §8 and to Q6.
+  - Henry's answers to §8 and to Q6, all given on 2026-11-19.
 - **Before signing as well** (Henry, 2026-11-19, §8 objection 5): the
   failed-migration rehearsal on lab-02, including a restore of `bob` alone,
   and the written procedure (§6.2).
@@ -549,12 +565,12 @@ is open. The decision is still unsigned.
 
 ---
 
-## 8 · Devil's-advocate review, 2026-11-19 — **[OPEN]**
+## 8 · Devil's-advocate review, 2026-11-19 — answered
 
 The review ran before the signature, as §7 required. It argues *against* P5
 on purpose. Each objection is the strongest form of it, not a balanced view.
-None is answered here. Henry answers each one, either with a change to P5 or
-with a reason it does not apply, before D62 is signed.
+Henry answered each one on 2026-11-19, either with a change to P5 or with a
+reason it does not apply. His answer is recorded under each objection.
 
 Ordered from the most damaging to the least.
 
@@ -738,6 +754,8 @@ Ordered from the most damaging to the least.
    - Signing stale text leaves an audit trail that contradicts itself.
    - **Status:** the 2026-11-19 pass is meant to close this. Henry checks it
      against `main` when he reviews this PR. F-26 is Q6 above.
+   - **Answered** (Henry, 2026-11-19): **closed by this pass**, subject to
+     his review of the PR against `main`. Nothing else is to be decided.
 
 **The most likely failure (written as a post-mortem six months out).**
 
