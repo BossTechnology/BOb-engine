@@ -11,8 +11,8 @@ Updated again on 2026-11-19, after Slice 2 merged (PR #20 and PR #21, contract
 0.5.3), to bring the state, the grant matrix and the migration count up to what
 is on `main`. That pass also recorded F-26, which Slice 2 handed to P5 (§7,
 Q6), and the seven objections from the devil's-advocate review that comes
-before the signature (§8). Objections 1 to 5 are answered (§8). Q6 and objections 6
-and 7 are **[OPEN]**. Henry answers them; this
+before the signature (§8). Objections 1 to 6 are answered (§8). Q6 and objection 7
+are **[OPEN]**. Henry answers them; this
 file does not.
 
 The decision itself is a BzzzBX decision: **D62** in the BzzzBX register. The
@@ -318,7 +318,8 @@ asks.
 
 | Plan v2 §9.2 path | Credential | File **[PROPOSED]** | Read by |
 |---|---|---|---|
-| `bzzz/supabase` | Migration owner, `JWT_SECRET`, `SERVICE_ROLE_KEY` | `/opt/bzzz/secrets/supabase.env` (exists) | The migration step (§6.2), the database container and operator scripts |
+| `bzzz/supabase` | `JWT_SECRET`, `SERVICE_ROLE_KEY`, the database superuser | `/opt/bzzz/secrets/supabase.env` (exists) | The database and auth containers and the operator scripts. Not the migration step (§8, objection 6) |
+| none (new) | BOb's migration owner | `/opt/bzzz/secrets/bob/migrador.env` | The migration step of §6.2, and nothing else |
 | `bzzz/supabase-ro` | `bob_ai_ro` login | `/opt/bzzz/secrets/bob/ai-ro.env` | The inference service |
 | `bzzz/apps` | `bob_app` login | `/opt/bzzz/secrets/bob/app.env` | The BOb container |
 | none (new) | `bob_feeder` login | `/opt/bzzz/secrets/bob/feeder.env` | The reference feeder first, then 3.7 (§3.1) |
@@ -412,7 +413,7 @@ The reasons:
 |---|---|
 | What is applied | A BOb-engine commit on `main` with four green checks. The box pins the commit SHA, the way it pins images (D4, D9), and reports it in its manifest (task 3.11) |
 | With what | The Supabase CLI at the version CI pins (`SUPABASE_CLI_VERSION`, today 2.120.0): `supabase db push --db-url …` against `supabase-db` on `bzzz-app`. It writes `supabase_migrations.schema_migrations` exactly as CI's reset does, so the same F-15 check reads the box |
-| As whom | The migration owner (`postgres` in the Supabase image), from `/opt/bzzz/secrets/supabase.env`. It owns every object, which the `SECURITY DEFINER` functions and definer views need |
+| As whom | The migration owner (`postgres` in the Supabase image), from `/opt/bzzz/secrets/bob/migrador.env`, its own file (§8, objection 6). It owns every object, which the `SECURITY DEFINER` functions and definer views need |
 | From where | A step in `scripts/actualizar.sh`, after the database and before any service that uses the new schema. That follows BzzzBX's rule of migration before code, as with the centro's 009 |
 | Who runs it | Henry, in a maintenance window with notice to the company (CLAUDE.md: production is Henry's). Never an agent, and never a running service |
 | How it is tried first | Development runs on a local Supabase pinned to the box's images and to CI's CLI version (§5.1, Q3 **[DECIDED]**). Then `supabase db push --dry-run` on `bzzz-lab-02`, the real apply there, then `bzzz-model-01`, then the company boxes. lab-02 is where every chain is applied first. This is plan §3.6's `--plan` habit, and D16's rule that tests run on another machine, never on a second copy |
@@ -706,6 +707,30 @@ Ordered from the most damaging to the least.
    - **Cheapest check:** list who reads `/opt/bzzz/secrets/supabase.env` on
      Febor today. If it is more than one process or script, move the
      migration owner to its own file before signing.
+   - **Read (2026-11-19)**, from Bzzz `compose/l6-supabase.yml` and
+     `scripts/` on `main`. Variable names only, never values.
+     - `supabase.env` holds `POSTGRES_PASSWORD` (the superuser),
+       `JWT_SECRET`, `ANON_KEY` and `SERVICE_ROLE_KEY`, among others.
+     - It is read whole by two containers, `supabase-db` and
+       `supabase-auth`.
+     - It is also read by six scripts: `bootstrap.sh`,
+       `generar-secretos-supabase.sh` (which writes it),
+       `generar-config-portal.sh`, `engines-portal.sh`, `invitar-portal.sh`
+       and `crear-usuario-portal.sh`.
+   - **Answered** (Henry, 2026-11-19): **(a) a file of its own.**
+     - The credential that applies BOb's migrations goes in
+       `/opt/bzzz/secrets/bob/migrador.env`, at mode 600.
+     - Only the migration step of §6.2 reads it. No service and no other
+       script does.
+     - That keeps §4's rule of one credential per file and one reader per
+       file.
+     - Using `supabase.env` was rejected: it would add a ninth reader and
+       break P5's own rule.
+   - **[FINDING] for a Bzzz decision, not fixed in P5.** It predates BOb.
+     `supabase-auth` (GoTrue) sits on `bzzz-edge`, so Traefik can reach it,
+     and it receives the whole file, Postgres superuser password included.
+     The proposal is that it gets only what it needs: `JWT_SECRET` and its
+     own database user.
 7. **These inputs described a world that no longer existed.**
    - Before the 2026-11-19 pass they said the contract was unsigned and that
      F-21 and F-22 were not built. They did not list `channel_capabilities`,
