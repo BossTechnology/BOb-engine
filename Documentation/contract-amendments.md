@@ -2110,7 +2110,7 @@ the answer to objection 3 (P5 §8) proposes. No migration and no contract change
   - A run without `boxTenant` must write tenant B, so the test cannot pass
     against a fixture with nothing to refuse.
 
-### F-27 · `pg_net` and `http` are executable by PUBLIC once installed — waiting on Henry
+### F-27 · `pg_net` and `http` are executable by PUBLIC once installed — (a) decided, closing open
 
 P5 §3.2 says `pg_net` and `http` "are not granted to any of the three". Measured
 on the local Supabase, which runs the same image as CI, by installing both in
@@ -2134,6 +2134,13 @@ Henry:
   from PUBLIC and grants it back to Supabase's roles only. A later install is
   not covered;
 - (c) the guard requires that neither extension is installed.
+
+**Decided** (Henry, 2026-11-20, relayed): **(a)**. The guard checks effective
+EXECUTE, PUBLIC included, on `pg_net` and `http` wherever they are installed.
+It runs in CI and in the box check. The rolled-back install probe stays in CI as
+a `todo`. How F-27 closes, (b) or (c), stays open until it is known whether
+`pg_net` is already on lab-02. The lab-02 rehearsal kit has to check that
+(P5 §6.2).
 
 ### Verified by sabotage
 
@@ -2170,7 +2177,7 @@ table, a catalog check covers the other columns.
 
 **Not seen failing.** If the egress filter ignored PUBLIC, nothing in CI would
 go red, because nothing is installed there. That is F-27, and the `todo`
-covers it once Henry decides.
+covers it until F-27 closes by (b) or (c).
 
 **Counts.** 167 → 186: 184 pass and 2 are `todo`.
 

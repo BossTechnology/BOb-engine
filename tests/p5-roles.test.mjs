@@ -204,7 +204,7 @@ describe('P5 §6.3 · no egress from the database', () => {
   // F-27. Installing either one hands EXECUTE on every function to PUBLIC, so
   // all three can call them; pg_net also hands out its queue tables. "Not
   // granted" (P5 §3.2) does not hold once installed, only "not installed".
-  test('installed, none of the three can execute them', { todo: 'F-27, waiting on Henry' }, async () => {
+  test('installed, none of the three can execute them', { todo: 'F-27, (a) decided; (b) or (c) after lab-02' }, async () => {
     await installed(async () => assert.deepEqual(await egressFindings(db), []))
   })
 })

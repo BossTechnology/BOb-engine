@@ -216,8 +216,12 @@ Each entry and its source:
   it under RLS by `org_id`. The feeder never reads the table, only the
   `capabilities` column of `v_feeder_channel_map`. That keeps its two views.
 - **No network from Postgres** **[PROPOSED]**, following BZZ-3 Ruling 2.
-  `pg_net` and `http` are not granted to any of the three, so no trigger in
-  BOb's database can notify a customer outside Node-RED.
+  ~~`pg_net` and `http` are not granted to any of the three, so no trigger in
+  BOb's database can notify a customer outside Node-RED.~~ Corrected
+  2026-11-20 (F-27): no grant to the three keeps them out only while neither
+  extension is installed. Installed, both are executable by PUBLIC. What holds
+  today is that neither is installed, and the guard of §6.3 checks effective
+  EXECUTE, PUBLIC included.
   - **[FINDING] F-27 · 2026-11-20 · "Not granted" does not hold once they are
     installed.** Measured on the local Supabase, the image CI uses, by
     installing both in a transaction that was rolled back:
@@ -228,8 +232,13 @@ Each entry and its source:
     Today neither extension is installed locally or in CI. What protects BOb is
     "not installed", not "not granted". Whether the box's `supabase-db` has
     `pg_net` (self-hosted Supabase installs it for webhooks) has not been
-    checked. The box check prints which egress extensions are installed. The
-    decision is Henry's.
+    checked. The box check prints which egress extensions are installed.
+    - **Decided** (Henry, 2026-11-20): (a). The guard checks effective EXECUTE
+      over whatever is installed, in CI and in the box check. A probe that
+      installs both and rolls back stays in CI as a `todo`. Whether F-27 is
+      closed by a migration that revokes from PUBLIC (b) or by requiring
+      neither to be installed (c) waits on whether `pg_net` is on lab-02. The
+      lab-02 rehearsal kit checks that.
 
 ### 3.3 How each role meets RLS
 
@@ -456,6 +465,8 @@ window, not before the signature**, two things exist.
    - what `supabase_migrations.schema_migrations` says afterwards;
    - which objects exist;
    - whether the failing file left anything behind.
+   - *2026-11-20 (F-27):* whether `pg_net` or `http` is installed on lab-02, by
+     running `scripts/box-check.mjs`, which prints both.
 2. **A written procedure for when it happens.** There are two ways forward:
    - **Go forward with a fix:** a new migration (append-only), applied by the
      same step.
@@ -489,7 +500,7 @@ the other three were built on 2026-11-20. The third column says where each one s
 | Feeder reads nothing else | As `bob_feeder`, every non-projection table and every view other than the two refuses SELECT | Built (PR #20) |
 | `bob_ai_ro` reads views only | As `bob_ai_ro`, UPDATE is refused, and any base table refuses SELECT (route-plan test, IR-1) | Built (2026-11-20). There are no `v_ai_*` views yet, so the guard asserts `bob_ai_ro` reads exactly the `v_ai_*` views, which today is none |
 | History is append-only | As `bob_app`, UPDATE and DELETE on `actor_ref_history` are refused | Built, by trigger (§3.2) |
-| No egress from the database | None of the three holds EXECUTE on any function of the `pg_net` or `http` extensions, wherever they are installed | Built over what is installed (2026-11-20), and green because neither is installed. **[FINDING] F-27:** installing either one gives PUBLIC EXECUTE, so all three can call them. The guard for the installed case is a `todo` until Henry decides |
+| No egress from the database | None of the three holds EXECUTE on any function of the `pg_net` or `http` extensions, wherever they are installed | Built over what is installed (2026-11-20), and green because neither is installed. **[FINDING] F-27:** installing either one gives PUBLIC EXECUTE, so all three can call them. Henry chose (a) on 2026-11-20: effective EXECUTE in CI and in the box check, and the installed case is a `todo`. (b) or (c) waits on whether lab-02 has `pg_net` |
 
 ---
 

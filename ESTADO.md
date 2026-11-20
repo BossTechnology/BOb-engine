@@ -38,7 +38,7 @@
 
 ## Pendiente
 - P5 (D62): Q6 y las siete objeciones del §8 están respondidas. Antes de firmar falta solo el ensayo en lab-02. El ensayo en lab-02 (migración amañada, las nueve sin envolver, `db push` y restaurar `bob` solo) va antes de la firma.
-- F-27, esperando a Henry: si se instalan `pg_net` o `http`, PUBLIC recibe EXECUTE sobre sus funciones, y con eso lo tienen los tres roles. Hoy no están instaladas ni en local ni en CI, y no se ha revisado si la caja tiene `pg_net`. Las opciones (a), (b) y (c) están en amendments, y el caso instalado queda en la suite como `todo`.
+- F-27: Henry eligió (a) el 20 nov. El guard revisa el EXECUTE efectivo sobre lo instalado, y el caso instalado queda en CI como `todo`. Cerrarlo con (b) o con (c) depende de si lab-02 ya tiene `pg_net`. **El kit del ensayo de lab-02 tiene que revisarlo** con `scripts/box-check.mjs`.
 - Hallazgo para Bzzz (objeción 6): GoTrue está en `bzzz-edge` y recibe `supabase.env` entero, con la contraseña del superusuario de Postgres. Va a una decisión de Bzzz, no a P5.
 - Hallazgo en P5 §6.2: `restore.sh` no restaura Postgres. La identidad se restaura a mano, y la respuesta a la objeción 2 lo reemplaza con un respaldo y una recuperación propios de `bob`.
 - F-26 resuelto en P5 Q6: un temporizador en el contenedor de BOb corre la reconciliación como `bob_app`, con el `org_id` y el `slug` de la caja como configuración de aprovisionamiento.
@@ -52,7 +52,7 @@
 - Nada.
 
 ## Siguiente paso
-- Henry revisa el PR de los guards de P5 y decide F-27, entre (a), (b) y (c).
+- Henry revisa el PR #24 (guards de P5). El ensayo de lab-02 revisa si hay `pg_net` o `http` y, con eso, F-27 se cierra con (b) o con (c).
 - P5: Henry revisa y fusiona el PR #22, corre (o autoriza) el ensayo en lab-02 y, si confirma el §6.2, firma D62.
 - La tarea 3.7 de BzzzBX implementa contra el contrato 0.5.3, con `member_refs_seen` como cuarto entregable (turno de Federico).
 
@@ -80,4 +80,4 @@
 - 2026-11-18: Henry elige la opción (a) de F-25 y el contrato pasa a 0.5.3. El guard de capacidad se vio fallar en los dos lados. 167 tests.
 - 2026-11-19: PR #21 fusionado por orden de Henry (`c4ebf1d`), con CI en verde. Slice 2 cerrado.
 - 2026-11-19: PR #21 fusionado (`c4ebf1d`) y aviso de 0.5.3 publicado en la tarea 6. Abogado del diablo sobre P5 con siete objeciones, y los insumos de P5 puestos al día con F-26 (Q6). Henry respondió las siete objeciones y Q6. Nada firmado; falta el ensayo en lab-02.
-- 2026-11-20: los guards de P5 que faltaban: tres del §6.3 y dos de la objeción 3, más el chequeo de caja en `scripts/`. De 167 a 186 tests. F-27 (pg_net/http a PUBLIC) preguntado a Henry.
+- 2026-11-20: los guards de P5 que faltaban: tres del §6.3 y dos de la objeción 3, más el chequeo de caja en `scripts/`. De 167 a 186 tests. F-27 (pg_net/http a PUBLIC): Henry eligió (a); el cierre espera a lab-02.

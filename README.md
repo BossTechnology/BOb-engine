@@ -40,7 +40,7 @@ The two `todo`s are counted on purpose and never reported as a pass:
 - contract §10's never-merge guard: its behavioural half has no reader of
   `proj_durations` to test until the first route handler (A-05b);
 - F-27: installed, `pg_net` and `http` are executable by all three roles,
-  through PUBLIC. It waits on Henry's decision (P5 §6.3).
+  through PUBLIC. Henry chose (a); it closes by (b) or (c) once lab-02 shows whether `pg_net` is there.
 
 CI also runs two subsets: `pnpm run test:tenancy` and `pnpm run test:availability`.
 
