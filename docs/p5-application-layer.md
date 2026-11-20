@@ -11,8 +11,8 @@ Updated again on 2026-11-19, after Slice 2 merged (PR #20 and PR #21, contract
 0.5.3), to bring the state, the grant matrix and the migration count up to what
 is on `main`. That pass also recorded F-26, which Slice 2 handed to P5 (§7,
 Q6), and the seven objections from the devil's-advocate review that comes
-before the signature (§8). Objections 1 and 2 are answered (§8). Q6 and the other
-five are **[OPEN]**. Henry answers them; this
+before the signature (§8). Objections 1 to 3 are answered (§8). Q6 and the other
+four are **[OPEN]**. Henry answers them; this
 file does not.
 
 The decision itself is a BzzzBX decision: **D62** in the BzzzBX register. The
@@ -620,6 +620,27 @@ Ordered from the most damaging to the least.
    - **Cheapest check:** how many `organizations` will Febor's box hold? If
      one, write the RLS down as defence in depth. If several, isolation needs
      something other than a claim the process sets on itself.
+   - **Answered** (Henry, 2026-11-19): **(a) one organization per customer
+     box.** It follows D31 (one box per company) and Bzzz's multi-customer
+     proposal §9: customers are isolated by separate boxes, not by
+     permissions, and a shared box carries synthetic data only.
+     - **What RLS is, written down.** Inside a customer box, RLS by claim is
+       defence in depth. The isolation between customers is the box. §3.3's
+       F-22 sentence ("a feeder bug that tags a row with the wrong `org_id`
+       is refused") overstates it. A feeder that picks the wrong `org_id`
+       picks it for the claim too.
+     - **What is kept.** The claim protocol stays as built. BOb's code and
+       the two-tenant fixture behave the same in development, in CI and in
+       the box.
+     - **What catches the wrong-`org_id` bug instead (proposed guards, not
+       built):**
+       - in a customer box, `organizations` holds exactly one row, and its
+         `slug` equals the box's `bzzz.tenant`;
+       - the feeder sends any event whose tenant is not the box's to route A
+         (unmapped), instead of writing it.
+     - **When it reopens.** A customer that needs several organizations in
+       one box (a group with several brands) reopens P5. A self-set claim
+       does not isolate them.
 4. **Every migration runs through one person, times the number of boxes.**
    - The rule is Henry, in a window, with notice to the company (§6.2). That
      is lab-02, model-01, Febor, Zerrano and Pinch: five applies per chain,
