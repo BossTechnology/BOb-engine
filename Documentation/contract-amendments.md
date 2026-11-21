@@ -3042,12 +3042,12 @@ when he accepts, and anything he changes comes back as a migration.
 
 Two migrations, append-only:
 
-- `20261121170000_slice3_catalog_and_feeder_map.sql`: the three capabilities
+- `20261121180000_slice3_catalog_and_feeder_map.sql`: the three capabilities
   (F-29, thirteen in all), `bob.cell_catalog` (one row per metric: source,
   actor grain, applicable actor types, required capabilities, precondition,
   degenerate, undefined-by), and `actor_types` on `v_feeder_channel_map`
   (F-38), still granted to `bob_feeder` only.
-- `20261121170100_slice3_cell_state.sql`: `public.bob_cell_state(org,
+- `20261121180100_slice3_cell_state.sql`: `public.bob_cell_state(org,
   channels[], from, to)`, `bob_cell_rollup` with coverage (F-30),
   `bob_available_state` (FR-23's reasons translated, `no_channels_selected` to
   `not_applicable`), `bob_actor_cell_state` (the per-actor drill-down with
