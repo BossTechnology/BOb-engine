@@ -3,7 +3,7 @@
 **Status: SPEC, decided by Henry in the Slice 3 grill (2026-11-20). Nothing is
 built.** The contract stays at 0.5.3. The contract changes this spec needs are
 listed in §9 as **proposed for 0.6**, registered in
-`Documentation/contract-amendments.md` as F-28 to F-34 and F-38, and go to
+`Documentation/contract-amendments.md` as F-28 to F-34, F-38 and F-39, and go to
 Federico on Relevo task 6 before any of them is written into the contract.
 
 **Corrected on 2026-11-21** after the review on PR #27, which merged before the
@@ -12,8 +12,8 @@ review was addressed:
   (§5).
 - F-38 says which actor types receive the zero rows (§5).
 - D-14 is said to be extended, not applied as written (§2, §9).
-- The design gaps that need a decision are left as questions R3 to R7, each
-  with its recommendation (§11).
+- The design gaps that needed a decision are R3 to R7 (§11). Henry decided all
+  five with the recommended option on 21 Nov, and the spec applies them.
 
 **What Slice 3 is** (Build Brief, Slice 3; Relevo task 7 scope map): one shared
 mechanism that tells every consumer, for every cell, whether a figure is
@@ -186,7 +186,7 @@ of the eight tables and fails if any value is missing from the catalog
 | Figure | Read from | Requires | `not_applicable` for |
 |---|---|---|---|
 | Label failures (`abstained`, `classifier_down`, `label_missing`) | `proj_metric_counts` | `orga_conversation` | `asa`, `human`, `arep` |
-| Interaction duration (FR-22) | `proj_durations`, `interaction_duration` | `resolution` (a close), **pending R5**: no ruling names it | `asa`, `human`, `arep` |
+| Interaction duration (FR-22) | `proj_durations`, `interaction_duration` | `resolution`, because it lands at the close (R5, F-39) | `asa`, `human`, `arep` |
 | ORGA | `proj_sentiment`, `orga` | `orga_conversation` | — |
 | MECA (FR-32, FR-35) | `proj_sentiment`, `meca` and `proj_rum_signals` | `meca_rum` | — |
 | Health latency, errors, uptime, disconnects | `proj_channel_health` | `health_latency`, `health_errors`, `health_uptime`, `health_disconnects`, each on its own (§6.4) | — |
@@ -200,9 +200,8 @@ of the eight tables and fails if any value is missing from the catalog
   `(state, reasons)` shape, translated in the database from the reasons FR-23
   already returns, and `bob_availability_reason()` is unchanged:
   - `mix_not_declared` → `not_configured`;
-  - `no_channels_selected` → `not_configured` as decided in G9. The review
-    points out that this mixes a selection with a missing declaration (R7,
-    §11);
+  - `no_channels_selected` → `not_applicable`, with its own reason. Nothing
+    is undeclared; nothing was selected (R7, which changes G9);
   - `no_channels_carry_actor_type` → `observed` 0;
   - `no_skilled_actors`, `none_on_shift`, `no_live_instances`,
     `no_actors_available` → `observed` 0, each with its reason.
@@ -242,7 +241,7 @@ failures). It writes no zero without liveness: that is `not_observed`.
 **Metrics with a precondition get no zero from F-28** (corrected 21 Nov). On
 these, liveness and the capability are not enough: the zero would claim a
 measurement that could not run. §5 forbids that zero. Masking it in
-`v_cell_state` would not be enough, because `bob_app` and `authenticated` read
+`bob_cell_state` would not be enough, because `bob_app` and `authenticated` read
 the tables directly. So the exclusion lives in the write rule:
 
 | Metric | Precondition | The feeder writes |
@@ -253,7 +252,8 @@ the tables directly. So the exclusion lives in the write rule:
 - The label failures (`abstained`, `classifier_down`, `label_missing`) stay
   under §4.1, which already writes their zeros at seal. F-28 does not touch
   them.
-- `interaction_duration` depends on R5 (§11).
+- `interaction_duration` needs `resolution` (R5, F-39). With it declared, its
+  zero (`n = 0`) is written like any other.
 - **The list is closed and explicit.** A metric that later gains a precondition
   joins it in the same change.
 - A guard compares the feeder's exclusion list with the catalog's
@@ -309,20 +309,24 @@ In the database, as one implementation:
 | Object | Kind | What it does |
 |---|---|---|
 | The catalog (§4) | table in `bob`, configuration | Metric → source, required declarations, applicable actor types |
-| `bob.v_cell_state` | view, RLS by `org_id` | One row per `(org_id, channel_id, metric, actor_type, bucket_start)`: `state`, `reasons TEXT[]`, `value`, `provisional`, `liveness_source`. §3 is resolved here, in SQL |
-| `bob_cell_rollup(org, channels[], frame)` | function in `public`, `search_path = bob, public` (as `bob_availability()`) | §6 |
+| `bob_cell_state(org, channels[], from, to)` | set-returning function, invoker, under RLS; in `public` with `search_path = bob, public` (as `bob_availability()`) | One row per `(org_id, channel_id, metric, actor_type, bucket_start)` **inside the frame**: `state`, `reasons TEXT[]`, `value`, `provisional`, `liveness_source`. §3 is resolved here, in SQL (R4) |
+| `bob_cell_rollup(org, channels[], from, to)` | function beside it | §6, over `bob_cell_state` |
 | Available's translation (§4) | function beside it | FR-23 reasons → `(state, reasons)` |
-| `v_ai_cell_state` | view for `bob_ai_ro` | BObee's face of `v_cell_state`: no `display_name` (IR-1). An unobserved channel arrives as a value, not an absence |
+| `v_ai_cell_state` | definer view, owned by the migration owner, granted to `bob_ai_ro` alone | BObee's face: `bob_cell_state` over a fixed trailing frame (the current day), filtered explicitly on the caller's `org_id` claim, never `display_name` (IR-1). An unobserved channel arrives as a value, not an absence (R6) |
 
 **The application only paints**: state → painting, reason → sentence. No rule
 lives in TypeScript.
 
-**The shape of `v_cell_state` and of `v_ai_cell_state` is open, per the
-review: R4 and R6 (§11).** A view has to enumerate channel × metric ×
-actor × bucket to produce cells that have no row, and that cost comes from the
-design, not from the data. Whether BObee's face is an invoker or a definer
-view decides how it meets IR-1 and RLS. The table above stands until R4 and R6
-are answered.
+**Why a function and not a view** (R4). To produce cells with no row, the
+mechanism must cross channels × metrics × actor types × buckets. A view would
+do that over thirteen months. A consumer always knows its frame (a chart, a
+matrix window, a drill-down), so the function enumerates only what is asked.
+The implementation PR still runs `EXPLAIN` on the fixture.
+
+**Why BObee's face is a definer view** (R6). An invoker view would need
+`bob_ai_ro` to hold grants on the base tables, which breaks "views only". So
+the definer view does not rely on RLS for tenancy; it filters on the claim
+itself, the shape of F-21.
 
 ## 8 · Acceptance tests
 
@@ -355,7 +359,7 @@ fixture (§8.1). Each guard is seen failing before it counts, as in every slice.
     function (`pg_depend`).
 
 **One implementation, not four:**
-- `v_ai_cell_state` and `bob_cell_rollup` read `v_cell_state`, asserted
+- `v_ai_cell_state` and `bob_cell_rollup` read `bob_cell_state`, asserted
   through `pg_depend`. A second definition of the order would have no
   dependency to show.
 - **Exactly one state per cell, in the §3 order.** A property test over fuzzed
@@ -367,6 +371,16 @@ fixture (§8.1). Each guard is seen failing before it counts, as in every slice.
   0, with `actor_not_present`.
 - **Coverage.** On the fixture, the "All" label-failure total reads 2 of 3
   channels, with Voice `not_configured` (`capability_not_declared:orga_conversation`).
+- **Pending follows the current lag** (R3). Raising a channel's lag turns
+  only the cells inside the new window back to `pending`; every older cell is
+  unchanged. A channel with lag NULL never shows `not_observed`.
+- **BObee's face** (R6).
+  - One tenant's claim sees no cell of the other tenant through
+    `v_ai_cell_state`.
+  - `bob_ai_ro` still reads no table, under the P5 guard.
+  - The view exposes no `display_name`.
+- **No selection** (R7). An empty channel set gives `not_applicable` with
+  `no_channels_selected`.
 - **Provisional.** Website's Resolved (lag NULL) gives `observed` and
   `provisional`, with "lag not declared" on the channel.
 - **Not applicable.**
@@ -431,6 +445,7 @@ write the zeros, 3.7 will not either.
 | F-33 | §6.1 | Resolved, disambiguation and escalations never attribute to `user` |
 | F-34 | §7.2 | AREP ref resolution named as open, outside Slice 3 |
 | F-38 | §7.4, §5 | `v_feeder_channel_map` gains `actor_types TEXT[]` (mix rows with `present = true`). Zeros are written only for those actor types and applicable pairs. Added on 21 Nov, after the review |
+| F-39 | §9.1, §6.3 | `interaction_duration` requires `resolution`: it lands at the close, and `resolution` declares that a close exists. Added on 21 Nov (R5) |
 
 **F-28 was corrected on 21 Nov.** Metrics whose measurement has a precondition
 (`hallucinations`, and `abandoned` with no idle bound) get no zero (§5).
@@ -447,15 +462,18 @@ rulings.
   per-actor zero from an observed channel bucket plus `bob_shift_is_live()`, or
   the feeder writes it, is decided when Slice 7 is drawn. Either way the
   vocabulary is this one.
-- **The shape of the mechanism** (§7) is R4 and R6 (§11).
+- **Materialising** `bob_cell_state`, only if the `EXPLAIN` on a real frame
+  asks for it.
 - **D-33** (rendering "rebuilt after it sealed") stays open. A rebuilt cell is
   still `observed`.
 - **F-34**, AREP ref resolution.
 
 ## 11 · Questions for Henry, from the review of 21 Nov
 
-The review of PR #27 left four design gaps and one wording point that need a
-decision. Each is put here with its recommendation, and none is decided.
+The review of PR #27 left four design gaps and one wording point that needed a
+decision. **Henry decided all five on 21 Nov with the recommended option.**
+The rest of the spec applies them. The options are kept here, so the reason
+travels with the choice.
 
 **R3 · `pending` on a cell with no row is derived from today's lag, which §4
 forbids for stored rows.**
@@ -474,10 +492,10 @@ forbids for stored rows.**
   - (b) Store the cut: the feeder writes a per-channel seal mark for each
     sealed bucket. That is a ninth projection or a new column, and it breaks
     the count of eight.
-- **Recommendation: (a).** The spec states the reason, and adds a test that
+- **Decided: (a).** The spec states the reason, and adds a test that
   raises a lag and asserts that only the buckets inside the new window change.
 
-**R4 · `v_cell_state` as a view has a cost that comes from the design.**
+**R4 · The cell mechanism as a view (`v_cell_state`) has a cost that comes from the design.**
 - To produce cells with no row, it must cross channels × metrics × actor types
   × buckets. Over thirteen months of five-minute buckets, that is the design,
   not a cost to measure later.
@@ -486,7 +504,7 @@ forbids for stored rows.**
     `bob_cell_state(org, channels[], from, to)`. It enumerates only the buckets
     asked for, and `bob_cell_rollup` reads it.
   - (b) Keep the view and materialise it.
-- **Recommendation: (a).**
+- **Decided: (a).**
   - A frame is always known by the consumer: a chart, a matrix window, a
     drill-down.
   - The single implementation still holds, and the `pg_depend` test checks
@@ -496,7 +514,7 @@ forbids for stored rows.**
 **R5 · "Interaction duration requires `resolution`" is a new rule with no
 amendment.**
 - No ruling names it, and it was not among F-28 to F-34.
-- **Recommendation:** register it as F-39 and keep `resolution`. An interaction
+- **Decided:** register it as F-39 and keep `resolution`. An interaction
   duration lands at the conversation's close (§6.3), and the `resolution`
   capability is what declares that a close exists.
   - If you prefer not to tie them, the row would need its own capability, which
@@ -506,7 +524,7 @@ amendment.**
 - An invoker view under RLS needs `bob_ai_ro` to hold grants on the base tables,
   which breaks "views only" (IR-1 and the P5 guard: `bob_ai_ro` reads no table).
 - A definer view bypasses RLS. It is the same shape as F-21.
-- **Recommendation: a definer object owned by the migration owner, granted to
+- **Decided: a definer object owned by the migration owner, granted to
   `bob_ai_ro` alone.**
   - It filters explicitly on the caller's `org_id` claim, so tenancy does not
     depend on RLS.
@@ -519,6 +537,6 @@ amendment.**
 **R7 · `no_channels_selected` is not a missing declaration.**
 - G9 maps it to `not_configured`. But nothing is undeclared: the reader
   selected nothing.
-- **Recommendation:** keep `no_channels_selected` as its own reason and map it
+- **Decided:** keep `no_channels_selected` as its own reason and map it
   to `not_applicable`. There is nothing to evaluate, and nothing to declare.
-  It is a wording-level change to G9, and it needs your yes.
+  It changes G9.

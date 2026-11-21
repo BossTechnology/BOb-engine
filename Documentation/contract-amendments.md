@@ -2424,17 +2424,26 @@ F-31 said "D-14 is applied, not amended". It is extended. D-14's three states
 become six (`not_applicable`, `pending` and `off_shift` are added), and F-31
 should be signed as a change to D-14.
 
-### Left to Henry (spec §11)
+### Decided by Henry on 21 Nov (spec §11)
 
-- **R3:** `pending` on a no-row cell is derived from today's lag. Recommended:
-  accept it, with the reason stated and a test.
-- **R4:** `v_cell_state` as a set-returning function that takes the frame, not
-  a view.
-- **R5:** "interaction duration requires `resolution`". Recommended: register
-  it as F-39 and keep it.
-- **R6:** BObee's face as a definer object, with an explicit `org_id` filter,
-  granted to `bob_ai_ro` alone.
-- **R7:** `no_channels_selected` becomes `not_applicable`, with its own reason.
+All five were decided with the recommended option:
+- **R3:** `pending` on a no-row cell follows today's lag. This is accepted and
+  written down. §4's rule protects stored history, and a cell with no row
+  stores nothing. A test raises a lag and asserts that only the cells inside
+  the new window change.
+- **R4:** the mechanism is a set-returning function,
+  `bob_cell_state(org, channels[], from, to)`. It is invoker, under RLS. It
+  replaces the view `v_cell_state`, which would have enumerated thirteen
+  months.
+- **R5 → F-39 · §9.1, §6.3:** `interaction_duration` requires `resolution`.
+  It lands at the close, and `resolution` declares that a close exists.
+- **R6:** `v_ai_cell_state` is a definer view, owned by the migration owner
+  and granted to `bob_ai_ro` alone. It reads the function for the current day,
+  filters explicitly on the caller's `org_id` claim, and never exposes
+  `display_name`. The tenancy suite and the P5 guard cover it. This is the
+  shape of F-21.
+- **R7:** `no_channels_selected` becomes `not_applicable`, with its own
+  reason. This changes G9.
 
 ### The 0.6 notice already posted
 
