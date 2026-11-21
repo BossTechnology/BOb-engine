@@ -2560,8 +2560,8 @@ What was built:
 ### How the guards find the table
 
 - **By its grants, not its name.** A feeder staging table is a base table,
-  outside the `proj_` names, that `bob_feeder` can INSERT into and cannot
-  SELECT from (`feederStagingTables()` in `tests/helpers/rls.mjs`). Every one
+  outside the `proj_` names, that `bob_feeder` can write (after the review:
+  INSERT, UPDATE, DELETE or TRUNCATE) and cannot SELECT from (`feederStagingTables()` in `tests/helpers/rls.mjs`). Every one
   found is held to exactly INSERT for `bob_feeder`, SELECT and DELETE for
   `bob_app`, and nothing for `bob_ai_ro`, `anon`, `authenticated`,
   `service_role` or PUBLIC, on the table and on every column
@@ -2621,6 +2621,72 @@ Where it ran: `supabase db reset --no-seed` and `pnpm test` on the local
 stack, after rebasing onto `main` (`9b900a1`): 264 tests, 261 pass, 0 fail,
 3 `todo`. The full chain was also reset on a second, separate local stack
 before the rebase. Nothing was run against any box.
+
+### Review of PR #33 — fixed on the same branch
+
+Two reviews, one from the peer session and three points from Henry («Send
+them to fix»). Every fix landed test first, and every new guard was seen red.
+
+- **Discovery (high).** A staging table was a table the feeder could INSERT
+  into and not read. A DELETE on `actors` fell through both discoveries. Now
+  any write counts (INSERT, UPDATE, DELETE or TRUNCATE, on the table or a
+  column), and the staging rule reports the extra privilege.
+- **Grantees (medium).** `stagingGrantFindings()` read the roles it named.
+  It now also reads every grantee from the table's and its columns' ACLs, and
+  a role it does not know is a finding.
+- **Ref shape (medium).** `ref` is held to `^m:.` and 256 characters by a
+  CHECK, and `isMemberRef()` in `reconciliation/ghosts.mjs` checks it again
+  before a ghost is made.
+- **A run leaves a mark (low).** `bob.member_refs_runs`, a second staging
+  table: one row per tenant per run, even with nothing staged, in the same
+  transaction as the last batch. `stagingRunWarnings()` in
+  `scripts/box-checks.mjs` warns on a tenant with no run or an old one, and
+  `box-check.mjs` prints it as a warning that does not fail the check
+  (`--staging-max-age-hours`, default 24).
+- **A test that could not fail (low).** "A second run creates nothing" now
+  stages a known ref by hand and asserts the reconciliation creates nothing
+  and consumes it.
+- **Expiry before the early return (low).** The sweep now expires by
+  retention even for a tenant with no channel. Unreachable today: the channel
+  key cascades, and `source_key` is NOT NULL. No test, said so here.
+- **Per-tenant errors.** One tenant's failure is returned as `error` on that
+  tenant, without a run row, and the others stage.
+- **Cadence (Henry).** Contract §7.2 now says the feeder stages the trailing
+  window at least as often as `bob_app` reconciles. A row staged later than
+  that waits for the sweep: a delay, not a loss. A test stages one behind the
+  window and sees the frequent run leave it and the sweep take it.
+- **Sweep size (Henry).** `stageMemberRefs` writes as it reads, `batchSize`
+  rows per transaction (2,000 by default), each under the claim. The counts it
+  returns are unchanged.
+- **`service_role` (Henry).** `bob_grant_feeder_staging()` had EXECUTE
+  revoked from PUBLIC, `anon` and `authenticated` only. `service_role` is
+  added. The migration had not run anywhere shared (it is not on `main`), so
+  it was edited in place. A test reads the function's ACL and accepts its
+  owner alone.
+
+**For Federico, not changed.** The table refuses a row whose `first_seen` is
+before the window asked for or whose `last_seen` is at or after its end. That
+holds if §7.3a's `member_refs_seen` reports first and last seen *within* the
+frame. If ClickHouse reports them over all time, every such tenant's staging
+fails (and is reported, without stopping the others). Which it is decides
+whether the CHECK stays. To ask on Relevo task 6 with the F-41 notice.
+
+Seen failing, after the review (shared local stack, one at a time, each
+reverted):
+
+| Sabotage | Red |
+|---|---|
+| Tests written, code not yet changed | 13: discovery finds both tables; DELETE on `actors`, UPDATE (`actor_id`) on `actor_external_refs`, TRUNCATE on `actor_ref_history`; an unknown role's table and column grants; the ref CHECK; `isMemberRef`; the three run-row and warning tests; a run row per tenant; per-tenant isolation |
+| `service_role` given EXECUTE on the helper | the helper is executable by its owner alone |
+| The feeder writes in one transaction | more refs than one batch are written in several transactions |
+| The frequent run ignores its trailing window | the late-staged ref waits for the sweep; H3; the sweep; the known-ref test; the batch test |
+| The reconciliation trusts any staged ref | the reconciliation's own check agrees with the table's |
+| The feeder writes no run row | one run row per tenant per run; the batch test; F-22 |
+| One tenant's failure stops the rest | a failing tenant is reported and the other stages |
+
+Where it ran: `supabase db reset --no-seed` and `pnpm test` on the shared
+local stack: 279 tests, 276 pass, 0 fail, 3 `todo`. Nothing was run against
+any box.
 
 ---
 

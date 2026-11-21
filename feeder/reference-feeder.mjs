@@ -387,19 +387,31 @@ export async function runFeeder(db, truth, {
 // ── P5 Q6 (a) · the member refs it sees, staged for bob_app ────────────────
 // For each channel BOb maps, ask the truth store for the member refs seen in
 // [from, to) (§7.3a, paged), leave out the refs v_feeder_actor_map already
-// maps, and stage the rest in bob.member_refs_seen: one tenant per
-// transaction, under that tenant's claim (F-22). Replaying a window stages
-// nothing twice (the key is channel, ref and window).
+// maps, and stage the rest in bob.member_refs_seen, under the tenant's claim
+// (F-22). Replaying a window stages nothing twice (the key is channel, ref and
+// window).
+//
+// Batches (review of PR #33): the sweep's window is 13 months, so refs are
+// written as they are read, `batchSize` rows per transaction, never gathered
+// whole. The last transaction also writes the tenant's row in
+// bob.member_refs_runs, even when nothing was staged, so a feeder that stops
+// is visible (box-check warns on an old run).
+//
+// One tenant's failure does not stop the others: it is reported as
+// `{ staged, mapped, error }`, where staged counts the batches already
+// committed, and no run row is written for it.
 //
 // In a customer box it runs with `boxTenant`, and stages for that tenant's
 // channels alone (P5 objection 3). Returns, per org_id, how many refs it staged
 // and how many it left out as already mapped.
 const STAGE_PAGE = 500
+export const STAGE_BATCH = 2000
 
 export async function stageMemberRefs(db, truth, {
-  from, to, orgIds = null, boxTenant = null,
+  from, to, orgIds = null, boxTenant = null, batchSize = STAGE_BATCH,
 } = {}) {
   if (!(new Date(to) > new Date(from))) throw new Error('stageMemberRefs needs from < to')
+  if (!(Number.isInteger(batchSize) && batchSize > 0)) throw new Error('stageMemberRefs needs a positive batchSize')
   const maps = await readMaps(db)
   const byOrg = new Map()
   for (const ch of maps.channelByKey.values()) {
@@ -412,43 +424,66 @@ export async function stageMemberRefs(db, truth, {
 
   const out = {}
   for (const [orgId, channels] of byOrg) {
-    const rows = []
+    let rows = []
     let mapped = 0
-    for (const ch of channels) {
-      const frame = { tenant_slug: ch.tenant_slug, source_keys: [ch.source_key], from, to }
-      let after = null
-      do {
-        const page = await truth.memberRefsSeen(frame, { limit: STAGE_PAGE, after })
-        for (const r of page.rows) {
-          if (maps.actorRows.has(`${orgId}\u0000${r.external_ref}`)) { mapped++; continue }
-          rows.push({ channel_id: ch.channel_id, ref: r.external_ref,
-            first_seen: iso(r.first_seen), last_seen: iso(r.last_seen) })
-        }
-        after = page.next
-      } while (after !== null)
+    let staged = 0
+    try {
+      for (const ch of channels) {
+        const frame = { tenant_slug: ch.tenant_slug, source_keys: [ch.source_key], from, to }
+        let after = null
+        do {
+          const page = await truth.memberRefsSeen(frame, { limit: STAGE_PAGE, after })
+          for (const r of page.rows) {
+            if (maps.actorRows.has(`${orgId}\u0000${r.external_ref}`)) { mapped++; continue }
+            rows.push({ channel_id: ch.channel_id, ref: r.external_ref,
+              first_seen: iso(r.first_seen), last_seen: iso(r.last_seen) })
+            if (rows.length >= batchSize) {
+              staged += await writeStaged(db, orgId, rows, { from, to })
+              rows = []
+            }
+          }
+          after = page.next
+        } while (after !== null)
+      }
+      staged += await writeStaged(db, orgId, rows, { from, to },
+        { stagedBefore: staged, mapped })
+      out[orgId] = { staged, mapped }
+    } catch (e) {
+      out[orgId] = { staged, mapped, error: e.message }
     }
-    out[orgId] = { staged: await writeStaged(db, orgId, rows, { from, to }), mapped }
   }
   return out
 }
 
-async function writeStaged(db, orgId, rows, { from, to }) {
-  if (!rows.length) return 0
+// One transaction under the tenant's claim. With `run`, it also writes the
+// tenant's run row, counting this batch and the ones before it.
+async function writeStaged(db, orgId, rows, { from, to }, run = null) {
+  if (!rows.length && !run) return 0
   await db.query('BEGIN')
   try {
     await db.query('SELECT set_config($1, $2, true)',
       ['request.jwt.claims', JSON.stringify({ org_id: orgId })])
-    // INSERT alone: the feeder holds nothing else on this table, so it cannot
-    // read back what it staged. DO NOTHING asks for no read either.
-    const { rowCount } = await db.query(
-      `INSERT INTO bob.member_refs_seen
-         (org_id, channel_id, ref, first_seen, last_seen, window_from, window_to)
-       SELECT $1, u.channel_id, u.ref, u.first_seen, u.last_seen, $6, $7
-         FROM unnest($2::uuid[], $3::text[], $4::timestamptz[], $5::timestamptz[])
-              AS u(channel_id, ref, first_seen, last_seen)
-       ON CONFLICT DO NOTHING`,
-      [orgId, rows.map((r) => r.channel_id), rows.map((r) => r.ref),
-        rows.map((r) => r.first_seen), rows.map((r) => r.last_seen), iso(from), iso(to)])
+    let rowCount = 0
+    if (rows.length) {
+      // INSERT alone: the feeder holds nothing else on this table, so it
+      // cannot read back what it staged. DO NOTHING asks for no read either.
+      ({ rowCount } = await db.query(
+        `INSERT INTO bob.member_refs_seen
+           (org_id, channel_id, ref, first_seen, last_seen, window_from, window_to)
+         SELECT $1, u.channel_id, u.ref, u.first_seen, u.last_seen, $6, $7
+           FROM unnest($2::uuid[], $3::text[], $4::timestamptz[], $5::timestamptz[])
+                AS u(channel_id, ref, first_seen, last_seen)
+         ON CONFLICT DO NOTHING`,
+        [orgId, rows.map((r) => r.channel_id), rows.map((r) => r.ref),
+          rows.map((r) => r.first_seen), rows.map((r) => r.last_seen), iso(from), iso(to)]))
+    }
+    if (run) {
+      await db.query(
+        `INSERT INTO bob.member_refs_runs
+           (org_id, window_from, window_to, staged_count, mapped_count)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [orgId, iso(from), iso(to), run.stagedBefore + rowCount, run.mapped])
+    }
     await db.query('COMMIT')
     return rowCount
   } catch (e) {

@@ -19,8 +19,9 @@
 --               No INSERT or UPDATE: a staged ref comes from the truth store
 --               through the feeder, or not at all.
 --   bob_ai_ro, anon, authenticated, service_role, PUBLIC: nothing.
--- The suite finds such tables by their grants (bob_feeder holds INSERT and no
--- SELECT), not by name, and holds each one to exactly this.
+-- The suite finds such tables by their grants (bob_feeder can write and cannot
+-- SELECT), not by name, holds each one to exactly this, and fails on any other
+-- grantee it finds in the ACLs.
 -- ════════════════════════════════════════════════════════════════════════════
 
 BEGIN;
@@ -45,7 +46,7 @@ COMMENT ON FUNCTION public.bob_grant_feeder_staging(regclass) IS
   'table the feeder can insert into but not read holds exactly this.';
 
 REVOKE EXECUTE ON FUNCTION public.bob_grant_feeder_staging(regclass)
-  FROM PUBLIC, anon, authenticated;
+  FROM PUBLIC, anon, authenticated, service_role;
 
 -- ── The key the staged row uses to name a channel of its own tenant ─────────
 -- A ref staged under tenant A's claim must not name tenant B's channel. RLS
@@ -59,7 +60,9 @@ ALTER TABLE bob.channels ADD CONSTRAINT channels_id_org_id_key UNIQUE (id, org_i
 CREATE TABLE bob.member_refs_seen (
   org_id       UUID        NOT NULL REFERENCES bob.organizations(id) ON DELETE CASCADE,
   channel_id   UUID        NOT NULL,
-  ref          TEXT        NOT NULL CHECK (ref <> ''),
+  -- A member pseudonym and nothing else (review of PR #33): the m: prefix
+  -- of §7.3a, at least one character after it, and a bound on length.
+  ref          TEXT        NOT NULL CHECK (ref ~ '^m:.' AND length(ref) <= 256),
   first_seen   TIMESTAMPTZ NOT NULL,
   last_seen    TIMESTAMPTZ NOT NULL,
   window_from  TIMESTAMPTZ NOT NULL,
@@ -87,5 +90,35 @@ COMMENT ON TABLE bob.member_refs_seen IS
   'what it consumed. INSERT only for bob_feeder; SELECT and DELETE for bob_app.';
 
 SELECT public.bob_grant_feeder_staging('bob.member_refs_seen');
+
+-- ── bob.member_refs_runs ────────────────────────────────────────────────────
+-- One row per tenant per staging run, written in the same transaction as the
+-- refs, even when there are none (review of PR #33). An empty
+-- member_refs_seen then means "the feeder ran and saw nothing", not "the
+-- feeder has not run": box-check warns when a tenant's last run is old.
+CREATE TABLE bob.member_refs_runs (
+  org_id        UUID        NOT NULL REFERENCES bob.organizations(id) ON DELETE CASCADE,
+  window_from   TIMESTAMPTZ NOT NULL,
+  window_to     TIMESTAMPTZ NOT NULL,
+  staged_count  INTEGER     NOT NULL CHECK (staged_count >= 0),
+  mapped_count  INTEGER     NOT NULL CHECK (mapped_count >= 0),
+  ran_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK (window_to > window_from)
+);
+
+CREATE INDEX idx_member_refs_runs_ran_at ON bob.member_refs_runs (org_id, ran_at);
+
+ALTER TABLE bob.member_refs_runs ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "org_member_refs_runs" ON bob.member_refs_runs FOR ALL
+  USING      (org_id = (auth.jwt() ->> 'org_id')::uuid)
+  WITH CHECK (org_id = (auth.jwt() ->> 'org_id')::uuid);
+
+COMMENT ON TABLE bob.member_refs_runs IS
+  'P5 Q6 (a). One row per tenant per feeder staging run, refs or none, so a '
+  'stale feeder is visible. INSERT only for bob_feeder; SELECT and DELETE for '
+  'bob_app.';
+
+SELECT public.bob_grant_feeder_staging('bob.member_refs_runs');
 
 COMMIT;

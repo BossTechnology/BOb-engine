@@ -15,6 +15,8 @@ import { connect, loadFixture, tenantTables, TENANT_A, TENANT_B } from './helper
 import {
   feederStagingTables, stagingGrantFindings, projectionTables, projectionGrantFindings,
 } from './helpers/rls.mjs'
+import { isMemberRef } from '../reconciliation/ghosts.mjs'
+import { stagingRunWarnings } from '../scripts/box-checks.mjs'
 
 let db
 
@@ -25,6 +27,7 @@ before(async () => {
 after(async () => { await db?.end() })
 
 const TABLE = 'bob.member_refs_seen'
+const RUNS = 'bob.member_refs_runs'
 const CHANNEL_A = 'aaaaaaaa-2222-4000-8000-000000000001'   // tenant A
 const CHANNEL_B = 'bbbbbbbb-2222-4000-8000-000000000002'   // tenant B
 
@@ -68,12 +71,15 @@ async function seedBoth() {
 
 // ── Found by discovery, held to its own rule ───────────────────────────────
 describe('P5 Q6 (a) · the staging table is found by its grants, not listed', () => {
-  test('member_refs_seen is a feeder staging table and a tenant table, not a projection', async () => {
+  test('member_refs_seen and member_refs_runs are feeder staging tables and tenant tables, not projections', async () => {
     const staging = (await feederStagingTables(db)).map((t) => t.qualified)
-    assert.deepEqual(staging, [TABLE])
-    assert.ok((await tenantTables(db)).some((t) => t.qualified === TABLE), 'not a tenant table')
-    assert.ok(!(await projectionTables(db)).some((t) => t.qualified === TABLE),
-      'a staging table was taken for a projection')
+    assert.deepEqual(staging, [RUNS, TABLE])
+    const tenant = await tenantTables(db)
+    const projections = await projectionTables(db)
+    for (const name of staging) {
+      assert.ok(tenant.some((t) => t.qualified === name), `${name} is not a tenant table`)
+      assert.ok(!projections.some((t) => t.qualified === name), `${name} was taken for a projection`)
+    }
   })
 
   test('every staging table holds exactly its grants', async () => {
@@ -115,6 +121,38 @@ describe('P5 Q6 (a) · the staging table is found by its grants, not listed', ()
   // makes that table look like staging, and the rule refuses it there.
   test('bob_feeder given INSERT on actors is reported (Q13)',
     widened('GRANT INSERT ON bob.actors TO bob_feeder', /^actors: bob_app holds SELECT, INSERT, UPDATE, DELETE/))
+
+  // Review of PR #33: a write other than INSERT on an actor table, with no
+  // read, fell through both discoveries. Any feeder write without SELECT is
+  // staging now, so the rule sees it.
+  test('bob_feeder given DELETE on actors is reported (Q13)',
+    widened('GRANT DELETE ON bob.actors TO bob_feeder', /^actors: bob_feeder holds DELETE/))
+  test('bob_feeder given UPDATE on one column of actor_external_refs is reported (Q13)',
+    widened('GRANT UPDATE (actor_id) ON bob.actor_external_refs TO bob_feeder',
+      /^actor_external_refs: bob_feeder holds UPDATE/))
+  test('bob_feeder given TRUNCATE on actor_ref_history is reported (Q13)',
+    widened('GRANT TRUNCATE ON bob.actor_ref_history TO bob_feeder',
+      /^actor_ref_history: bob_feeder holds TRUNCATE/))
+
+  // The roles are discovered from the grants, not only checked from a list.
+  test('a grant to a role the rule does not name is reported', async () => {
+    await inTx(async () => {
+      await db.query('CREATE ROLE q6_probe NOLOGIN')
+      await db.query(`GRANT SELECT ON ${TABLE} TO q6_probe`)
+      const findings = (await stagingGrantFindings(db)).map((f) => `${f.table}: ${f.finding}`)
+      assert.ok(findings.some((f) => /^member_refs_seen: q6_probe holds SELECT/.test(f)),
+        findings.join('\n') || 'no finding')
+    })
+  })
+  test('a column grant to a role the rule does not name is reported', async () => {
+    await inTx(async () => {
+      await db.query('CREATE ROLE q6_probe NOLOGIN')
+      await db.query(`GRANT SELECT (ref) ON ${TABLE} TO q6_probe`)
+      const findings = (await stagingGrantFindings(db)).map((f) => `${f.table}: ${f.finding}`)
+      assert.ok(findings.some((f) => /^member_refs_seen: q6_probe holds SELECT/.test(f)),
+        findings.join('\n') || 'no finding')
+    })
+  })
 
   // And read access turns it into a projection, which PR-4 refuses.
   test('bob_feeder given SELECT makes it a projection, and PR-4 reports it', async () => {
@@ -247,4 +285,78 @@ describe('P5 Q6 (a) · bob_ai_ro, anon and authenticated hold nothing', () => {
       })
     })
   }
+})
+
+// The grant helper rewrites a table's ACL, so only its owner runs it. Every
+// grantee is read from the function's ACL, not listed (review of PR #33: the
+// revoke had left out service_role).
+test('P5 Q6 (a) · bob_grant_feeder_staging() is executable by its owner alone', async () => {
+  const { rows } = await db.query(`
+    SELECT CASE WHEN a.grantee = 0 THEN 'public' ELSE pg_get_userbyid(a.grantee) END AS role
+      FROM pg_proc p, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+     WHERE p.oid = 'public.bob_grant_feeder_staging(regclass)'::regprocedure
+       AND a.privilege_type = 'EXECUTE' AND a.grantee <> p.proowner
+     ORDER BY 1`)
+  assert.deepEqual(rows.map((r) => r.role), [])
+})
+
+// ── A staged ref is a member ref (review of PR #33) ─────────────────────────
+// The feeder sets its own claim, and every staged ref becomes a ghost. The
+// table holds it to the member shape (D47: `m:…`), and the reconciliation
+// checks it again before it creates anything.
+describe('P5 Q6 (a) · only member refs can be staged, and only member refs become ghosts', () => {
+  test('an agent ref, an empty member ref and an over-long ref are refused', async () => {
+    await inTx(async () => {
+      assert.equal(await refusal(stage, [TENANT_A, CHANNEL_A, 'tenant-a.whatsapp:4711']), '23514')
+      assert.equal(await refusal(stage, [TENANT_A, CHANNEL_A, 'm:']), '23514')
+      assert.equal(await refusal(stage, [TENANT_A, CHANNEL_A, 'm:x'.padEnd(257, 'x')]), '23514')
+      assert.equal(await refusal(stage, [TENANT_A, CHANNEL_A, 'm:x'.padEnd(256, 'x')]), null)
+    })
+  })
+
+  test('the reconciliation\'s own check agrees with the table\'s', () => {
+    assert.equal(isMemberRef('m:a002'), true)
+    assert.equal(isMemberRef('tenant-a.whatsapp:4711'), false)
+    assert.equal(isMemberRef('botplatform:web-01'), false)
+    assert.equal(isMemberRef('m:'), false)
+    assert.equal(isMemberRef('m:x'.padEnd(257, 'x')), false)
+    assert.equal(isMemberRef(null), false)
+  })
+})
+
+// ── A run leaves a mark (review of PR #33) ──────────────────────────────────
+// If the feeder stops staging, the reconciliation reads zero rows and cannot
+// tell that from a quiet day. Each staging run writes a row per tenant in
+// member_refs_runs, even with nothing to stage, and the box check warns when
+// the newest is too old.
+describe('P5 Q6 (a) · the box check warns when staging has gone quiet', () => {
+  const NOW = new Date('2026-11-18T14:30:00Z')
+  const run = `INSERT INTO ${RUNS} (org_id, window_from, window_to, staged_count, mapped_count, ran_at)
+               VALUES ($1, '2026-11-18 13:00+00', '2026-11-18 14:30+00', 0, 0, $2)`
+
+  test('a tenant with no run is warned about', async () => {
+    await inTx(async () => {
+      const w = await stagingRunWarnings(db, { now: NOW, maxAgeHours: 24 })
+      assert.ok(w.some((x) => x.includes(TENANT_A) && /no staging run/.test(x)), w.join('\n'))
+    })
+  })
+
+  test('a run older than the bound is warned about, a fresh one is not', async () => {
+    await inTx(async () => {
+      await db.query(run, [TENANT_A, '2026-11-17 12:00+00'])
+      await db.query(run, [TENANT_B, '2026-11-18 14:00+00'])
+      const w = await stagingRunWarnings(db, { now: NOW, maxAgeHours: 24 })
+      assert.ok(w.some((x) => x.includes(TENANT_A) && /last staging run/.test(x)), w.join('\n'))
+      assert.ok(!w.some((x) => x.includes(TENANT_B)), w.join('\n'))
+    })
+  })
+
+  test('bob_feeder can write a run row and not read one', async () => {
+    await inTx(async () => {
+      await becomeRole('bob_feeder', TENANT_A)
+      assert.equal(await refusal(run, [TENANT_A, NOW]), null)
+      assert.equal(await refusal(`SELECT 1 FROM ${RUNS} LIMIT 1`), '42501')
+      assert.equal(await refusal(run, [TENANT_B, NOW]), '42501')
+    })
+  })
 })

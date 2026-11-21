@@ -357,6 +357,10 @@ const actorCounts = async () => (await db.query(
   `SELECT actor_type, identity_rung, count(*)::int AS n FROM bob.actors
     WHERE org_id = $1 GROUP BY 1, 2 ORDER BY 1, 2`, [TENANT_A])).rows
 
+const runRows = async () => Object.fromEntries((await db.query(
+  `SELECT org_id::text, count(*)::int AS n FROM bob.member_refs_runs
+    WHERE org_id = ANY($1::uuid[]) GROUP BY 1`, [TENANTS])).rows.map((r) => [r.org_id, r.n]))
+
 const stagedRefs = async (orgId = TENANT_A) => (await db.query(
   'SELECT DISTINCT ref FROM bob.member_refs_seen WHERE org_id = $1 ORDER BY 1', [orgId]))
   .rows.map((r) => r.ref)
@@ -436,10 +440,57 @@ describe('§7.2 · the ghost path', () => {
     assert.equal(rows[0].n, 0, 'a ghost was made for a ref past retention')
   })
 
-  test('a second run creates nothing', async () => {
-    await stage(truth())
+  // The feeder leaves out what it maps, so a staged known ref has to be put
+  // there by hand: the reconciliation's own subtraction is what is tested.
+  test('a staged ref BOb already knows creates nothing, and is consumed', async () => {
+    await db.query(`INSERT INTO bob.member_refs_seen
+        (org_id, channel_id, ref, first_seen, last_seen, window_from, window_to)
+      VALUES ($1, $2, 'm:a002', '2026-11-18 14:11+00', '2026-11-18 14:11+00',
+              '2026-11-18 14:00+00', '2026-11-18 14:30+00')`, [TENANT_A, WHATSAPP_A])
+    const before = await actorCounts()
     const r = await reconcileA()
     assert.deepEqual(r.created, [])
+    assert.deepEqual(await actorCounts(), before)
+    assert.deepEqual(await stagedRefs(), [])
+  })
+
+  // Contract §7.2 as amended (review of PR #33): the feeder stages the
+  // trailing window at least as often as bob_app reconciles. A row staged
+  // late, behind bob_app's window, is not lost: the frequent run leaves it,
+  // and the sweep makes the ghost.
+  test('a ref staged late, behind the trailing window, waits for the sweep', async () => {
+    await stage(truth([event('2026-11-18T13:20:00Z', 'tenant-a.voice', 'c11', 'turn',
+      { side: 'customer', turn_id: 't110', 'miembro.id': 'm:a053' })]),
+    { from: '2026-11-18T13:00:00Z', to: '2026-11-18T13:40:00Z' })
+    assert.deepEqual(await stagedRefs(), ['m:a053'])
+    const frequent = await reconcileA()
+    assert.deepEqual(frequent.created.map((c) => c.ref), [])
+    assert.deepEqual(await stagedRefs(), ['m:a053'], 'the frequent run consumed a row behind its window')
+    const swept = await sweepGhosts(app, { orgId: TENANT_A }, { now: NOW })
+    assert.deepEqual(swept.created.map((c) => c.ref), ['m:a053'])
+    assert.deepEqual(await stagedRefs(), [])
+  })
+
+  // The sweep's window is 13 months. The feeder writes in batches, each in
+  // its own transaction under the claim, and the counts it returns are the
+  // same as one write (review of PR #33).
+  test('more refs than one batch are written in several transactions, counted once', async () => {
+    const refs = ['m:a060', 'm:a061', 'm:a062', 'm:a063', 'm:a064']
+    const store = truth(refs.map((ref, i) => event(`2026-11-18T14:2${i}:00Z`, 'tenant-a.voice',
+      `c6${i}`, 'turn', { side: 'customer', turn_id: `t6${i}`, 'miembro.id': ref })))
+    let inserts = 0
+    const counting = { query: (...a) => {
+      if (/INSERT INTO bob\.member_refs_seen/.test(String(a[0]))) inserts++
+      return feeder.query(...a)
+    } }
+    const runsBefore = await runRows()
+    const out = await stageMemberRefs(counting, onlyMemberRefsSeen(store),
+      { from: STAGE_FROM, to: TO, orgIds: [TENANT_A], batchSize: 2 })
+    assert.deepEqual(out[TENANT_A], { staged: 5, mapped: 4 })
+    assert.equal(inserts, 3)
+    assert.deepEqual(await stagedRefs(), refs)
+    assert.equal((await runRows())[TENANT_A] - (runsBefore[TENANT_A] ?? 0), 1)
+    await db.query('DELETE FROM bob.member_refs_seen WHERE org_id = $1', [TENANT_A])
   })
 
   test('the rebuild it triggers projects the ghosts at rung ghost', async () => {
@@ -554,8 +605,8 @@ describe('F-22 · the feeder writes each tenant under its own claim', () => {
           claim = JSON.parse(params[1]).org_id
         }
         if (/^(COMMIT|ROLLBACK)/.test(sql)) claim = null
-        if (/member_refs_seen/.test(sql)) {
-          assert.match(sql, /^\s*INSERT INTO bob\.member_refs_seen/, 'the feeder did more than insert')
+        if (/member_refs_(seen|runs)/.test(sql)) {
+          assert.match(sql, /^\s*INSERT INTO bob\.member_refs_(seen|runs)/, 'the feeder did more than insert')
           assert.equal(params[0], claim, sql)
           seen.add(claim)
         }
@@ -571,6 +622,35 @@ describe('F-22 · the feeder writes each tenant under its own claim', () => {
       `SELECT count(*)::int AS n FROM bob.member_refs_seen s JOIN bob.channels c
           ON c.id = s.channel_id WHERE s.org_id <> c.org_id`)
     assert.equal(rows[0].n, 0)
+  })
+
+  test('each tenant leaves one run row per staging run, even with nothing to stage', async () => {
+    const before = await runRows()
+    await stageMemberRefs(feeder, truth(), { from: '2026-11-18T10:00:00Z', to: '2026-11-18T10:05:00Z' })
+    const after = await runRows()
+    assert.equal(after[TENANT_A] - (before[TENANT_A] ?? 0), 1)
+    assert.equal(after[TENANT_B] - (before[TENANT_B] ?? 0), 1)
+  })
+
+  // One tenant's failure does not stop another's (review of PR #33). Tenant
+  // B's truth store answers with a first_seen before the window, which the
+  // table refuses.
+  test('a tenant whose staging fails is reported, and the other tenant still stages', async () => {
+    const store = truth([event('2026-11-18T14:12:00Z', 'tenant-b.chat', 'b9', 'turn',
+      { side: 'customer', turn_id: 'tb9', 'miembro.id': 'm:b051' }, 'tenant-b')])
+    const skewed = {
+      memberRefsSeen(frame, page) {
+        const out = store.memberRefsSeen(frame, page)
+        if (frame.tenant_slug !== 'tenant-b') return out
+        return { ...out, rows: out.rows.map((r) => ({ ...r, first_seen: new Date('2026-11-17T00:00:00Z') })) }
+      },
+    }
+    await db.query('DELETE FROM bob.member_refs_seen WHERE org_id = ANY($1::uuid[])', [TENANTS])
+    const out = await stageMemberRefs(feeder, skewed, { from: FROM, to: TO })
+    assert.match(out[TENANT_B].error ?? '', /check constraint/)
+    assert.equal(out[TENANT_A].staged, 2)
+    assert.deepEqual(await stagedRefs(TENANT_A), ['m:a002', 'm:a003'])
+    assert.deepEqual(await stagedRefs(TENANT_B), [])
   })
 
   test('replaying a staging window stages nothing twice', async () => {

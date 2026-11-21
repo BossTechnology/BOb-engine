@@ -187,13 +187,14 @@ migration owner is the only role that owns objects or bypasses RLS.
 | `channel_capabilities` (Slice 2, 0.5.3) | SELECT, INSERT, UPDATE, DELETE | none (reads the column on its view) | none | SELECT, INSERT, UPDATE, DELETE, under RLS | none |
 | `v_channel_declaration_gaps` (Slice 2) | SELECT | none | none | SELECT | none |
 | `member_refs_seen` (Q6 (a), F-41) | SELECT, DELETE (the ghost reconciliation consumes what was staged) | INSERT only, under the tenant's claim | none | none | none |
+| `member_refs_runs` (Q6 (a), F-41, review of PR #33) | SELECT, DELETE | INSERT only, one row per tenant per staging run | none | none | none |
 | `v_feeder_channel_map` (with `capabilities`, 0.5.3) | none | SELECT | none | none | none |
 | `v_feeder_actor_map` (Slice 2) | none | SELECT | none | none | none |
 | `v_ai_*` views (none exist yet) | none | none | SELECT | none | none |
 | `v_roster` | SELECT | none | none | none | none |
 | Partition function (contract §3) | none | EXECUTE | none | none | none |
 | `bob_grant_projection()` | none | none | none | none | none |
-| `bob_grant_feeder_staging()` (Q6 (a)) | none | none | none | none | none |
+| `bob_grant_feeder_staging()` (Q6 (a)) | none (EXECUTE revoked from PUBLIC, `anon`, `authenticated` and `service_role`; the migration owner alone) | none | none | none | none |
 | The truth store (ClickHouse) | only through `affected_members` and the evidence packages, never directly | read-only ClickHouse role (task 3.6) | its own ClickHouse access, per task 5.3 | none | none |
 
 Each entry and its source:
@@ -219,6 +220,13 @@ Each entry and its source:
     name, and holds each one to exactly this row. An INSERT grant on `actors`
     to the feeder would make `actors` look like a staging table, and that
     guard refuses it (Q13). The feeder still reads exactly its two views.
+  - *Review of PR #33:* a staging table is now any table the feeder can
+    write in any way (INSERT, UPDATE, DELETE, TRUNCATE, on the table or a
+    column) and cannot read, so a DELETE on `actors` is caught too; every
+    grantee is read from the ACLs, and an unknown one is a finding. A second
+    staging table, `member_refs_runs`, records each run. The feeder stages
+    the trailing window at least as often as `bob_app` reconciles (contract
+    §7.2, F-41).
 - **The partition function** **[DECIDED]** (contract §3; 0.2 Q7, ruled 10 Nov):
   `SECURITY DEFINER`, owned by the migration owner, EXECUTE granted to
   `bob_feeder` alone.
@@ -692,6 +700,11 @@ how it is built (Q6 below). The decision is still unsigned.
    as `bob_app`, with the trailing window of H3 and the 395-day sweep. The
    contract amendment to §7.2 and §7.3a is proposed with it. D62 is still
    unsigned.
+   After the review of PR #33: refs held to `m:` and 256 characters, one
+   run row per tenant per staging run (`bob.member_refs_runs`) and a box-check
+   warning when it is old, staging in batches with each tenant isolated, and
+   the cadence rule: the feeder stages the trailing window at least as often
+   as `bob_app` reconciles; a row staged later waits for the sweep.
 
 **What stands between these inputs and the signature.**
 

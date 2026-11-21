@@ -1056,6 +1056,19 @@ a ninth projection. It never applied to route B.
   largest declared `lag_seconds` among the tenant's channels. Ghost creation is
   idempotent on `(org_id, ref)`, so the overlap costs a repeated question and
   nothing else. No cursor is stored.
+- **[PROPOSED, F-41] The feeder stages that trailing window at least as often
+  as `bob_app` reconciles.** The reconciliation consumes only the staged rows
+  inside its own window, so a row staged after that window has moved past it
+  waits for the sweep, which may be days later. Staging less often than the
+  reconciliation runs therefore delays ghosts; it loses none.
+- **[PROPOSED, F-41] Each staging run leaves a mark.** The feeder writes one
+  row per tenant per run in `bob.member_refs_runs`, in the same transaction as
+  its last batch, even when it staged nothing. An empty `member_refs_seen` then
+  means "seen nothing", not "not run", and the box check warns when a
+  tenant's last run is older than a bound (24 hours by default). It writes in
+  batches, each in its own transaction under the tenant's claim, so the sweep's
+  window is never held in memory whole; a tenant whose staging fails is
+  reported and the others go on.
 - **A slower sweep covers what the trailing window cannot**: a run missed for
   longer than its window, a channel whose lag was raised, a tenant's first
   run. It asks over the whole retention window (C-14) on a slower schedule.

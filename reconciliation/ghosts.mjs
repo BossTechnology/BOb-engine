@@ -60,7 +60,8 @@ async function reconcileWindow(db, { orgId }, now, windowOf, { expire = false } 
     const { rows: channels } = await db.query(
       `SELECT lag_seconds FROM bob.channels
         WHERE org_id = $1 AND source_key IS NOT NULL`, [orgId])
-    if (!channels.length) return { created: [], window: null, expired: 0 }
+    // No channel left: the sweep still expires by retention alone (review of
+    // PR #33, point 6). Unreachable today, since the channel FK cascades.
     const largestLag = Math.max(0, ...channels.map((c) => c.lag_seconds ?? 0))
     const window = clampToRetention(windowOf(largestLag), now)
 
@@ -72,6 +73,7 @@ async function reconcileWindow(db, { orgId }, now, windowOf, { expire = false } 
         'DELETE FROM bob.member_refs_seen WHERE org_id = $1 AND last_seen < $2',
         [orgId, window.from]))
     }
+    if (!channels.length) return { created: [], window: null, expired }
 
     // Consumed: every staged row of the tenant seen inside the window. A
     // concurrent run waits on these rows and then finds them gone.
@@ -83,6 +85,7 @@ async function reconcileWindow(db, { orgId }, now, windowOf, { expire = false } 
 
     const firstSeen = new Map()
     for (const s of staged) {
+      if (!isMemberRef(s.ref)) continue
       const t = new Date(s.first_seen)
       if (!firstSeen.has(s.ref) || t < firstSeen.get(s.ref)) firstSeen.set(s.ref, t)
     }
@@ -155,4 +158,11 @@ export async function linkMemberRef(db, { orgId, ref, actorId, rung, at, now }) 
     const t = new Date(first.t).getTime()
     return { from: new Date(Math.floor(t / 300_000) * 300_000), to: new Date(now) }
   })
+}
+
+// A member pseudonym as §7.3a writes it: the m: prefix, something after it,
+// at most 256 characters. The table CHECKs the same; this keeps a non-member
+// ref from becoming a ghost if that CHECK is ever loosened.
+export function isMemberRef(ref) {
+  return typeof ref === 'string' && ref.startsWith('m:') && ref.length > 2 && ref.length <= 256
 }

@@ -177,3 +177,28 @@ export async function oneOrganizationFindings(client, boxTenant) {
   }
   return findings
 }
+
+// P5 Q6 (a), review of PR #33: the feeder writes a row in
+// bob.member_refs_runs per tenant per staging run. A tenant with no run, or
+// whose newest run is older than `maxAgeHours`, is a warning: the ghost
+// reconciliation would read zero staged refs and could not tell a stopped
+// feeder from a quiet day. A warning, not a finding: a box just migrated has
+// not run the feeder yet.
+export async function stagingRunWarnings(client, { now = new Date(), maxAgeHours = 24 } = {}) {
+  const { rows } = await client.query(`
+    SELECT o.id::text AS org_id, o.slug, max(r.ran_at) AS last_run
+      FROM bob.organizations o
+      LEFT JOIN bob.member_refs_runs r ON r.org_id = o.id
+     GROUP BY o.id, o.slug ORDER BY o.slug`)
+  const bound = new Date(new Date(now).getTime() - maxAgeHours * 3_600_000)
+  const warnings = []
+  for (const r of rows) {
+    if (!r.last_run) {
+      warnings.push(`organization ${r.org_id} (${r.slug}) has no staging run in bob.member_refs_runs`)
+    } else if (new Date(r.last_run) < bound) {
+      warnings.push(`organization ${r.org_id} (${r.slug}): last staging run at ` +
+        `${new Date(r.last_run).toISOString()}, older than ${maxAgeHours} h`)
+    }
+  }
+  return warnings
+}
