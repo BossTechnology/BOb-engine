@@ -89,14 +89,28 @@ const state = async (id, at = null) => (await db.query(
   `SELECT public.bob_autobotz_state(verify_state, verified_at, coalesce($2::timestamptz, now())) AS s
      FROM autobotz WHERE id = $1`, [id, at])).rows[0].s
 
+// Record a passing verification through Verify, under `org`'s claim. The claim
+// is set by a materialized CTE, so it is in place before Verify reads it; it is
+// LOCAL, so it lasts as long as the caller's transaction (or this statement).
+async function verifyOk(binding, org = TENANT_A) {
+  await db.query(`
+    WITH c AS MATERIALIZED (SELECT set_config('request.jwt.claims', $2, true) AS x)
+    SELECT public.bob_autobotz_record_verification($1, true, 'probe') FROM c`,
+  [binding, JSON.stringify({ org_id: org })])
+}
+
 // An Action response attaching `binding`, and an alert to cause intentions.
-async function actionFor(binding, org = TENANT_A) {
+// The binding is verified afterwards, because an intention needs a binding
+// whose last verification passed and is fresh. Edits made before this call
+// (a limit, say) invalidate the verification under RS-32, so verify comes last.
+async function actionFor(binding, org = TENANT_A, { verify = true } = {}) {
   const { rows: [r] } = await db.query(`
     INSERT INTO response_rules (org_id, type, name, autobotz_id)
     VALUES ($1, 'action', 'Slice 6 probe', $2) RETURNING id`, [org, binding])
   const { rows: [a] } = await db.query(`
     INSERT INTO alert_log (org_id, metric_id, metric_name, alert_type, value, threshold, severity)
     VALUES ($1, 'abandonment', 'Abandonment', 'upper', 12, 10, 'critical') RETURNING id`, [org])
+  if (verify) await verifyOk(binding, org)
   return { rule: r.id, alert: a.id }
 }
 
@@ -683,6 +697,42 @@ describe('The outbox · the clock is the statement\'s, not the transaction\'s', 
       await db.query('SELECT pg_sleep(0.05)')
       const { rows: [d] } = await db.query('SELECT * FROM public.bob_outbox_drain(100) WHERE id = $1', [q.id])
       assert.ok(new Date(d.drained_at) > new Date(q.created_at), 'drained_at is not the statement\'s clock')
+    })
+  })
+})
+
+// ── Admission needs a verified, fresh binding (Henry, 21 Nov) ──────────────
+describe('The outbox · only a binding whose verification passed and is fresh gets an intention', () => {
+  const write = (rule, alert, key) => refusal(`
+    INSERT INTO outbound_queue (org_id, response_rule_id, alert_log_id, idempotency_key)
+    VALUES ($1, $2, $3, $4)`, [TENANT_A, rule, alert, key])
+
+  test('never verified is refused, and so is a binding edited since it passed', async () => {
+    await inTx(async () => {
+      await db.query('UPDATE autobotz SET rate_limit_per_hour = 10 WHERE id = $1', [AB1])
+      const { rule, alert } = await actionFor(AB1, TENANT_A, { verify: false })
+      const never = await write(rule, alert, 'v-1')
+      assert.equal(never?.code, '23514')
+      assert.match(never.message, /unverified/)
+      await verifyOk(AB1)
+      assert.equal(await write(rule, alert, 'v-2'), null)
+      await db.query('UPDATE autobotz SET reference = $2 WHERE id = $1', [AB1, 'https://example.com/hook-2'])
+      assert.match((await write(rule, alert, 'v-3'))?.message ?? 'accepted', /unverified/)
+    })
+  })
+
+  test('a failed verification and a stale one are refused', async () => {
+    await inTx(async () => {
+      await db.query('UPDATE autobotz SET rate_limit_per_hour = 10 WHERE id = $1', [AB1])
+      const { rule, alert } = await actionFor(AB1)
+      await db.query(`
+        WITH c AS MATERIALIZED (SELECT set_config('request.jwt.claims', $2, true) AS x)
+        SELECT public.bob_autobotz_record_verification($1, false, 'gone') FROM c`,
+      [AB1, JSON.stringify({ org_id: TENANT_A })])
+      assert.match((await write(rule, alert, 's-1'))?.message ?? 'accepted', /failed/)
+      await db.query(`UPDATE autobotz SET verify_state = 'ok',
+                      verified_at = now() - interval '31 days' WHERE id = $1`, [AB1])
+      assert.match((await write(rule, alert, 's-2'))?.message ?? 'accepted', /stale/)
     })
   })
 })

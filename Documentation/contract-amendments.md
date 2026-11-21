@@ -2704,6 +2704,33 @@ apply yet. Each fix went test first, and each new guard was seen failing.
 
 **Counts.** 221 → 230: 227 pass and 3 are `todo`. pgTAP: 9.
 
+
+## Slice 6 · Henry's rulings on the review, 21 Nov
+
+PR #26 merged (`d86eb08`) with all four checks green. Henry answered the four
+questions and two of the seven build choices:
+
+- **Admission needs a verified, fresh binding — ruled (a), built.** Migration
+  `20261121100300` replaces `bob_outbox_admit()`: a binding that was never
+  verified, failed its last verification, or is stale gets no intention. The
+  state is the derived one (RS-31), read with the statement's clock. An edit
+  that invalidates a verification (RS-32) stops new intentions until Verify
+  passes again. Intentions already written are not touched. Seen failing first
+  (the two new tests accepted the intention before the migration).
+- **A claimed state in the outbox — deferred to P5.** The stub still marks
+  `drained` before the `delivery_attempt` exists. The real transmitter answers
+  this; it stays open here.
+- **Severity of a failed verification — stays `warning`** (build choice 4). It
+  is a verification failure, not an execution failure; RS-25 covers execution.
+- **Inline webhook with a foreign id in `channel_ids`, and RS-32 and scope —
+  kept as built.** Henry did not ask to change either.
+- **Merge** authorized by Henry, done at the reviewed head.
+
+Consumer impact: Bob-New, or anything that writes intentions, must call Verify
+and get `ok` before the first intention, and again after any edit to the binding.
+
+**Counts.** 230 → 232: 229 pass and 3 are `todo`. pgTAP: 9.
+
 ---
 
 *Boss.Technology · BOb v1 · Internal only*
