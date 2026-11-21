@@ -2183,4 +2183,121 @@ covers it until F-27 closes by (b) or (c).
 
 ---
 
+## P5 · The lab-02 rehearsal kit, built
+
+P5 §6.2 owes two things before the first window: the rehearsal on lab-02, and a
+written procedure for a migration that fails. Objection 2 settled the procedure
+(fix forward; otherwise restore `bob` alone and rebuild). Objection 5 set the
+rehearsal on lab-02, and objection 6 moved the migration credential to a file
+of its own. This change builds the kit. Henry runs it; nothing here has run on
+a box.
+
+- `scripts/ensayo-migracion-lab.sh`, with `--dry-run`, `--ejecutar` and
+  `--deshacer`. It refuses any host that is not `bzzz-lab-02`, a CLI that is
+  not the one CI pins, a credential file not at mode 600, and a box that
+  already has `bob`.
+- `docs/p5-failed-migration-procedure.md`, the procedure.
+- `scripts/ensayo-migracion-lab/probar-local.sh`, which runs the kit end to end
+  on a disposable copy of lab-02's identity stack (the same Postgres and
+  GoTrue digests as Bzzz `compose/l6-supabase.yml`), and sees each check fail.
+- Bzzz `scripts/backup.sh` gains `bob.sql.gz`, a dump of `bob` without
+  `proj_*` data, checked against the live counts. That is its own pull request
+  in Bzzz.
+
+### Measured on the box's image (`supabase/postgres:17.6.1.136`, CLI 2.120.0)
+
+- **The CLI runs each migration file as one transaction.** A rigged file
+  without `BEGIN … COMMIT`, among the nine old unwrapped ones, created a table
+  and then raised. Afterwards the table did not exist, and the version was not
+  recorded. A rigged file wrapped in `BEGIN … COMMIT` behaved the same.
+  The files before the failing one stayed applied and recorded, and nothing
+  after it ran. P5 §6.2's worry about the nine unwrapped files does not arise
+  with this CLI. The kit checks it on every run, because another CLI version
+  could differ.
+- **`auth` is untouched** by every push, by the drop and by the restore of
+  `bob`. The kit compares a hash of `auth`'s shape and rows at every step.
+- **`DROP SCHEMA bob CASCADE` reaches nothing outside `bob`.** 44 objects, all
+  in `bob`. BOb's functions in `public` survive it. The trigger on
+  `auth.users` survives it too. While `bob` is gone, creating a portal account
+  fails, because that trigger writes `bob.users`.
+- **`bob.sql.gz` restores `bob` exactly**, as `supabase_admin` in one
+  transaction: owners, grants, default privileges, the two definer views, the
+  `SECURITY DEFINER` functions, policies, triggers, constraints, indexes,
+  sequences, comments and every row outside `proj_*`. The publication
+  membership is the exception (F-29).
+- **The reference feeder rebuilds the projections identically**, row for row,
+  `computed_at` aside.
+
+### F-28 · `GRANT <role> TO current_user` terminates the server on the box's image — finding
+
+On `17.6.1.136`, with `supautils` loaded, `GRANT bob_feeder TO current_user`
+run as `postgres` ends every connection, and the server goes through recovery.
+Naming the role (`GRANT bob_feeder TO postgres`) works. The CI image (15.x)
+does not crash.
+
+- Where it matters: `tests/slice2-feeder.test.mjs` and `tests/p5-roles.test.mjs`
+  use `TO current_user`. Neither runs on a box (§6.2), so CI is not affected.
+  The kit's Node helper names the role.
+- On a box it would take down the portal's logins with it. The procedure lists
+  it under "never done".
+- Not changed here: the suite. If the CI image moves to 17.x, those tests will
+  need to name the role.
+
+### F-29 · `pg_dump -n bob` does not carry the publication membership — finding
+
+`bob.alerts`, `bob.anomalies`, `bob.metric_snapshots` and
+`bob.sentiment_readings` are in `supabase_realtime`. `pg_dump -n bob` writes no
+`ALTER PUBLICATION … ADD TABLE`. After a restore the tables are back, but
+Realtime no longer sees them, and nothing reports an error.
+
+- The fix, in both places: Bzzz `backup.sh` writes `bob_publicaciones.txt`
+  beside the dump, and the procedure adds the membership back from it. The kit
+  does the same, and its fingerprint covers publication membership.
+- Seen failing: with the membership not added back, the fingerprint differs.
+
+### F-30 · CI applies the chain on Postgres 15, and the boxes run 17.6 — finding
+
+`supabase/config.toml` and CI use `major_version = 15`. lab-02 runs
+`supabase/postgres:17.6.1.136`. Measured: the whole chain applies cleanly on
+17.6, and on that image the migration role `postgres` is not a superuser, has
+CREATEROLE and has BYPASSRLS. F-28 is a difference between the two that CI
+cannot see. Moving CI to 17.x is not part of this change; it is for Henry to
+decide.
+
+### What the kit records, and how each check was seen failing
+
+The bench (`probar-local.sh`) runs the kit against the local copy, then once
+per sabotage, and undoes each run with `--deshacer`.
+
+| Sabotage (`ENSAYO_P5_SABOTAJE`, local only) | Red |
+|---|---|
+| The rigged unwrapped file does not fail | the push exits non-zero |
+| A table left behind in `public` | the wrapped rigged file left nothing |
+| The restore skips the data | every configuration and live-state row comes back |
+| A definer view made `security_invoker` after the restore | the fingerprint of `bob` is identical |
+| `proj_ensure_partition` made `SECURITY INVOKER` | the same |
+| The publication membership not added back | the same |
+| The projections not rebuilt | the rebuilt projections equal those before |
+| A fourth LOGIN role with USAGE on `bob` | box check: three roles, no more |
+
+The refusals each exit 2: a CLI that is not CI's, a credential file at 644, a
+wrong password, `--objetivo lab-02` on another host, a sabotage switch outside
+`local`, and `--ejecutar` on a box that already has `bob`. The bench also
+checks that the migration password appears in no evidence file.
+
+**F-27 on lab-02.** The kit records, read-only, whether `pg_net` or `http`
+is installed or only available, in which schema, and how many of each one's
+functions PUBLIC can execute. It does so in preflight (also on `--dry-run`)
+and after the chain, and installs nothing. It also
+runs `scripts/box-check.mjs`. On the rehearsal box no tenant is provisioned,
+so "one organization" fails on purpose; the kit counts only the role guard and
+the egress guard.
+
+**Not rehearsed.** Removing the `schema_migrations` rows of versions newer than
+the dump (procedure §4.4), recreating `bob.users` rows for accounts made after
+the dump (§4.5), and a fix-forward migration with `--include-all` (§3). The
+procedure marks each one.
+
+---
+
 *Boss.Technology · BOb v1 · Internal only*
