@@ -3159,6 +3159,30 @@ nightly backup is still the installed one. Deploying Bzzz `main` there is
 separate: its plan brings up `compose/l7-bob.yml`, which needs a bob-web
 image lab-02 does not have.
 
+## F-27 · closed with (c): neither egress extension may be installed
+
+Ruled by Henry on 21 Nov, on the recommendation after the lab-02 rehearsal
+(«sigue bajo tus recomendaciones», relayed). On lab-02 `http` and `pg_net` are
+available and neither is installed, before and after the chain. Option (b), a
+migration revoking from PUBLIC where they are installed, would not cover a
+later install; (c) holds by itself, and lab-02 already meets it.
+
+- `egressInstalledFindings` in `scripts/box-checks.mjs`: one finding per
+  installed egress extension. `scripts/box-check.mjs` runs it as "no egress
+  extension installed", and fails on it.
+- `tests/p5-roles.test.mjs`: the `todo` is gone. On the test database neither
+  is installed; with both installed and rolled back, the guard names both, and
+  all three roles could execute their functions (the reason for (c), kept
+  measured). Seen failing first against a guard that returned nothing.
+- The guard over effective EXECUTE stays, as the second line: if (c) is ever
+  broken, the box check also says who can call what.
+- The lab-02 rehearsal kit checks the new box-check line.
+
+**Measured on lab-02 only.** On model-01 and Febor it is not known whether
+either is installed. Their first window runs the box check, and a red line
+there is a finding to rule on before going on, not something to uninstall in
+the window.
+
 ---
 
 *Boss.Technology · BOb v1 · Internal only*

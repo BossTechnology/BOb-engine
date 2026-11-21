@@ -3,6 +3,7 @@
 Una línea por cambio entregado, en lenguaje de usuario.
 
 ## Sin publicar
+- F-27 cerrado con (c): el chequeo de la caja falla si `pg_net` o `http` están instalados. Medido solo en lab-02, donde no lo están; en model-01 y Febor todavía no se sabe.
 - El ensayo de P5 corrió en lab-02: 41 comprobaciones, todas como se esperaba, con la cadena aplicada y `auth.users` sin tocar. El kit compara inventarios sin depender del idioma de la caja.
 - Restaurar `bob` solo ya no se lleva las funciones de `public` que dependen de él: el procedimiento y el kit del ensayo las guardan antes de borrar `bob` y las reponen después (`scripts/bob-dependientes.sh`). `service_role` ya no puede drenar el outbox (F-47).
 - Ningún rol con el que corre la aplicación puede vaciar una tabla de un golpe (TRUNCATE), algo que se saltaba la separación entre organizaciones.

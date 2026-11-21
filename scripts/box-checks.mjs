@@ -155,6 +155,16 @@ export async function egressInstalled(client) {
   return rows
 }
 
+// F-27, closed with (c) by Henry on 2026-11-21: neither egress extension may
+// be installed. Installed, both hand EXECUTE on every function to PUBLIC, so
+// the guard above would hold only until someone forgot a REVOKE; refusing the
+// install holds by itself. Measured on lab-02 only (available, not installed);
+// on model-01 and Febor it is not known yet. One finding per installed one.
+export async function egressInstalledFindings(client) {
+  return (await egressInstalled(client)).map((e) =>
+    `${e.extname} is installed (in ${e.schema}): F-27 (c), no egress extension may be installed`)
+}
+
 // Objection 3 of P5 §8, answered: one organization per customer box, and its
 // slug is the box's `bzzz.tenant`. A box check, not a suite test: the suite's
 // fixture holds two tenants on purpose.

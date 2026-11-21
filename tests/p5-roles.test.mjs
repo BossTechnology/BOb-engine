@@ -15,7 +15,7 @@ import {
 } from './helpers/db.mjs'
 import {
   BOB_ROLES, rolesWithPrivilegeInBob, threeRolesFindings, egressFunctions,
-  egressFindings, oneOrganizationFindings,
+  egressFindings, egressInstalledFindings, oneOrganizationFindings,
 } from '../scripts/box-checks.mjs'
 
 let db
@@ -204,8 +204,27 @@ describe('P5 §6.3 · no egress from the database', () => {
   // F-27. Installing either one hands EXECUTE on every function to PUBLIC, so
   // all three can call them; pg_net also hands out its queue tables. "Not
   // granted" (P5 §3.2) does not hold once installed, only "not installed".
-  test('installed, none of the three can execute them', { todo: 'F-27, (a) decided; (b) or (c) after lab-02' }, async () => {
-    await installed(async () => assert.deepEqual(await egressFindings(db), []))
+  // Seen here, so the reason for (c) stays measured, not remembered.
+  test('installed, all three could execute them: why F-27 closes with (c)', async () => {
+    await installed(async () => assert.ok((await egressFindings(db)).length > 0))
+  })
+
+  // F-27 closed with (c), Henry, 2026-11-21: neither extension may be
+  // installed. Measured on lab-02 only (both available, neither installed,
+  // before and after the chain); on model-01 and Febor it is not known yet.
+  test('F-27 (c) · neither pg_net nor http is installed', async () => {
+    assert.deepEqual(await egressInstalledFindings(db), [])
+  })
+
+  // The schema in the finding is the extension's own (pg_extension), which for
+  // pg_net is wherever CREATE EXTENSION ran, not `net` where its functions go:
+  // the names and the rule are what is checked.
+  test('F-27 (c) · the guard names each installed one', async () => {
+    await installed(async () => {
+      const findings = await egressInstalledFindings(db)
+      assert.deepEqual(findings.map((f) => f.split(' ')[0]), ['http', 'pg_net'])
+      for (const f of findings) assert.match(f, /^\S+ is installed \(in \S+\): F-27 \(c\), no egress extension may be installed$/)
+    })
   })
 })
 
