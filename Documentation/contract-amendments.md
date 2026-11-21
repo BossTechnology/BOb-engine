@@ -2394,8 +2394,8 @@ is still unsigned.
 - `bob_feeder` holds none of that, by design: Q13 (11 Nov) says the feeder
   never creates an actor, and P5 §3.2 gives it no grant on `channels` or
   `actors`.
-- **No grant was widened, and no code or migration changed.** The options are
-  in P5 §7, Q6, open for Henry:
+- **No grant was widened, and no code or migration changed.** The options
+  put to Henry, in P5 §7, Q6:
   - **(a) recommended:** the feeder writes `member_refs_seen` into a new `bob`
     table (INSERT only, under the tenant's claim), and `bob_app` reconciles
     from it in the BOb container. Q13 stands. One table, one INSERT grant, one
@@ -2406,6 +2406,10 @@ is still unsigned.
     is a second reader of `bob/app.env` (P5 §4);
   - **(d)** widen `bob_feeder` on the actor tables and `channels`. It reverses
     Q13.
+- **Answered** (Henry, 2026-11-21): «Go with (a)». Not built yet. Building it
+  needs the table, its INSERT grant to `bob_feeder`, the migration, the change
+  to `reconciliation/ghosts.mjs` (read the table, not `truth.memberRefsSeen`),
+  the feeder's write, and the contract amendment to §7.2 and §7.3a.
 
 ---
 

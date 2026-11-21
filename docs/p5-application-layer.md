@@ -21,8 +21,9 @@ truth store (ClickHouse) for `member_refs_seen`, and §5.2 keeps the BOb
 application off `bzzz-data`. Henry: «El feeder». The feeder container runs it,
 because it already reads ClickHouse. As built, the reconciliation writes
 `actors` as `bob_app`, and `bob_feeder` holds no grant there. So the move
-reopens a grant question, which is now for Henry (§7, Q6; F-40). This changes
-a P5 answer. D62 is still unsigned.
+reopens a grant question (§7, Q6; F-40). Henry chose option (a) the same
+day: the feeder writes the refs it sees to a table in `bob`, and `bob_app`
+reconciles from it. This changes a P5 answer. D62 is still unsigned.
 
 The decision itself is a BzzzBX decision: **D62** in the BzzzBX register. The
 route plan called it D39\*, and D39 went to retention. Henry signs it. This
@@ -47,8 +48,8 @@ not be read as permission to apply them to any box.
 - **[OPEN]**: a question the decision has to answer. They are listed in §7
   and §8. As of 2026-11-19, all are answered: Q1–Q6 and the seven
   objections of §8.
-  - *2026-11-21:* Henry answered Q6 again («El feeder»). How the feeder
-    runs it, without widening `bob_feeder` on its own, is open (§7, Q6).
+  - *2026-11-21:* Henry answered Q6 again («El feeder»), and chose how the
+    same day: option (a) of §7, Q6.
 - **[FINDING]**: something wrong in what is on `main` today, found while
   writing this. It is recorded in `Documentation/contract-amendments.md`.
 
@@ -98,7 +99,7 @@ not be read as permission to apply them to any box.
 | The box applies them with the same CLI CI uses, lab first | **[PROPOSED]** | §6.2 |
 | A rehearsed failed migration on lab-02 and a written procedure, before the first window (not before the signature) | **[DECIDED]** as a condition (Federico) | §6.2 |
 | Two defects in the feeder's access as built | **[FINDING]** F-21, F-22. Fixed in Slice 2 (PR #20) and run against a database by the reference feeder (PR #21); each guard seen failing | §3.3 |
-| Who schedules the ghost reconciliation, and where it reads the tenant list | ~~**[DECIDED]** (Henry, 19 Nov) the BOb container, with the box's single `org_id` and slug from provisioning (F-26)~~ **[DECIDED]** (Henry, 2026-11-21): «El feeder», the feeder container, which already reads ClickHouse. **[OPEN]** how, since as built it writes `actors` as `bob_app` (F-40) | §7, Q6 |
+| Who schedules the ghost reconciliation, and where it reads the tenant list | ~~**[DECIDED]** (Henry, 19 Nov) the BOb container, with the box's single `org_id` and slug from provisioning (F-26)~~ **[DECIDED]** (Henry, 2026-11-21): «El feeder», the feeder container, which already reads ClickHouse. How: option (a), Henry, 2026-11-21: the feeder writes `member_refs_seen` to a `bob` table, and `bob_app` reconciles from it (F-40) | §7, Q6 |
 | The seven objections of the devil's-advocate review | **[DECIDED]** (Henry, 19 Nov), all seven answered. The lab-02 rehearsal comes before the signature | §8 |
 
 ---
@@ -206,9 +207,9 @@ Each entry and its source:
   BOb-side reconciliation that creates ghosts runs as `bob_app`, from member
   refs only, with a guard (contract §10).
   - *2026-11-21 (Q6, F-40):* Henry moved the reconciliation to the feeder
-    container. This matrix does not change until he picks one of Q6's
-    options. Options (a) and (c) keep this ruling as written; (b) and (d)
-    would reopen it.
+    container, and chose option (a) of Q6. This ruling stands as written.
+    The matrix gains one row when (a) is built: the new table, INSERT for
+    `bob_feeder`, SELECT and DELETE for `bob_app`.
 - **The partition function** **[DECIDED]** (contract §3; 0.2 Q7, ruled 10 Nov):
   `SECURITY DEFINER`, owned by the migration owner, EXECUTE granted to
   `bob_feeder` alone.
@@ -361,8 +362,8 @@ asks.
 | none (new) | `bob_feeder` login | `/opt/bzzz/secrets/bob/feeder.env` | The reference feeder first, then 3.7 (§3.1). From 2026-11-21 its container also runs the ghost reconciliation's ClickHouse read (Q6) |
 
 - *2026-11-21 (Q6):* Henry moved the ghost reconciliation to the feeder
-  container («El feeder»). Which file that container reads depends on the
-  option he picks in §7, Q6. Under (a), (b) and (d) it reads `feeder.env`
+  container («El feeder»), and chose option (a) of §7, Q6, so the feeder
+  container reads `feeder.env` alone. Under (a), (b) and (d) it reads `feeder.env`
   alone, and `app.env` keeps the BOb container as its only reader. Under (c)
   the feeder container would also read `app.env`, a second reader, which the
   rule below forbids.
@@ -632,7 +633,8 @@ how it is built (Q6 below). The decision is still unsigned.
      `20261118100100`, `20261119100000`, `20261118100200`).
    - Q13 (11 Nov): the feeder never creates an actor.
 
-   Nothing was widened. **[OPEN] for Henry: which of these four.**
+   Nothing was widened. Four options were put to Henry.
+   **Answered** (Henry, 2026-11-21): **«Go with (a)».**
    - **(a) Recommended. The feeder reads, `bob_app` writes.** The feeder
      container reads `member_refs_seen` from ClickHouse and writes it to a
      new table in `bob` (for example `bob.member_refs_seen`: `org_id`,
@@ -681,8 +683,9 @@ how it is built (Q6 below). The decision is still unsigned.
     objections are in §8.
   - Henry's answers to §8 and to Q6, all given on 2026-11-19.
   - *2026-11-21:* Henry's choice among Q6's options (a) to (d), after he
-    moved the reconciliation to the feeder. It is a grant question, so it is
-    settled before the signature.
+    moved the reconciliation to the feeder. Given the same day: (a). Building
+    it (the table, its grant, the migration and the contract amendment of
+    §7.2 and §7.3a) comes after, and goes through §6.2 like any migration.
 - **Before signing as well** (Henry, 2026-11-19, §8 objection 5): the
   failed-migration rehearsal on lab-02, including a restore of `bob` alone,
   and the written procedure (§6.2).
