@@ -136,7 +136,11 @@ For one cell `(org, channel, metric, actor_type, bucket)`:
       (D-14, D-19, **SR-2**). The whole channel. This calls the one definition
       that already exists and never re-implements it.
    3. `mix_not_declared`: `channel_actor_mix` has no row for this channel and
-      actor type (G8, PR-10).
+      actor type (G8, PR-10). It does **not** apply to the degenerate metrics
+      (`abandoned_in_queue`, the label failures, `interaction_duration`). Those
+      belong to the conversation, the customer is present in every conversation
+      by definition, and §4.1 accounts every customer turn whatever the mix
+      says.
    4. `capability_not_declared:<capability>`: the metric's required capability
       has no `channel_capabilities` row (§5, §9.1).
    5. `idle_bound_not_declared`: the metric is `abandoned` and
@@ -148,15 +152,20 @@ For one cell `(org, channel, metric, actor_type, bucket)`:
       control.
 
    If any applies, the state is `not_configured`.
-3. **`pending`.** There is no row, and the bucket is not sealed. Reason:
+3. **`observed`, declared absent.** `channel_actor_mix` declares the actor
+   absent (`present = false`). The value is **0**, with `actor_not_present`
+   (G8, FR-11). This is checked **before** `pending` and `not_observed`. There
+   is no row, and none is ever written (F-38), so the no-row steps below would
+   otherwise take it. The declaration is the observation.
+4. **`pending`.** There is no row, and the bucket is not sealed. Reason:
    `not_sealed`, or `lag_not_declared` when the channel's lag is NULL (O1).
-4. **`not_observed`.** There is no row. Reason: `no_liveness`, meaning no
+5. **`not_observed`.** There is no row. Reason: `no_liveness`, meaning no
    traffic and no probe (§5).
-5. **`observed`.** There is a row. `provisional` when `sealed = false`.
-   - A zero carries `none_observed` with `liveness_source = 'traffic' | 'probe'`.
-   - `channel_actor_mix` declares the actor absent (`present = false`): the
-     value is **0** with `actor_not_present` (G8, FR-11). This cell is
-     `observed` even with no row, because the declaration is the observation.
+6. **`observed`.** There is a row. `provisional` when `sealed = false`. A zero
+   carries `none_observed` with `liveness_source = 'traffic' | 'probe'`.
+
+Steps 3 and 6 are the same state, `observed`, reached two ways. §2's order of
+states is unchanged.
 
 ## 4 · The catalog and the rule for each row (G4, G9, G15)
 
@@ -207,7 +216,7 @@ of the eight tables and fails if any value is missing from the catalog
     `no_actors_available` → `observed` 0, each with its reason.
 
   It is never `pending` or `provisional`, because it has no bucket.
-- **The actor columns** follow `channel_actor_mix` (§3, step 2.3 and step 5).
+- **The actor columns** follow `channel_actor_mix` (§3, step 2.3 and step 3).
   - **AREP** (G11) follows the same rules, with no special case in the
     mechanism.
   - The matrix shows the AREP column **only if some selected channel declares
@@ -274,22 +283,24 @@ but not `channel_actor_mix`, and §7.4 limits the feeder to two views.
   is in `actor_types` **and** the pair is applicable. Applicability is the §4
   table, the same one that backs F-33 and the degenerate CHECKs.
   - A declared-absent actor gets no row. Its `observed` 0 comes from the mix
-    (§3, step 5), not from a written zero.
+    (§3, step 3), not from a written zero.
   - An undeclared mix gets no row either, and is `not_configured`.
 - **Refused: fixing the actors per metric.** That would write zeros for
   `human` on a channel with no humans and for an actor type whose mix nobody
   declared. Both are zeros nobody observed.
 - **Degenerate metrics** (`abandoned_in_queue`, the label failures,
   `interaction_duration`) always write `user` only, whatever the mix says. The
-  CHECK already allows nothing else.
+  CHECK already allows nothing else. This is why `mix_not_declared` does not
+  reach them (§3, step 2.3): otherwise a written row would be hidden behind
+  `not_configured`.
 
 The zero rows go through the upsert, the seal rule and the rebuild like every
 other row, so the rebuild test covers them (§8).
 
 ## 6 · The "All" total and coverage (G6)
 
-`bob_cell_rollup(org, channels[], frame)` aggregates cells over channels and
-time:
+`bob_cell_rollup(org, channels[], from, to)` aggregates cells over channels
+and time:
 - **The figure** sums only the cells that are `observed`.
 - **The state** is `observed` if at least one cell is `observed`. Otherwise it
   is the first state, in the §2 order, among the cells.
@@ -317,6 +328,12 @@ In the database, as one implementation:
 **The application only paints**: state → painting, reason → sentence. No rule
 lives in TypeScript.
 
+**The functions are written with SQL-standard bodies** (`LANGUAGE sql`,
+`BEGIN ATOMIC … END`). From Postgres 14 on, such a body records its
+dependencies in `pg_depend`, as a view does. A plpgsql or quoted-string body
+records none, and then §8's single-implementation tests would have nothing to
+read. CI runs 15, and the boxes run 17.6 (F-37), so both have it.
+
 **Why a function and not a view** (R4). To produce cells with no row, the
 mechanism must cross channels × metrics × actor types × buckets. A view would
 do that over thirteen months. A consumer always knows its frame (a chart, a
@@ -341,7 +358,8 @@ fixture (§8.1). Each guard is seen failing before it counts, as in every slice.
     `not_observed`.
   - FR-35 itself stays in Slice 4.
 - **UI-03.** Every cell and every rollup whose value is NULL or 0 has at least
-  one reason. Asserted over the whole view on the fixture, not over a sample.
+  one reason. Asserted over every cell `bob_cell_state` returns for the
+  fixture's whole frame, not over a sample.
 - **PR-10.** The same capability and sealed bucket, three ways:
   - no traffic and no probe gives `not_observed`, with no row;
   - traffic and no event gives `observed` 0, from a written row,
@@ -354,21 +372,27 @@ fixture (§8.1). Each guard is seen failing before it counts, as in every slice.
     with `source_key_unset` in every cell, ahead of any capability reason.
   - An organisation with no `telemetry_started_at` gives
     `telemetry_not_started`.
-  - Replacing the view's call to `bob_source_key_unset()` with a re-implemented
-    pattern must turn a test red. The test asserts the view depends on the
-    function (`pg_depend`).
+  - Replacing the call to `bob_source_key_unset()` in `bob_cell_state` with a
+    re-implemented pattern must turn a test red. The test asserts, through
+    `pg_depend`, that `bob_cell_state` depends on `bob_source_key_unset()`.
+    That needs the SQL-standard body (§7).
 
 **One implementation, not four:**
 - `v_ai_cell_state` and `bob_cell_rollup` read `bob_cell_state`, asserted
   through `pg_depend`. A second definition of the order would have no
-  dependency to show.
+  dependency to show. A guard also fails if either function is not
+  `BEGIN ATOMIC`, so the dependency cannot go silently unrecorded.
 - **Exactly one state per cell, in the §3 order.** A property test over fuzzed
   combinations of declarations, seals, traffic and probes, in the style of
   FR-10 to FR-14.
 
 **The rest of what the grill decided:**
 - **FR-11.** An actor declared absent in every selected channel gives exactly
-  0, with `actor_not_present`.
+  0, with `actor_not_present`, in sealed and unsealed buckets alike. That
+  proves step 3 runs before `pending` and `not_observed`.
+- **Degenerate metrics ignore the mix.** On a channel with no `user` mix row,
+  the label failures still resolve from their rows and never
+  `mix_not_declared`.
 - **Coverage.** On the fixture, the "All" label-failure total reads 2 of 3
   channels, with Voice `not_configured` (`capability_not_declared:orga_conversation`).
 - **Pending follows the current lag** (R3). Raising a channel's lag turns
