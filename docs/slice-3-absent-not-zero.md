@@ -320,10 +320,10 @@ In the database, as one implementation:
 | Object | Kind | What it does |
 |---|---|---|
 | The catalog (§4) | table in `bob`, configuration | Metric → source, required declarations, applicable actor types |
-| `bob_cell_state(org, channels[], from, to)` | set-returning function, invoker, under RLS; in `public` with `search_path = bob, public` (as `bob_availability()`) | One row per `(org_id, channel_id, metric, actor_type, bucket_start)` **inside the frame**: `state`, `reasons TEXT[]`, `value`, `provisional`, `liveness_source`. §3 is resolved here, in SQL (R4) |
-| `bob_cell_rollup(org, channels[], from, to)` | function beside it | §6, over `bob_cell_state` |
-| Available's translation (§4) | function beside it | FR-23 reasons → `(state, reasons)` |
-| `v_ai_cell_state` | definer view, owned by the migration owner, granted to `bob_ai_ro` alone | BObee's face: `bob_cell_state` over a fixed trailing frame (the current day), filtered explicitly on the caller's `org_id` claim, never `display_name` (IR-1). An unobserved channel arrives as a value, not an absence (R6) |
+| `bob_cell_state(org, channels[], from, to)` | set-returning function, invoker, under RLS; in `bob` with `search_path = bob, public`, because it reads `bob` and the P5 restore of `bob` alone must carry it (PR #40, F-47) | One row per `(org_id, channel_id, metric, actor_type, bucket_start)` **inside the frame**: `state`, `reasons TEXT[]`, `value`, `provisional`, `liveness_source`. §3 is resolved here, in SQL (R4) |
+| `bob_cell_rollup(org, channels[], from, to)` | function beside it, in `bob` | §6, over `bob_cell_state` |
+| Available's translation (§4) | function beside it, in `bob` | FR-23 reasons → `(state, reasons)` |
+| `v_ai_cell_state` | definer view in `bob` over a definer function in `bob`, owned by the migration owner, granted to `bob_ai_ro` alone | BObee's face: `bob_cell_state` over a fixed trailing frame (the current day), filtered explicitly on the caller's `org_id` claim, never `display_name` (IR-1). An unobserved channel arrives as a value, not an absence (R6) |
 
 **The application only paints**: state → painting, reason → sentence. No rule
 lives in TypeScript.

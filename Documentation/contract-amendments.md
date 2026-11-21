@@ -3075,7 +3075,7 @@ Two migrations, append-only:
   actor grain, applicable actor types, required capabilities, precondition,
   degenerate, undefined-by), and `actor_types` on `v_feeder_channel_map`
   (F-38), still granted to `bob_feeder` only.
-- `20261121180100_slice3_cell_state.sql`: `public.bob_cell_state(org,
+- `20261121180100_slice3_cell_state.sql`: `bob.bob_cell_state(org,
   channels[], from, to)`, `bob_cell_rollup` with coverage (F-30),
   `bob_available_state` (FR-23's reasons translated, `no_channels_selected` to
   `not_applicable`), `bob_actor_cell_state` (the per-actor drill-down with
@@ -3083,7 +3083,8 @@ Two migrations, append-only:
   with a `BEGIN ATOMIC` body, so `pg_depend` records what it reads. The cell
   functions are invoker and run under RLS. BObee's view is a definer view over a
   definer function that filters on the caller's `org_id` claim (R6), granted to
-  `bob_ai_ro` only.
+  `bob_ai_ro` only. All of them live in `bob` (see "In `bob`, so `bob`
+  restores alone" below).
 
 The reference feeder writes the observed zero at seal (F-28): only with
 liveness (traffic, or an uptime probe), only on a declared capability, never
@@ -3113,8 +3114,62 @@ empty. The tenancy guard did not see it: it discovers tenant tables by
 `bob_app_reads_own_org` (FOR SELECT TO bob_app, `id` equal to the claim).
 Extending the discovery to tables keyed by their own `id` is left open.
 
+### In `bob`, so `bob` restores alone — closes F-47's open case
+
+The first cut put the cell functions in `public`, beside `bob_availability()`.
+The P5 restore (`docs/p5-failed-migration-procedure.md` §4.3) drops `bob` with
+CASCADE and restores `pg_dump -n bob`: `bob.v_ai_cell_state` read
+`public.bob_ai_cell_state()`, which read `bob` through a `BEGIN ATOMIC` body,
+so the CASCADE took the function, the dump did not carry it, and the view
+could not be restored. Found by the lab-02 rehearsal with PR #41 merged in.
+Henry's ruling: "Both in bob".
+
+- `bob_cell_state`, `bob_cell_rollup`, `bob_available_state`,
+  `bob_actor_cell_state` and `bob_ai_cell_state` are created in `bob`, with the
+  same `BEGIN ATOMIC` bodies and the same grants: `bob_app` and
+  `authenticated` on the four, `bob_ai_ro` alone on BObee's, nothing to
+  `service_role`. `bob` has no default privileges; the revoke names every role
+  anyway.
+- They still call three helpers in `public`: `bob_source_key_unset()` and
+  `bob_shift_is_live()` read no table, and `bob_availability()` is plpgsql,
+  which records no dependency. All three survive the CASCADE.
+- No caller in this repository reached them through PostgREST in `public`:
+  they exist only in this PR. bob-web was not read from here (it is outside
+  this repository, CLAUDE.md); whatever it writes against the spec should call
+  `bob.bob_cell_state` and the others through the `bob` schema.
+- **New guard, discovered:** `restoreCycleFindings` in `scripts/box-checks.mjs`,
+  run by `scripts/box-check.mjs` and tested in `tests/p5-roles.test.mjs`. From
+  `pg_depend`: no object in `bob` depends on an object outside `bob` (system
+  schemas and extension members aside) that itself reaches `bob`. A rule,
+  default, trigger, policy or constraint counts as its table. Seen red on the
+  `public` layout with exactly one finding (`bob.v_ai_cell_state` →
+  `public.bob_ai_cell_state()`), green after the move. Its probes create a view
+  and a column default that reach `bob` through `public` (both found) and a view
+  over `bob_source_key_unset()` (not found).
+- **The lab-02 rehearsal read `bob.cell_catalog` as fixture rows.** Step 5's
+  "sin filas del fixture en bob" expected every non-projection table in `bob`
+  to be empty, and the catalog's 20 rows are configuration the chain seeds.
+  `scripts/ensayo-migracion-lab.sh` now records the counts right after the
+  chain is applied, before any fixture, and step 5 checks that `bob` is back to
+  exactly those. Still discovered, and a fixture row left anywhere (including
+  `organizations`) still fails it.
+
 ### Build choices, for Henry to confirm
 
+- **A feeder writes the zero only for a metric it has a counting path for**
+  (the review of PR #40, approved by Henry). The first cut wrote zeros for
+  every metric of `ZERO_RULES`, including `abandoned`, `disambiguation` and
+  `abandoned_in_queue`, which the reference feeder never counts: it has no
+  idle detection, no disambiguation event and no queue event. WhatsApp
+  declares all three (with an idle bound), so every live, sealed bucket read
+  "observed, none" even if an abandonment happened. `MEASURED`
+  (`feeder/event-mapping.mjs`) now gates the zero: `resolved`, `escalations`,
+  `response_time`, `interaction_duration`. The other three get no row and
+  render `not_observed`. A metric joins `MEASURED` in the change that gives it
+  a counting path. The tests see each `MEASURED` metric counted above zero from
+  the fixture, no row at all for the others, and their WhatsApp cells
+  `not_observed` on a live, sealed bucket. **3.7 must copy this:** no zero for
+  a metric it does not count.
 - A zero row's `session_count` is the metric's own denominator (closes in the
   bucket), not "the bucket's interactions".
 - When a bucket has neither traffic nor a probe row, `liveness_source` falls
@@ -3192,8 +3247,8 @@ Both scan tracked files only, so they stayed green until the commit.
 ### Counts
 
 After merging `main` (with #35, #37 and #39), on a fresh `supabase db
-reset --no-seed` of a stack of its own: `pnpm test` 347 tests, 344 pass, 0
-fail, 3 `todo`. pgTAP over `supabase/tests/database`: 18 of 18. The shared stack was
+reset --no-seed` of a stack of its own: `pnpm test` 350 tests, 347 pass, 0
+fail, 3 `todo` (after the move to `bob` and the restore guard). pgTAP over `supabase/tests/database`: 18 of 18. The shared stack was
 not touched.
 
 ---
