@@ -354,8 +354,10 @@ fixture (§8.1). Each guard is seen failing before it counts, as in every slice.
 - **FR-32.**
   - A selection of Voice only gives MECA `not_configured`
     (`capability_not_declared:meca_rum`), with value NULL and never 0.
-  - Website declares `meca_rum` and has no RUM rows, so it gives
-    `not_observed`.
+  - Website declares `meca_rum` and has no RUM rows. Its `lag_seconds` is
+    not declared, so by R3 the bucket is never known sealed and the cell is
+    `pending` (`lag_not_declared`), not `not_observed` (F-45). A channel that
+    declares a lag and `meca_rum` and gets no RUM row gives `not_observed`.
   - FR-35 itself stays in Slice 4.
 - **UI-03.** Every cell and every rollup whose value is NULL or 0 has at least
   one reason. Asserted over every cell `bob_cell_state` returns for the

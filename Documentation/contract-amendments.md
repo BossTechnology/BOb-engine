@@ -3200,15 +3200,16 @@ for a preconditioned metric (`ZERO_PRECONDITIONS`: `hallucinations`,
 and `proj_channel_health` from probes, which lifts two of the limits recorded
 for Slice 2.
 
-### F-45 · Website MECA is `pending`, not `not_observed` — spec vs R3, finding
+### F-45 · Website MECA is `pending`, not `not_observed` — spec vs R3, fixed in the spec
 
 Spec §8.2 expects the website's MECA cell to be `not_observed`. The fixture's
 website has `lag_seconds` NULL, and R3 (decided after the spec's table was
 written) makes a no-row cell with an undeclared lag `pending` with
 `lag_not_declared`: the bucket can never be known sealed. The test asserts
 `pending`, and the chat channel (which declares a lag and meca_rum, and gets no
-RUM row) carries `not_observed` instead, so the state still appears. To
-correct in the spec's table; no contract change.
+RUM row) carries `not_observed` instead, so the state still appears. No
+contract change. **Corrected** (Henry, 21 Nov): the spec's §8 FR-32 bullet
+now says `pending` (`lag_not_declared`) for the website.
 
 ### F-46 · `bob_app` could not read its own organization — finding, fixed
 
@@ -3263,7 +3264,10 @@ Henry's ruling: "Both in bob".
   on this branch with PR #41 merged in (throwaway tree, not pushed): every case
   matches, the bob-alone restore included.
 
-### Build choices, for Henry to confirm
+### Build choices — confirmed by Henry, 21 Nov
+
+Henry confirmed all thirteen as built ("Confirmar todas"). The merge still
+waits for Federico to accept 0.6 in task 6.
 
 - **A feeder writes the zero only for a metric it has a counting path for**
   (the review of PR #40, approved by Henry). The first cut wrote zeros for
@@ -3403,8 +3407,8 @@ so `bob.organizations`, keyed by its own `id`, was never checked, and
   RLS refused every write, the shape of F-43. Revoked in
   `20261121210000_organizations_read_only_for_bob_app.sql`. Nothing changes in
   behaviour: the operator creates and changes an organization through the
-  service role, and nothing in this repository writes it as `bob_app`. For
-  Henry to confirm; the alternative is write policies on `id`.
+  service role, and nothing in this repository writes it as `bob_app`.
+  **Confirmed** by Henry, 21 Nov ("Revocar"), over write policies on `id`.
 - **Not extended:** `truncateFindings` and `aggregateLeakFindings` still read
   `org_id` tables only. TRUNCATE on `organizations` is not held by any
   application role today, and a count over it is bounded by its policies,
