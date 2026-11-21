@@ -873,3 +873,16 @@ describe('The outbox drains to a stub, and the outcome is read back as a project
   test.todo('end to end: a drained intention reaches a real provider and its outcome returns. ' +
     'Not testable until execution exists; BOb v1 writes intentions and never executes them')
 })
+
+// F-47. The drain runs under the caller's claim, so only a role that meets RLS
+// may call it. Read from the catalog, not from the migration: every role that
+// is not a superuser and can EXECUTE it, through PUBLIC or membership too.
+test('F-47 · of the roles that are not superusers and do not own it, bob_app alone can call the outbox drain', async () => {
+  const { rows } = await db.query(`
+    SELECT r.rolname FROM pg_roles r
+     WHERE NOT r.rolsuper AND r.rolname NOT LIKE 'pg\\_%'
+       AND r.oid <> (SELECT proowner FROM pg_proc WHERE oid = 'public.bob_outbox_drain(integer)'::regprocedure)
+       AND has_function_privilege(r.oid, 'public.bob_outbox_drain(integer)', 'EXECUTE')
+     ORDER BY 1`)
+  assert.deepEqual(rows.map((r) => r.rolname), ['bob_app'])
+})

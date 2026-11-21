@@ -3,6 +3,7 @@
 Una línea por cambio entregado, en lenguaje de usuario.
 
 ## Sin publicar
+- Restaurar `bob` solo ya no se lleva las funciones de `public` que dependen de él: el procedimiento y el kit del ensayo las guardan antes de borrar `bob` y las reponen después (`scripts/bob-dependientes.sh`). `service_role` ya no puede drenar el outbox (F-47).
 - Ningún rol con el que corre la aplicación puede vaciar una tabla de un golpe (TRUNCATE), algo que se saltaba la separación entre organizaciones.
 - El registro de auditoría tampoco se puede escribir con la sesión de un usuario: solo se lee.
 - El registro de auditoría ya no se puede escribir desde la aplicación: `bob_app` solo lo lee.

@@ -120,28 +120,47 @@ reading its `postgres:bob` line. The nightly one may be a day old.
 ### 4.2 · Before the restore
 
 - Stop what writes to `bob`: the BOb container and the feeder.
-- **Do not stop GoTrue.** Logins keep working. But the chain puts a trigger
-  on `auth.users` (`on_auth_user_created`, which writes `bob.users`). While
-  `bob` is gone, **creating or inviting a portal account fails**. No
-  invitations during the restore.
+- **Do not stop GoTrue.** Logins keep working, and since 20261121130000 no
+  trigger on `auth.users` writes `bob` (GoTrue invites no longer touch it).
+  But `scripts/provision-user.mjs`, the one writer of `bob.users`, fails while
+  `bob` is gone. **No provisioning during the restore.**
 - Note what is in `auth.users` now: its count only.
 
 ### 4.3 · Drop and restore — measured
 
 ```bash
+mkdir -p <ventana>/dependientes
+scripts/bob-dependientes.sh --contenedor bzzz-supabase-db --guardar <ventana>/dependientes
 docker exec -i bzzz-supabase-db psql -X -U supabase_admin -d postgres -v ON_ERROR_STOP=1 \
   -c 'SET client_min_messages = notice' -c 'DROP SCHEMA bob CASCADE' </dev/null
 gunzip -c <respaldo>/bob.sql.gz \
   | docker exec -i bzzz-supabase-db psql -X -q -1 -U supabase_admin -d postgres -v ON_ERROR_STOP=1
+scripts/bob-dependientes.sh --contenedor bzzz-supabase-db --reponer <ventana>/dependientes
 while read -r pub tabla; do
   docker exec bzzz-supabase-db psql -X -U supabase_admin -d postgres -v ON_ERROR_STOP=1 \
     -c "ALTER PUBLICATION $pub ADD TABLE $tabla" </dev/null
 done < <respaldo>/bob_publicaciones.txt
 ```
 
-- **Read the CASCADE's list.** Every line must name an object in `bob`.
-  Measured: 44 objects, all in `bob`. BOb's functions in `public` survive it,
-  because they reference `bob` by name and not by type.
+- **Save what lives outside `bob` and depends on it, first (F-47).** The
+  CASCADE also drops any object outside `bob` that depends on a `bob` object,
+  and `bob.sql.gz` does not carry it back. Today these are functions in
+  `public`: `bob_outbox_drain` returns a `bob` type, and functions written
+  with `BEGIN ATOMIC` over `bob` tables depend on them too. The script finds
+  them in `pg_depend`, transitively, and writes into the window's directory
+  their definitions as the box has them now: `pg_dump --schema-only` of their
+  schema, filtered with `pg_restore -L` to their CREATE, owner, grants and
+  comments. Recreated as the superuser, an object would also pick up the
+  default privileges of `public`, so the file resets each one's ACL before
+  the dumped grants. Read `dependientes.sql` before the drop. If the script names an
+  object it cannot bring back (`otro|…`), it stops: decide that one by hand.
+- **Read the CASCADE's list.** Every line outside `bob` must be one the
+  script saved, no more and no fewer. Measured on `main` with Slice 6: 49
+  objects, one of them outside `bob`, `public.bob_outbox_drain(integer)`,
+  the one the script had saved.
+- **After `bob.sql.gz`, put them back**, in one transaction, before the
+  publications. Measured: the fingerprint of `public`, their ACLs included,
+  identical to before the damage.
 - **The restore runs as `supabase_admin`, in one transaction, stopping at the
   first error.** As the role that took the dump, the way the identity is
   restored. If it fails, nothing of `bob` is left half-made: run it again
@@ -149,7 +168,7 @@ done < <respaldo>/bob_publicaciones.txt
 - **Measured afterwards, identical to before the damage**: owners, grants,
   default privileges, the definer views (`v_feeder_channel_map`,
   `v_feeder_actor_map`, `security_invoker=false`), the `SECURITY DEFINER`
-  functions (`bob.proj_ensure_partition`, `public.handle_new_auth_user`),
+  functions (`bob.proj_ensure_partition`),
   policies, triggers, constraints, indexes, sequences and comments; every
   row outside `proj_*`. As `bob_feeder`, the channel map answers for both
   tenants and `bob.channels` refuses.
@@ -170,10 +189,11 @@ written from reading alone.
 
 ### 4.5 · Accounts made after the dump
 
-`bob.users` is written by the trigger on `auth.users`. An account created
-between the dump and the restore exists in `auth` and not in `bob.users`.
-List them by id (`auth.users` minus `bob.users`), read-only on `auth`, and
-recreate their `bob.users` rows. *Not rehearsed.*
+`bob.users` is written only by `scripts/provision-user.mjs`. An account
+provisioned between the dump and the restore exists in `auth` and not in
+`bob.users`. List them by id (`auth.users` minus `bob.users`), read-only on
+`auth`, and run `provision-user.mjs` again for each, once `bob` is back.
+*Not rehearsed.*
 
 ### 4.6 · Rebuild the projections — measured
 
