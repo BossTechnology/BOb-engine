@@ -2583,7 +2583,44 @@ What was built:
 - **"The feeder reads nothing else" (F-21)** is unchanged, and passes: an
   INSERT grant gives no read.
 
-<!-- SEEN-FAILING -->
+### Seen failing
+
+Each guard was seen red before it was trusted. Measured on the local
+Supabase, one sabotage at a time, each reverted before the next. A run is
+the five files that touch the table: `p5-q6-member-refs`, `slice2-schema`,
+`slice2-feeder`, `tenancy` and `p5-roles`. The column says what went red.
+
+| Sabotage | Red |
+|---|---|
+| None (the baseline) | nothing (the F-27 `todo` only) |
+| Before the migration: the table does not exist | every test in `p5-q6-member-refs` |
+| `bob_feeder` SELECT on the table | found as staging; SELECT is refused; exactly eight (it became a projection) |
+| `bob_feeder` UPDATE | every staging table holds exactly its grants; UPDATE is refused |
+| `bob_feeder` DELETE | the same; DELETE is refused |
+| The policy ignores the claim (`USING (true)`) | a tenant B row refused; no claim refused; `bob_app` sees and deletes its own tenant only; every `org_id` table has a tenant-scoped policy (ID-10) |
+| The channel key without `org_id` | a tenant A row naming a tenant B channel is refused |
+| `authenticated` SELECT | exact grants; `authenticated` refused; the API-unreadable set is the staging tables (ID-10) |
+| `bob_app` INSERT | exact grants; `bob_app` INSERT refused; `bob_app` grants (§10) |
+| `bob_feeder` INSERT on `actors` (Q13) | exact grants (`actors` reported); `bob_app` grants (§10); the API-unreadable set |
+| `bob_feeder` loses INSERT | found as staging, and every test that writes as the feeder |
+| Another tenant table unreadable to `authenticated` (`channels`) | the API-unreadable set is the staging tables, and only those (ID-10) |
+| The reconciliation reads the rows and does not delete them | the ghost path, four tests: what it consumed is still staged |
+| No retention clamp | the sweep makes a ghost for a ref past retention; the trailing window |
+| The reconciliation ignores its trailing window | the trailing window (H3); the sweep |
+| The feeder stages refs it already maps | it leaves out the refs it maps; the ghost path; the claim and box tests |
+| The feeder ignores `boxTenant` when staging | boxed to tenant A, nothing of tenant B is staged |
+| PR-4's discovery without the staging exception | not a projection; exactly eight; partitions granted; `bob_app` grants; provenance; PR-4 (tenancy) |
+
+One test was wrong on its first run and was corrected, not loosened. "PUBLIC
+given SELECT" expected the staging rule to report it. A grant to PUBLIC is a
+grant to `bob_feeder` too, so the table stops being staging and becomes a
+projection by its grants, and PR-4 reports `bob_app` holding DELETE on it.
+The test now asserts that.
+
+Where it ran: `supabase db reset --no-seed` and `pnpm test` on the local
+stack, after rebasing onto `main` (`9b900a1`): 264 tests, 261 pass, 0 fail,
+3 `todo`. The full chain was also reset on a second, separate local stack
+before the rebase. Nothing was run against any box.
 
 ---
 
