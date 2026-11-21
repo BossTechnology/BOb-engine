@@ -217,3 +217,83 @@ export async function activeUserFindings(client, boxTenant) {
   return [`bob.users has no active user for ${boxTenant} (${r.total} rows): nobody can ` +
     'sign in, bob-web answers 403. Provision one with scripts/provision-user.mjs']
 }
+
+// P5 §4.3 · the bob-alone restore. The procedure drops `bob` with CASCADE and
+// restores `pg_dump -n bob`. Anything outside `bob` that depends on `bob` goes
+// with the CASCADE and is not in the dump, so no object in `bob` may depend on
+// it: the restore would need it before `bob`'s tables exist. Read from
+// pg_depend, never from a list. A rule, default, trigger, policy or constraint
+// counts as its table, and a table's row type as the table. Objects owned by an
+// extension and the system schemas are left out; a plpgsql body records no
+// dependency and runs in time, which is why it can sit outside.
+export async function restoreCycleFindings(client, schema = 'bob') {
+  const { rows } = await client.query(`
+    WITH RECURSIVE
+    raw AS (
+      SELECT d.classid, d.objid, d.refclassid, d.refobjid
+        FROM pg_depend d WHERE d.deptype = 'n'
+    ),
+    norm AS (
+      SELECT o.cls AS src_cls, o.oid AS src_oid, r.cls AS dst_cls, r.oid AS dst_oid
+        FROM raw
+        CROSS JOIN LATERAL (SELECT * FROM (VALUES
+          (CASE WHEN raw.classid IN ('pg_rewrite'::regclass, 'pg_attrdef'::regclass,
+                                     'pg_trigger'::regclass, 'pg_policy'::regclass)
+                  OR (raw.classid = 'pg_constraint'::regclass
+                      AND (SELECT conrelid FROM pg_constraint WHERE oid = raw.objid) <> 0)
+                THEN 'pg_class'::regclass ELSE raw.classid END,
+           CASE raw.classid
+             WHEN 'pg_rewrite'::regclass THEN (SELECT ev_class FROM pg_rewrite WHERE oid = raw.objid)
+             WHEN 'pg_attrdef'::regclass THEN (SELECT adrelid FROM pg_attrdef WHERE oid = raw.objid)
+             WHEN 'pg_trigger'::regclass THEN (SELECT tgrelid FROM pg_trigger WHERE oid = raw.objid)
+             WHEN 'pg_policy'::regclass THEN (SELECT polrelid FROM pg_policy WHERE oid = raw.objid)
+             WHEN 'pg_constraint'::regclass THEN coalesce(nullif(
+               (SELECT conrelid FROM pg_constraint WHERE oid = raw.objid), 0), raw.objid)
+             ELSE raw.objid END)) v(cls, oid)) o
+        CROSS JOIN LATERAL (SELECT * FROM (VALUES
+          (CASE WHEN raw.refclassid = 'pg_type'::regclass
+                  AND (SELECT typrelid FROM pg_type WHERE oid = raw.refobjid) <> 0
+                THEN 'pg_class'::regclass ELSE raw.refclassid END,
+           CASE WHEN raw.refclassid = 'pg_type'::regclass
+                  AND (SELECT typrelid FROM pg_type WHERE oid = raw.refobjid) <> 0
+                THEN (SELECT typrelid FROM pg_type WHERE oid = raw.refobjid)
+                ELSE raw.refobjid END)) v(cls, oid)) r
+       WHERE (o.cls, o.oid) IS DISTINCT FROM (r.cls, r.oid)
+    ),
+    node AS (
+      SELECT n.cls, n.oid,
+             CASE n.cls
+               WHEN 'pg_class'::regclass THEN (SELECT relnamespace FROM pg_class WHERE oid = n.oid)
+               WHEN 'pg_proc'::regclass  THEN (SELECT pronamespace FROM pg_proc WHERE oid = n.oid)
+               WHEN 'pg_type'::regclass  THEN (SELECT typnamespace FROM pg_type WHERE oid = n.oid)
+             END AS nsp,
+             EXISTS (SELECT 1 FROM pg_depend e
+                      WHERE e.classid = n.cls AND e.objid = n.oid AND e.deptype = 'e') AS in_ext
+        FROM (SELECT src_cls, src_oid FROM norm UNION SELECT dst_cls, dst_oid FROM norm) n(cls, oid)
+    ),
+    crossing AS (
+      SELECT e.src_cls, e.src_oid, e.dst_cls, e.dst_oid
+        FROM norm e
+        JOIN node s ON (s.cls, s.oid) = (e.src_cls, e.src_oid)
+        JOIN node d ON (d.cls, d.oid) = (e.dst_cls, e.dst_oid)
+       WHERE s.nsp = $1::regnamespace
+         AND d.nsp IS NOT NULL AND d.nsp <> $1::regnamespace
+         AND d.nsp NOT IN ('pg_catalog'::regnamespace, 'information_schema'::regnamespace)
+         AND NOT d.in_ext
+    ),
+    reach(start_cls, start_oid, cls, oid) AS (
+      SELECT DISTINCT dst_cls, dst_oid, dst_cls, dst_oid FROM crossing
+      UNION
+      SELECT r.start_cls, r.start_oid, e.dst_cls, e.dst_oid
+        FROM reach r JOIN norm e ON (e.src_cls, e.src_oid) = (r.cls, r.oid)
+    )
+    SELECT DISTINCT (SELECT type || ' ' || identity FROM pg_identify_object(c.src_cls, c.src_oid, 0)) AS inside,
+                    (SELECT type || ' ' || identity FROM pg_identify_object(c.dst_cls, c.dst_oid, 0)) AS outside
+      FROM crossing c
+     WHERE EXISTS (SELECT 1 FROM reach r JOIN node n ON (n.cls, n.oid) = (r.cls, r.oid)
+                    WHERE (r.start_cls, r.start_oid) = (c.dst_cls, c.dst_oid)
+                      AND n.nsp = $1::regnamespace)
+     ORDER BY 1, 2`, [schema])
+  return rows.map((r) => `${r.inside} depends on ${r.outside}, which depends on ${schema}: ` +
+    `the ${schema}-alone restore cannot create it`)
+}

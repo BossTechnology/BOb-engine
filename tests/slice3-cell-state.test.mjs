@@ -97,13 +97,13 @@ const norm = (r) => ({
 
 async function cells(orgId, channels, frame) {
   return (await asApp(orgId,
-    'SELECT * FROM public.bob_cell_state($1, $2::uuid[], $3, $4)',
+    'SELECT * FROM bob.bob_cell_state($1, $2::uuid[], $3, $4)',
     [orgId, channels, frame.from, frame.to])).map(norm)
 }
 
 async function rollup(orgId, channels, frame) {
   return (await asApp(orgId,
-    'SELECT * FROM public.bob_cell_rollup($1, $2::uuid[], $3, $4)',
+    'SELECT * FROM bob.bob_cell_rollup($1, $2::uuid[], $3, $4)',
     [orgId, channels, frame.from, frame.to])).map(norm)
 }
 
@@ -250,7 +250,7 @@ async function reaches(fromSql, target) {
   return found
 }
 
-const CELL = `'public.bob_cell_state(uuid, uuid[], timestamptz, timestamptz)'::regprocedure::oid`
+const CELL = `'bob.bob_cell_state(uuid, uuid[], timestamptz, timestamptz)'::regprocedure::oid`
 
 describe('SR-2 · the cell calls the one definition of the sentinel', () => {
   test('bob_cell_state depends on bob_source_key_unset(), through pg_depend', async () => {
@@ -283,8 +283,8 @@ describe('SR-2 · the cell calls the one definition of the sentinel', () => {
 describe('one implementation, not four', () => {
   test('the rollup, the per-actor cells and BObee\'s face read bob_cell_state, through pg_depend', async () => {
     for (const from of [
-      `'public.bob_cell_rollup(uuid, uuid[], timestamptz, timestamptz)'::regprocedure::oid`,
-      `'public.bob_actor_cell_state(uuid, uuid[], timestamptz, timestamptz)'::regprocedure::oid`,
+      `'bob.bob_cell_rollup(uuid, uuid[], timestamptz, timestamptz)'::regprocedure::oid`,
+      `'bob.bob_actor_cell_state(uuid, uuid[], timestamptz, timestamptz)'::regprocedure::oid`,
       `'bob.v_ai_cell_state'::regclass::oid`,
     ]) {
       assert.equal(await reaches(from, CELL), true, `${from} does not reach bob_cell_state`)
@@ -305,7 +305,7 @@ describe('one implementation, not four', () => {
                                 AND d.refobjid = 'bob.cell_catalog'::regclass)
                             OR (d.refclassid = 'pg_proc'::regclass AND d.refobjid = ${CELL})))
        ORDER BY 1`)
-    const names = rows.map((r) => r.fn.replace(/\(.*$/, ''))
+    const names = rows.map((r) => r.fn.replace(/\(.*$/, '').replace(/^.*\./, ''))
     for (const f of ['bob_cell_state', 'bob_cell_rollup', 'bob_actor_cell_state', 'bob_ai_cell_state']) {
       assert.ok(names.includes(f), `${f} not discovered`)
     }
@@ -313,7 +313,7 @@ describe('one implementation, not four', () => {
   })
 
   test('Available\'s translation reads bob_availability() and has a BEGIN ATOMIC body', async () => {
-    const fn = `'public.bob_available_state(uuid, uuid[], bigint, numeric, numeric, timestamptz)'::regprocedure::oid`
+    const fn = `'bob.bob_available_state(uuid, uuid[], bigint, numeric, numeric, timestamptz)'::regprocedure::oid`
     assert.equal(await reaches(fn,
       `'public.bob_availability(uuid, uuid[], bigint, numeric, numeric, timestamptz)'::regprocedure::oid`), true)
     const { rows: [{ atomic }] } = await db.query(
@@ -551,7 +551,7 @@ describe('R7 · no selection', () => {
     for (const r of list) {
       assert.deepEqual([r.state, r.reasons, r.value], ['not_applicable', ['no_channels_selected'], null])
     }
-    const avail = await asApp(TENANT_A, 'SELECT * FROM public.bob_available_state($1, $2::uuid[])',
+    const avail = await asApp(TENANT_A, 'SELECT * FROM bob.bob_available_state($1, $2::uuid[])',
       [TENANT_A, []])
     assert.equal(avail.length, 3)
     for (const a of avail) {
@@ -562,7 +562,7 @@ describe('R7 · no selection', () => {
   test('Available: mix_not_declared is not_configured, every other FR-23 reason an observed 0', async () => {
     const at = '2026-09-03T10:00:00Z'
     const byType = async (chans) => Object.fromEntries((await asApp(TENANT_A,
-      'SELECT * FROM public.bob_available_state($1, $2::uuid[], NULL, NULL, NULL, $3)',
+      'SELECT * FROM bob.bob_available_state($1, $2::uuid[], NULL, NULL, NULL, $3)',
       [TENANT_A, chans, at])).map((a) => [a.actor_type, { ...a, value: a.value === null ? null : Number(a.value) }]))
     const app_ = await byType([APP])
     assert.deepEqual([app_.human.state, app_.human.reasons, app_.human.value],
@@ -749,7 +749,7 @@ describe('§2 · off_shift, in the per-actor drill-down', () => {
   test('an actor not on shift gives off_shift, apart from an actor on shift with no row', async () => {
     const frame = { from: '2026-09-03T10:00:00Z', to: '2026-09-03T10:05:00Z' }
     const list = await asApp(TENANT_A,
-      'SELECT * FROM public.bob_actor_cell_state($1, $2::uuid[], $3, $4)',
+      'SELECT * FROM bob.bob_actor_cell_state($1, $2::uuid[], $3, $4)',
       [TENANT_A, [WHATSAPP], frame.from, frame.to])
     const resolved = list.filter((c) => c.metric === 'resolved' && c.actor_type === 'human')
     const off = resolved.filter((c) => c.state === 'off_shift')
@@ -835,7 +835,7 @@ describe('§3 · exactly one state per cell, in order', () => {
               uptime_seconds, observed_seconds, observed, sealed, source_watermark, feeder_version)
             VALUES ($1, $2, $3, 300, 300, true, true, $4, 'fuzz')`, [TENANT_A, CH, bucket, WATERMARK])
         }
-        const { rows } = await db.query(`SELECT * FROM public.bob_cell_state($1, $2::uuid[], $3,
+        const { rows } = await db.query(`SELECT * FROM bob.bob_cell_state($1, $2::uuid[], $3,
             $3::timestamptz + interval '5 minutes')`, [TENANT_A, [CH], bucket])
         const keys = rows.map((r) => `${r.metric}|${r.actor_type}`)
         if (new Set(keys).size !== keys.length) failures.push(`case ${i}: a cell appears twice`)

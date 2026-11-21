@@ -320,7 +320,7 @@ describe('R6 · BObee\'s views never cross a tenant boundary', () => {
     // Supabase's read-all roles hold the first everywhere, never the second.
     const { rows } = await db.query(`SELECT r.rolname FROM pg_roles r
       WHERE has_table_privilege(r.oid, 'bob.v_ai_cell_state', 'SELECT')
-        AND has_function_privilege(r.oid, 'public.bob_ai_cell_state()', 'EXECUTE')
+        AND has_function_privilege(r.oid, 'bob.bob_ai_cell_state()', 'EXECUTE')
         AND NOT r.rolsuper AND r.rolname NOT LIKE 'pg\\_%' AND r.rolname <> 'postgres'
       ORDER BY 1`)
     assert.deepEqual(rows.map((r) => r.rolname), ['bob_ai_ro'])

@@ -15,7 +15,7 @@ import {
 } from './helpers/db.mjs'
 import {
   BOB_ROLES, rolesWithPrivilegeInBob, threeRolesFindings, egressFunctions,
-  egressFindings, oneOrganizationFindings,
+  egressFindings, oneOrganizationFindings, restoreCycleFindings,
 } from '../scripts/box-checks.mjs'
 
 let db
@@ -243,5 +243,32 @@ describe('P5 objection 3 · the box check: one organization, slug = bzzz.tenant'
       assert.ok(findings.some((f) => /holds 0 rows/.test(f)), findings.join('\n'))
     })
     assert.deepEqual(await oneOrganizationFindings(db, ''), ['the box tenant (bzzz.tenant) was not given'])
+  })
+})
+
+describe('P5 §4.3 · the bob-alone restore: nothing in bob depends on bob through another schema', () => {
+  test('installed, no object in bob depends on something outside it that depends on bob', async () => {
+    assert.deepEqual(await restoreCycleFindings(db), [])
+  })
+
+  test('the guard sees a view, and a column default, reaching bob through public', async () => {
+    await inTx(async () => {
+      await db.query(`CREATE FUNCTION public.p5_probe_orgs() RETURNS bigint
+        LANGUAGE sql STABLE BEGIN ATOMIC SELECT count(*) FROM bob.organizations; END`)
+      await db.query('CREATE VIEW bob.p5_probe_v AS SELECT public.p5_probe_orgs() AS n')
+      await db.query('CREATE TABLE bob.p5_probe_t (n bigint DEFAULT public.p5_probe_orgs())')
+      const found = (await restoreCycleFindings(db)).filter((f) => f.includes('p5_probe'))
+      assert.equal(found.length, 2, found.join('\n'))
+      assert.ok(found.some((f) => f.startsWith('view bob.p5_probe_v depends on function public.p5_probe_orgs()')))
+      assert.ok(found.some((f) => f.startsWith('table bob.p5_probe_t depends on function public.p5_probe_orgs()')))
+    })
+  })
+
+  test('the guard leaves a helper outside bob alone when it does not reach bob', async () => {
+    await inTx(async () => {
+      await db.query(`CREATE VIEW bob.p5_probe_v AS
+        SELECT public.bob_source_key_unset(source_key) AS unset FROM bob.channels`)
+      assert.deepEqual((await restoreCycleFindings(db)).filter((f) => f.includes('p5_probe')), [])
+    })
   })
 })

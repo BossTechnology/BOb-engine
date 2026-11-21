@@ -28,7 +28,7 @@
 import pg from 'pg'
 import {
   oneOrganizationFindings, threeRolesFindings, egressFindings, egressInstalled,
-  stagingRunWarnings, activeUserFindings,
+  stagingRunWarnings, activeUserFindings, restoreCycleFindings,
 } from './box-checks.mjs'
 
 function arg(name) {
@@ -53,6 +53,7 @@ try {
     ['one organization, slug = bzzz.tenant', () => oneOrganizationFindings(client, tenant)],
     ['three roles, no more', () => threeRolesFindings(client)],
     ['no egress from the database', () => egressFindings(client)],
+    ['bob restores alone (no dependency back into bob)', () => restoreCycleFindings(client)],
   ]
   for (const [name, run] of checks) {
     const findings = await run()

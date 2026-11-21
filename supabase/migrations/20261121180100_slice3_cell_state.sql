@@ -23,6 +23,16 @@
 -- ONE ORDER. The resolution order of §3 is written once, in bob_cell_state.
 -- The rollup, the per-actor cells and BObee's face read it; none restates it.
 --
+-- IN `bob`. Every function here reads `bob`, so it lives in `bob` (Henry, on
+-- PR #40: "Both in bob"). The P5 restore drops `bob` with CASCADE and restores
+-- `pg_dump -n bob` alone (docs/p5-failed-migration-procedure.md §4.3): a
+-- function outside `bob` that reads `bob` would go with the CASCADE, be missing
+-- from the dump, and leave bob.v_ai_cell_state impossible to restore (F-47).
+-- They call three helpers in public that read nothing in `bob` at creation
+-- (bob_source_key_unset, bob_shift_is_live, and bob_availability, a plpgsql
+-- body), which survive the CASCADE. scripts/box-checks.mjs's
+-- restoreCycleFindings guards it, read from pg_depend.
+--
 -- PRIVILEGES. bob_cell_state and the functions beside it run as their caller,
 -- under RLS (R4), and also filter on the org they are given. bob_app and
 -- authenticated execute them. bob_ai_ro executes none of them: it reads
@@ -67,7 +77,7 @@ CREATE POLICY "bob_app_reads_own_org" ON bob.organizations FOR SELECT TO bob_app
 -- Liveness of an observed row (F-28). 'probe' when the bucket has an observed
 -- proj_channel_health row and no row shows traffic; otherwise 'traffic'. The
 -- feeder writes a zero only with liveness, so a row with neither is traffic.
-CREATE FUNCTION public.bob_cell_state(
+CREATE FUNCTION bob.bob_cell_state(
   p_org      UUID,
   p_channels UUID[],
   p_from     TIMESTAMPTZ,
@@ -288,7 +298,7 @@ BEGIN ATOMIC
     FROM resolved r;
 END;
 
-COMMENT ON FUNCTION public.bob_cell_state(UUID, UUID[], TIMESTAMPTZ, TIMESTAMPTZ) IS
+COMMENT ON FUNCTION bob.bob_cell_state(UUID, UUID[], TIMESTAMPTZ, TIMESTAMPTZ) IS
   'Slice 3 spec §3 (F-31). The one implementation of the cell: state, reasons, '
   'value, provisional, liveness_source for every (channel, metric, actor_type, '
   'bucket) inside the frame. Invoker, under RLS (R4). SQL-standard body, so '
@@ -304,7 +314,7 @@ COMMENT ON FUNCTION public.bob_cell_state(UUID, UUID[], TIMESTAMPTZ, TIMESTAMPTZ
 --   coverage     {"n": channels with an observed cell, "m": channels selected,
 --                 "excluded": [{channel_id, state, reasons}, …]}
 -- An empty selection is not_applicable, with no_channels_selected (R7).
-CREATE FUNCTION public.bob_cell_rollup(
+CREATE FUNCTION bob.bob_cell_rollup(
   p_org      UUID,
   p_channels UUID[],
   p_from     TIMESTAMPTZ,
@@ -328,7 +338,7 @@ BEGIN ATOMIC
            CASE s.state WHEN 'not_applicable' THEN 1 WHEN 'not_configured' THEN 2
                         WHEN 'pending' THEN 3 WHEN 'not_observed' THEN 4
                         WHEN 'observed' THEN 5 END AS rank
-      FROM public.bob_cell_state(p_org, p_channels, p_from, p_to) s
+      FROM bob.bob_cell_state(p_org, p_channels, p_from, p_to) s
   ),
   -- Each channel's own standing for the metric over the frame.
   per_channel AS (
@@ -411,7 +421,7 @@ BEGIN ATOMIC
     FROM nothing n;
 END;
 
-COMMENT ON FUNCTION public.bob_cell_rollup(UUID, UUID[], TIMESTAMPTZ, TIMESTAMPTZ) IS
+COMMENT ON FUNCTION bob.bob_cell_rollup(UUID, UUID[], TIMESTAMPTZ, TIMESTAMPTZ) IS
   'Slice 3 spec §6 (F-30). The "All" total over channels and time, read from '
   'bob_cell_state: sums observed cells only, states the first state otherwise, '
   'and carries coverage "n of m channels" with each excluded channel.';
@@ -420,7 +430,7 @@ COMMENT ON FUNCTION public.bob_cell_rollup(UUID, UUID[], TIMESTAMPTZ, TIMESTAMPT
 -- bob_availability() and bob_availability_reason() are unchanged. Their FR-23
 -- reasons become (state, reasons), in the database. Never pending or
 -- provisional: availability has no bucket.
-CREATE FUNCTION public.bob_available_state(
+CREATE FUNCTION bob.bob_available_state(
   p_org                  UUID,
   p_channels             UUID[],
   p_user_volume          BIGINT      DEFAULT NULL,
@@ -451,7 +461,7 @@ BEGIN ATOMIC
                                  p_avg_duration_minutes, p_at) a;
 END;
 
-COMMENT ON FUNCTION public.bob_available_state(UUID, UUID[], BIGINT, NUMERIC, NUMERIC, TIMESTAMPTZ) IS
+COMMENT ON FUNCTION bob.bob_available_state(UUID, UUID[], BIGINT, NUMERIC, NUMERIC, TIMESTAMPTZ) IS
   'Slice 3 spec §4. Available in the cell''s shape: mix_not_declared is '
   'not_configured, no_channels_selected is not_applicable (R7), every other '
   'FR-23 reason is an observed 0 carrying that reason.';
@@ -468,7 +478,7 @@ COMMENT ON FUNCTION public.bob_available_state(UUID, UUID[], BIGINT, NUMERIC, NU
 --   pending                          the channel cell's
 --   not_observed                     an actor on shift, with no row
 -- Per-actor zeros are not written (spec §10, decided with Slice 7).
-CREATE FUNCTION public.bob_actor_cell_state(
+CREATE FUNCTION bob.bob_actor_cell_state(
   p_org      UUID,
   p_channels UUID[],
   p_from     TIMESTAMPTZ,
@@ -539,7 +549,7 @@ BEGIN ATOMIC
           AND NOT r.sealed)
     FROM who w
     JOIN bob.actors a ON a.id = w.actor_id AND a.org_id = p_org
-    JOIN public.bob_cell_state(p_org, p_channels, p_from, p_to) c
+    JOIN bob.bob_cell_state(p_org, p_channels, p_from, p_to) c
       ON c.channel_id = w.channel_id AND c.actor_type = a.actor_type
     JOIN bob.cell_catalog k
       ON k.metric = c.metric AND k.source = 'proj_metric_counts' AND NOT k.degenerate
@@ -548,7 +558,7 @@ BEGIN ATOMIC
      AND r.metric = c.metric AND r.bucket_start = c.bucket_start;
 END;
 
-COMMENT ON FUNCTION public.bob_actor_cell_state(UUID, UUID[], TIMESTAMPTZ, TIMESTAMPTZ) IS
+COMMENT ON FUNCTION bob.bob_actor_cell_state(UUID, UUID[], TIMESTAMPTZ, TIMESTAMPTZ) IS
   'Slice 3 spec §2. The per-actor drill-down cells, read beside bob_cell_state: '
   'off_shift for a human not on shift with no row, apart from an actor on shift '
   'with no row (not_observed). The em dash is shared; state and reasons differ.';
@@ -558,7 +568,7 @@ COMMENT ON FUNCTION public.bob_actor_cell_state(UUID, UUID[], TIMESTAMPTZ, TIMES
 -- current day (UTC) and every channel of the caller's org_id claim. Tenancy is
 -- the explicit filter on the claim, not RLS: the owner is not subject to it.
 -- The claim is read once; with no claim, nothing is returned.
-CREATE FUNCTION public.bob_ai_cell_state()
+CREATE FUNCTION bob.bob_ai_cell_state()
 RETURNS TABLE (
   org_id          UUID,
   channel_id      UUID,
@@ -580,7 +590,7 @@ BEGIN ATOMIC
   SELECT s.org_id, s.channel_id, s.metric, s.actor_type, s.bucket_start,
          s.state, s.reasons, s.value, s.provisional, s.liveness_source
     FROM claim
-   CROSS JOIN LATERAL public.bob_cell_state(
+   CROSS JOIN LATERAL bob.bob_cell_state(
            claim.org_id,
            ARRAY(SELECT c.id FROM bob.channels c WHERE c.org_id = claim.org_id),
            date_trunc('day', now(), 'UTC'),
@@ -590,7 +600,7 @@ BEGIN ATOMIC
      AND s.org_id = claim.org_id;
 END;
 
-COMMENT ON FUNCTION public.bob_ai_cell_state() IS
+COMMENT ON FUNCTION bob.bob_ai_cell_state() IS
   'Slice 3 spec §7 (R6). Definer, owned by the migration owner: '
   'bob_cell_state for the caller''s org_id claim over the current day. '
   'Filters on the claim itself. EXECUTE: bob_ai_ro alone, through '
@@ -600,7 +610,7 @@ CREATE VIEW bob.v_ai_cell_state
 WITH (security_invoker = false) AS
   SELECT a.org_id, a.channel_id, a.metric, a.actor_type, a.bucket_start,
          a.state, a.reasons, a.value, a.provisional, a.liveness_source
-    FROM public.bob_ai_cell_state() a;
+    FROM bob.bob_ai_cell_state() a;
 
 COMMENT ON VIEW bob.v_ai_cell_state IS
   'Slice 3 spec §7 (R6). BObee''s face on the cell: today''s cells of the '
@@ -608,24 +618,25 @@ COMMENT ON VIEW bob.v_ai_cell_state IS
   'display_name. Granted to bob_ai_ro alone.';
 
 -- ── Who executes what ───────────────────────────────────────────────────────
--- Supabase's default privileges hand EXECUTE on new functions in public to
--- PUBLIC, anon, authenticated and service_role. Taken back, then given.
+-- Postgres hands EXECUTE on a new function to PUBLIC. `bob` has no default
+-- privileges of its own; the revoke still names every role, so a default added
+-- later does not widen this. Taken back, then given.
 REVOKE ALL ON FUNCTION
-  public.bob_cell_state(UUID, UUID[], TIMESTAMPTZ, TIMESTAMPTZ),
-  public.bob_cell_rollup(UUID, UUID[], TIMESTAMPTZ, TIMESTAMPTZ),
-  public.bob_available_state(UUID, UUID[], BIGINT, NUMERIC, NUMERIC, TIMESTAMPTZ),
-  public.bob_actor_cell_state(UUID, UUID[], TIMESTAMPTZ, TIMESTAMPTZ),
-  public.bob_ai_cell_state()
+  bob.bob_cell_state(UUID, UUID[], TIMESTAMPTZ, TIMESTAMPTZ),
+  bob.bob_cell_rollup(UUID, UUID[], TIMESTAMPTZ, TIMESTAMPTZ),
+  bob.bob_available_state(UUID, UUID[], BIGINT, NUMERIC, NUMERIC, TIMESTAMPTZ),
+  bob.bob_actor_cell_state(UUID, UUID[], TIMESTAMPTZ, TIMESTAMPTZ),
+  bob.bob_ai_cell_state()
 FROM PUBLIC, anon, authenticated, service_role, bob_app, bob_feeder, bob_ai_ro;
 
 GRANT EXECUTE ON FUNCTION
-  public.bob_cell_state(UUID, UUID[], TIMESTAMPTZ, TIMESTAMPTZ),
-  public.bob_cell_rollup(UUID, UUID[], TIMESTAMPTZ, TIMESTAMPTZ),
-  public.bob_available_state(UUID, UUID[], BIGINT, NUMERIC, NUMERIC, TIMESTAMPTZ),
-  public.bob_actor_cell_state(UUID, UUID[], TIMESTAMPTZ, TIMESTAMPTZ)
+  bob.bob_cell_state(UUID, UUID[], TIMESTAMPTZ, TIMESTAMPTZ),
+  bob.bob_cell_rollup(UUID, UUID[], TIMESTAMPTZ, TIMESTAMPTZ),
+  bob.bob_available_state(UUID, UUID[], BIGINT, NUMERIC, NUMERIC, TIMESTAMPTZ),
+  bob.bob_actor_cell_state(UUID, UUID[], TIMESTAMPTZ, TIMESTAMPTZ)
 TO bob_app, authenticated;
 
-GRANT EXECUTE ON FUNCTION public.bob_ai_cell_state() TO bob_ai_ro;
+GRANT EXECUTE ON FUNCTION bob.bob_ai_cell_state() TO bob_ai_ro;
 
 REVOKE ALL ON bob.v_ai_cell_state
   FROM PUBLIC, anon, authenticated, service_role, bob_app, bob_feeder;
