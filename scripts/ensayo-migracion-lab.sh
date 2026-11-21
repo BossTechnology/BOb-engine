@@ -18,8 +18,10 @@
 #      supabase_migrations.schema_migrations says, which objects exist and
 #      whether the failing file left anything behind;
 #   4. a restore of `bob` alone: synthetic data, a dump of `bob` taken the way
-#      Bzzz scripts/backup.sh takes it (no proj_* data), the schema dropped,
-#      the dump restored, the definer views and SECURITY DEFINER functions
+#      Bzzz scripts/backup.sh takes it (no proj_* data), what lives outside
+#      `bob` and depends on it saved from the box (F-47), the schema dropped,
+#      the dump restored and those objects put back, the definer views and
+#      SECURITY DEFINER functions
 #      compared against a fingerprint, and the projections rebuilt by the
 #      reference feeder;
 #   5. auth.users counted at every step: `auth` is never touched by BOb;
@@ -259,6 +261,12 @@ reponer_publicacion() {  # <file>
 }
 mundo() { (cd "$REPO" && "$NODE" scripts/ensayo-migracion-lab/mundo.mjs "$@"); }
 
+# F-47. What lives outside `bob` and depends on it (a function in `public` that
+# returns a `bob` type, or one written with BEGIN ATOMIC over `bob` tables) is
+# taken by DROP SCHEMA bob CASCADE and is not in bob.sql.gz. The same script the
+# procedure uses (§4.3) notes it, saves it from the box and puts it back.
+dependientes() { "$REPO/scripts/bob-dependientes.sh" --contenedor "$CONT" "$@"; }
+
 # ── 0 · Preflight ────────────────────────────────────────────────────────────
 preflight() {
   paso "0 · Preflight"
@@ -447,12 +455,26 @@ ejecutar)
   comprobar "el volcado de bob no trae filas de proj_*" 0 \
     "$(gunzip -c "$RUN/bob.sql.gz" | awk '/^COPY bob\.proj_/{f=1;next} f&&/^\\\.$/{f=0} f{n++} END{print n+0}')"
 
+  # F-47: what lives outside bob and depends on it is taken by the CASCADE and
+  # is not in bob.sql.gz. It is noted and saved here, from the box itself, and
+  # put back after the restore (procedure §4.3).
+  paso "4a · Antes del daño: lo que fuera de bob depende de bob"
+  dependientes --listar > "$RUN/dependientes.txt"
+  ev_bloque "dependientes de bob fuera de bob (pg_depend, transitivo)" cat "$RUN/dependientes.txt"
+  comprobar "todo lo que depende de bob fuera de bob es una función o una vista" 0 \
+    "$(grep -c '^otro|' "$RUN/dependientes.txt" || true)"
+  ev_bloque "pg_dump --schema-only de esos objetos, filtrado con pg_restore -L" dependientes --guardar "$RUN"
+  comprobar "sus definiciones quedan guardadas" 0 "$RC_BLOQUE"
+  comprobar "cada dependiente tiene su CREATE en dependientes.sql" "$(wc -l < "$RUN/dependientes.txt" | tr -d ' ')" \
+    "$(grep -cE '^CREATE (FUNCTION|VIEW|MATERIALIZED VIEW) ' "$RUN/dependientes.sql" || true)"
+
   paso "4a · El daño: DROP SCHEMA bob CASCADE"
   docker exec -i "$CONT" psql -X -U supabase_admin -d postgres -v ON_ERROR_STOP=1 \
     -c 'SET client_min_messages = notice' -c 'DROP SCHEMA bob CASCADE' > "$RUN/cascade.txt" 2>&1 </dev/null
   ev "- el CASCADE se llevó $(grep -c 'drop cascades to' "$RUN/cascade.txt" || true) objeto(s) nombrados, además de lo que vive en bob"
   ev_bloque "los que no son de bob (vacío = ninguno)" sh -c "grep 'drop cascades to' '$RUN/cascade.txt' | grep -v 'other objects' | grep -v ' bob\.' || true"
-  comprobar "el CASCADE no se lleva nada fuera de bob" 0 \
+  comprobar "lo que el CASCADE se lleva fuera de bob es lo apuntado, ni más ni menos" \
+    "$(wc -l < "$RUN/dependientes.txt" | tr -d ' ')" \
     "$(grep 'drop cascades to' "$RUN/cascade.txt" | grep -v 'other objects' | grep -vc ' bob\.' || true)"
   comprobar "bob ya no existe" f "$(q "SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'bob')")"
   comprobar "auth.users sin tocar" "$CUENTAS0 $AUTH0" "$(auth_cuentas) $(auth_huella)"
@@ -464,6 +486,10 @@ ejecutar)
   fi
   ev_bloque "psql -1 -v ON_ERROR_STOP=1 como supabase_admin" sh -c "gunzip -c '$RUN/bob.sql.gz' | docker exec -i '$CONT' psql -X -q -1 -U supabase_admin -d postgres -v ON_ERROR_STOP=1 >/dev/null"
   comprobar "la restauración sale 0, en una transacción" 0 "$RC_BLOQUE"
+  if [ "$SABOTAJE" != sin-dependientes ]; then
+    ev_bloque "dependientes.sql, en una transacción" dependientes --reponer "$RUN"
+    comprobar "lo apuntado fuera de bob se repone, en una transacción" 0 "$RC_BLOQUE"
+  fi
   [ "$SABOTAJE" = sin-publicacion ] || reponer_publicacion "$RUN/publicacion-bob.txt"
   ev "- pertenencia a publicaciones repuesta desde lo apuntado: $(wc -l < "$RUN/publicacion-bob.txt" | tr -d ' ') tabla(s)"
   [ "$SABOTAJE" != vista-invoker ] || q "ALTER VIEW bob.v_feeder_channel_map SET (security_invoker = true)"
