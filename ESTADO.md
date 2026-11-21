@@ -57,7 +57,7 @@
 - Nada.
 
 ## Siguiente paso
-- Henry revisa el PR de la spec del Slice 3 y publica en la tarea 6 el aviso de 0.6 a Federico (F-28 a F-34).
+- Henry revisa el PR de la spec del Slice 3 y publica en la tarea 6 el aviso de 0.6 a Federico (F-28 a F-34). El aviso lleva además la pregunta de cuáles son las «nueve reglas» y los «siete consumidores» del mapa de alcance (tarea 7), que el documento no lista.
 - Henry revisa el PR #24 (guards de P5). El ensayo de lab-02 revisa si hay `pg_net` o `http` y, con eso, F-27 se cierra con (b) o con (c).
 - P5: Henry revisa y fusiona el PR #22, corre (o autoriza) el ensayo en lab-02 y, si confirma el §6.2, firma D62.
 - La tarea 3.7 de BzzzBX implementa contra el contrato 0.5.3, con `member_refs_seen` como cuarto entregable (turno de Federico).
