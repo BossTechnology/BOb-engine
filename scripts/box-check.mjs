@@ -10,7 +10,9 @@
 //     (P5 §8, objection 3);
 //   - three roles and no more (P5 §6.3);
 //   - no egress from the database (P5 §6.3), and which egress extensions are
-//     installed, so an empty result is not mistaken for a check that ran.
+//     installed, so an empty result is not mistaken for a check that ran;
+//   - a warning, which does not fail the check, when the organization has no
+//     active user in bob.users: nobody could sign in (bob-web answers 403).
 //
 // It writes nothing, sets no role and loads no fixture. It exits 0 when every
 // check is green and 1 otherwise. It never prints the connection string.
@@ -23,6 +25,7 @@
 import pg from 'pg'
 import {
   oneOrganizationFindings, threeRolesFindings, egressFindings, egressInstalled,
+  activeUserFindings,
 } from './box-checks.mjs'
 
 function arg(name) {
@@ -53,6 +56,9 @@ try {
     for (const f of findings) console.log(`      ${f}`)
     failed ||= findings.length > 0
   }
+  const warnings = await activeUserFindings(client, tenant)
+  console.log(`${warnings.length ? 'WARN' : 'ok  '}  someone can sign in`)
+  for (const w of warnings) console.log(`      ${w}`)
   const installed = await egressInstalled(client)
   console.log(`      egress extensions installed: ${installed.length
     ? installed.map((e) => `${e.extname} (${e.schema})`).join(', ') : 'none'}`)
