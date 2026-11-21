@@ -504,3 +504,54 @@ describe('F-22 · the feeder writes each tenant under its own claim', () => {
     assert.deepEqual(rows.map((r) => r.org_id), [TENANT_A, TENANT_B])
   })
 })
+
+// ── P5 §8, objection 3 · one organization per customer box ─────────────────
+// In a customer box the feeder runs for the box's own tenant. An event of any
+// other tenant is route A and is never written, even when BOb holds a channel
+// for it: that is what catches a feeder that picks the wrong tenant, since a
+// self-set claim cannot (the claim and the row would be wrong together).
+describe('P5 objection 3 · the feeder sends a foreign tenant to route A', () => {
+  before(freshWorld)
+
+  // Counted from the fixture, not from the feeder.
+  const inWindow = (e) => e.event_time >= FROM && e.event_time < TO
+  const foreign = FIXTURE.events.filter((e) => e['bzzz.tenant'] !== 'tenant-a' && inWindow(e))
+
+  const rowsFor = async (orgId) => {
+    let n = 0
+    for (const p of await projections()) {
+      const { rows } = await db.query(
+        `SELECT count(*)::int AS n FROM bob.${p.name} WHERE org_id = $1`, [orgId])
+      n += rows[0].n
+    }
+    return n
+  }
+
+  test('without a box tenant, tenant B maps and writes (the guard is not vacuous)', async () => {
+    assert.ok(foreign.length > 0, 'the fixture has no event of another tenant')
+    await clearProjections()
+    const r = await runFeeder(feeder, truth(), { from: FROM, to: TO })
+    assert.equal(r.unmappedEvents, 0)
+    assert.ok(await rowsFor(TENANT_B) > 0, 'tenant B wrote nothing, so nothing is proved')
+  })
+
+  test('boxed to tenant A: every tenant B event is route A, and nothing of B is written', async () => {
+    await clearProjections()
+    await runFeeder(feeder, truth(), { from: FROM, to: TO, orgIds: [TENANT_A] })
+    const expected = await snapshot()
+    await clearProjections()
+    const r = await runFeeder(feeder, truth(), { from: FROM, to: TO, boxTenant: 'tenant-a' })
+    assert.deepEqual([r.unmappedEvents, r.unresolvedAgentRefs], [foreign.length, 0])
+    assert.deepEqual(Object.keys(r.written), [TENANT_A])
+    assert.equal(await rowsFor(TENANT_B), 0, 'a foreign tenant was written')
+    assert.deepEqual(await snapshot(), expected, 'the box tenant is written as it would be alone')
+  })
+
+  test('boxed to a tenant BOb does not hold: everything is route A, nothing is written', async () => {
+    await clearProjections()
+    const r = await runFeeder(feeder, truth(), { from: FROM, to: TO, boxTenant: 'tenant-z' })
+    assert.equal(r.unmappedEvents, FIXTURE.events.filter(inWindow).length)
+    assert.deepEqual(r.written, {})
+    assert.equal(await rowsFor(TENANT_A) + await rowsFor(TENANT_B), 0)
+  })
+})

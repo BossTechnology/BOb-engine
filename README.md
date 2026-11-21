@@ -29,16 +29,18 @@ Read all four summary lines. A `cancelled` count above zero means tests did not
 run, and it does not increment `fail`:
 
 ```
-# tests 167
-# pass 166
+# tests 186
+# pass 184
 # fail 0
 # cancelled 0
-# todo 1
+# todo 2
 ```
 
-The one `todo` is contract §10's never-merge guard: its behavioural half has no
-reader of `proj_durations` to test until the first route handler (A-05b). It is
-counted on purpose and never reported as a pass.
+The two `todo`s are counted on purpose and never reported as a pass:
+- contract §10's never-merge guard: its behavioural half has no reader of
+  `proj_durations` to test until the first route handler (A-05b);
+- F-27: installed, `pg_net` and `http` are executable by all three roles,
+  through PUBLIC. Henry chose (a); it closes by (b) or (c) once lab-02 shows whether `pg_net` is there.
 
 CI also runs two subsets: `pnpm run test:tenancy` and `pnpm run test:availability`.
 
@@ -50,6 +52,7 @@ CI also runs two subsets: `pnpm run test:tenancy` and `pnpm run test:availabilit
 | `supabase/tests/fixtures/` | The two-tenant fixture, the Slice 1 roster, and the feeder's world and events |
 | `feeder/` | The reference feeder (contract §8) and the in-memory truth store it reads |
 | `reconciliation/` | The ghost reconciliation (contract §7.2) and member linkage |
+| `scripts/box-check.mjs` | The read-only check a customer box runs after its migration step (P5 §6.2): one organization, three roles, no egress |
 | `tests/` | Acceptance suite on `node:test`, one database, run serially |
 | `.github/workflows/ci.yml` | Four jobs, each meant to be a required status check |
 | `Documentation/contract-amendments.md` | Every finding and amendment with its reasoning. Read it before changing anything. |

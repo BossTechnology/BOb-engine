@@ -112,6 +112,10 @@ jobs:
         env:
           SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
         run: node --test --test-concurrency=1 tests/slice2-feeder.test.mjs
+      - name: P5 §6.3 · three roles, bob_ai_ro reads views only, no egress; the box check of objection 3
+        env:
+          SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+        run: node --test --test-concurrency=1 tests/p5-roles.test.mjs
       - name: BR-3 · the mutative exemption is closed, and the F-07 rulings are a fixture
         env:
           SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres

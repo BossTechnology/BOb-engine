@@ -14,6 +14,7 @@ Términos del proyecto y su significado exacto. Úsalos en código, commits, doc
 | P5 | La capa de aplicación de BzzzBX (Runbook v1 §7): esquema de proyección, los tres roles con sus grants y el mecanismo de migraciones. Decisión de BzzzBX, sin número hasta firmarse. | `docs/p5-application-layer.md` |
 | Los tres roles | `bob_app` (la aplicación), `bob_feeder` (el único que escribe proyecciones) y `bob_ai_ro` (vistas `v_ai_*` y nada más). Handoff §4.3. | `20260902100300_roles_and_grants.sql`; insumos P5 §3 |
 | Dueño de las migraciones | El rol que aplica la cadena y es dueño de los objetos (`postgres` en la imagen de Supabase). Ningún servicio en marcha tiene su credencial. | Insumos P5 §3.4, §6.2 |
+| Chequeo de caja | Chequeo de solo lectura que corre la caja de un cliente después de migrar (`scripts/box-check.mjs`): una sola organización, con el `slug` igual al `bzzz.tenant` de la caja, los tres roles y sin salida a red. Nunca carga un fixture. | Insumos P5 §6.2, §8 objeción 3 |
 | A-11 / A-12 | Números del registro para lo que en Relevo se llamó A-07 (drill-through de miembros) y A-09 (conteo de abstenciones). | `contract-amendments.md` |
 
 ## Fuera de alcance
