@@ -2373,6 +2373,85 @@ the dump (procedure §4.4), recreating `bob.users` rows for accounts made after
 the dump (§4.5), and a fix-forward migration with `--include-all` (§3). The
 procedure marks each one.
 
+
+## Slice 3 · The spec's review, corrections (proposed for 0.6)
+
+PR #27 merged on 20 Nov before its review was addressed. The review
+(PR #27, comment of 20 Nov) found two blocking contract gaps, four design gaps
+and one wording point. The two blocking gaps are corrected in the spec and
+here. The rest are questions R3 to R7 for Henry, in the spec's §11. Nothing is
+built, and the contract stays at 0.5.3.
+
+### F-28, corrected · Metrics with a precondition get no zero
+
+As written, F-28 would have written `event_count = 0` in two cases where
+nothing could be measured:
+- `hallucinations` on a channel that declares `hallucination` but has no
+  ground truth (D-29);
+- `abandoned` on a channel whose `idle_bound_seconds` is NULL.
+
+That breaks §5. `v_cell_state` would mask them, but `bob_app` and
+`authenticated` read the tables directly, so the exclusion belongs in the write
+rule. The list is explicit and closed:
+- `hallucinations` gets no zero, ever, under F-28. The feeder cannot see the
+  ground truth through its two views.
+- `abandoned` gets no row while the bound is NULL, which is §9.2 as it stands.
+
+A guard compares the feeder's list with the catalog's preconditioned metrics.
+The label failures stay under §4.1.
+
+### F-38 · §7.4 · The feeder learns which actor types are present
+
+A zero row carries an `actor_type`, and the feeder cannot see
+`channel_actor_mix`. `v_feeder_channel_map` (migration `20261119100000`)
+exposes the lag, the idle bound and the capabilities, and §7.4 limits the
+feeder to two views.
+
+**Proposed:**
+- the view gains `actor_types TEXT[]`: the channel's mix rows with
+  `present = true`, sorted, and empty when none is declared present;
+- zeros are written only for those actor types, and only for applicable pairs
+  (§6.1 with F-33);
+- degenerate metrics write `user` only;
+- a declared-absent actor gets no row: its observed 0 comes from the mix.
+
+This is F-25's pattern, and the feeder still reads two views. Fixing the actors
+per metric was refused, because it writes zeros for actors nobody declared.
+
+### F-31, reworded · D-14 is extended
+
+F-31 said "D-14 is applied, not amended". It is extended. D-14's three states
+become six (`not_applicable`, `pending` and `off_shift` are added), and F-31
+should be signed as a change to D-14.
+
+### Decided by Henry on 21 Nov (spec §11)
+
+All five were decided with the recommended option:
+- **R3:** `pending` on a no-row cell follows today's lag. This is accepted and
+  written down. §4's rule protects stored history, and a cell with no row
+  stores nothing. A test raises a lag and asserts that only the cells inside
+  the new window change.
+- **R4:** the mechanism is a set-returning function,
+  `bob_cell_state(org, channels[], from, to)`. It is invoker, under RLS. It
+  replaces the view `v_cell_state`, which would have enumerated thirteen
+  months.
+- **R5 → F-39 · §9.1, §6.3:** `interaction_duration` requires `resolution`.
+  It lands at the close, and `resolution` declares that a close exists.
+- **R6:** `v_ai_cell_state` is a definer view, owned by the migration owner
+  and granted to `bob_ai_ro` alone. It reads the function for the current day,
+  filters explicitly on the caller's `org_id` claim, and never exposes
+  `display_name`. The tenancy suite and the P5 guard cover it. This is the
+  shape of F-21.
+- **R7:** `no_channels_selected` becomes `not_applicable`, with its own
+  reason. This changes G9.
+
+### The 0.6 notice already posted
+
+The notice on Relevo task 6 (20 Nov) carries F-28 as first written and says
+D-14's markers come first without saying D-14 is extended. The correction
+(F-28 corrected, F-38, F-39, F-31 reworded) was posted there on 21 Nov, by
+Henry's order.
+
 ---
 
 *Boss.Technology · BOb v1 · Internal only*
