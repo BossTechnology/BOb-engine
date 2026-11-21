@@ -3,6 +3,7 @@
 > Actualizar al cerrar cada sesión. Es lo primero que lee la siguiente.
 
 ## Tarea actual
+- Slice 6 («Registries and the outbox»), rama `slice-6-registries-outbox`, PR abierto y sin fusionar. Se adelantó a los slices 4 y 5 porque no tenía decisiones abiertas. RS-30 a RS-35 pasan; la ejecución de punta a punta queda como `todo` hasta que exista. Siete elecciones del build esperan a Henry (amendments, «Slice 6 · Registries and the outbox, built»).
 - Slice 3, correcciones de la revisión del PR #27 (rama `slice-3-spec-f28-fixes`): F-28 ya no escribe ceros en métricas con precondición (`hallucinations`, `abandoned` sin idle bound), F-38 nuevo (`actor_types` en `v_feeder_channel_map`), D-14 dicho como extendido, y R3–R7 decididos por Henry el 21 nov con la opción recomendada (función `bob_cell_state` con marco, cara de BObee definer, F-39, `no_channels_selected` como `not_applicable`). La corrección del aviso de 0.6 se publicó en la tarea 6 el 21 nov.
 - Slice 3 («The absent-not-zero state»): grill hecho con Henry el 20 nov (G1–G15) y spec escrita en `docs/slice-3-absent-not-zero.md` y fusionada en `main` (PR #27), sin código. Seis estados de celda con motivos, vivacidad por tráfico o sonda, cero escrito al sellar, cobertura en los totales y el mecanismo en la base (`bob.v_cell_state`). Siete enmiendas propuestas para 0.6 (F-28 a F-34), registradas en amendments y sin firmar. El aviso de 0.6 a Federico se publicó en la tarea 6 el 20 nov, con la pregunta de las «nueve reglas» y los «siete consumidores».
 - Slice 2 terminado y en `main`: PR #20 (`9fbd367`) y PR #21 (`c4ebf1d`), contrato 0.5.3. El aviso de 0.5.3 a Federico se publicó en la tarea 6 de Relevo el 19 nov, y el turno es de Federico (3.7).
@@ -14,6 +15,14 @@
 
 ## Hecho
 - P5 Q6 reabierta (rama `p5-q6-feeder-runs-reconciliation`): `docs/p5-application-layer.md` registra la respuesta de Henry del 2026-11-21 («El feeder») en el §1, el §3.2, el §4, el §5.2, el §6.2 y el §7, y F-40 con las cuatro opciones de permisos. Henry eligió (a). Sin código ni migraciones.
+- Slice 6 (rama `slice-6-registries-outbox`), tres migraciones:
+  - los webhooks pasan de `notification_channels` a `autobotz` y cada respuesta Action apunta a su binding, en una transacción (los movidos quedan `mutative` y con `requires_approval`, sin decidir por nadie);
+  - verificación según RS-30 a RS-35: cuatro estados, vencida calculada a 30 días, invalidación al editar, un alerta por cada verificación fallida, `v_action_binding_picker`, y una verificación que no escribe ninguna intención;
+  - `bob.outbound_queue`: los límites se aplican al escribir, lo que requiere aprobación nada lo drena, un binding que cambia el mundo no se adjunta sin límite y cada intención lleva su alerta. El stub (`outbox/stub-drainer.mjs`) drena y el resultado vuelve por `proj_deliveries`;
+  - ID-11 completo: `scope_kind` en umbrales, reglas de anomalía y de texto, y el test los descubre;
+  - D-31 cerrado. Un guard nuevo comprueba que BOb no guarde credenciales. Cada guard nuevo se vio fallar (once sabotajes), y el de credenciales estaba mal en su primera corrida;
+  - revisión independiente aplicada: el outbox no se borra, solo `bob_app` lo actualiza, solo Verify escribe el veredicto (con el reloj de la base y nunca en el futuro), `clock_timestamp()` en el outbox y locks contra las carreras, con tests concurrentes. Diez sabotajes más, todos en rojo. Cuatro preguntas para Henry en amendments;
+  - suite: 230 tests, 227 pasan y 3 son `todo`. pgTAP en `supabase/tests/database` (9). `supabase test db` sin ruta falla también en `main`, porque corre los fixtures.
 - Spec del Slice 3 (rama `slice-3-absent-not-zero-spec`): estados, orden de resolución, regla de cada fila de la matriz, tests de aceptación de FR-32, UI-03, PR-10 y SR-2 contra una sola implementación, el fixture ampliado y la lista de enmiendas F-28 a F-34. `CONTEXT.md` gana el vocabulario de la celda. Nada construido; el contrato sigue en 0.5.3.
 - Kit del ensayo de lab-02 para P5 (rama `claude/gallant-tu-a8b569`), sin correr en ninguna caja:
   - `scripts/ensayo-migracion-lab.sh` (`--dry-run`, `--ejecutar`, `--deshacer`) y `docs/p5-failed-migration-procedure.md`;
@@ -66,6 +75,7 @@
 
 ## Siguiente paso
 - P5 Q6, opción (a): construirla en su propio PR. La tabla de `member_refs_seen` con RLS, INSERT para `bob_feeder`, la escritura del alimentador, `reconciliation/ghosts.mjs` leyendo la tabla y la enmienda del contrato §7.2 y §7.3a, con cada guard visto fallar.
+- Henry revisa el PR del Slice 6 y las siete elecciones del build (sobre todo la 1, los webhooks movidos, y la 4, la severidad del alerta de verificación). Bob-New tiene que seguir el cambio de columnas de `response_rules`.
 - Henry revisa el PR #28 (correcciones del Slice 3). La corrección del aviso de 0.6 (F-28 corregido, F-38, F-39, D-14 extendido) se publicó en la tarea 6 el 21 nov; el turno sigue con Federico.
 - Slice 3: spec fusionada (PR #27). Turno de Federico en la tarea 6 para F-28 a F-34 y las dos preguntas del mapa de alcance.
 - Henry revisa los dos PRs del kit (BOb-engine y Bzzz), y con ellos fusionados corre en lab-02 `--dry-run` y luego `--ejecutar`. La evidencia va a `evidence/ENSAYO/` de Bzzz. Con eso: F-27 se cierra con (b) o (c), y D62 se puede firmar.
@@ -98,6 +108,8 @@
 - 2026-11-19: PR #21 fusionado por orden de Henry (`c4ebf1d`), con CI en verde. Slice 2 cerrado.
 - 2026-11-19: PR #21 fusionado (`c4ebf1d`) y aviso de 0.5.3 publicado en la tarea 6. Abogado del diablo sobre P5 con siete objeciones, y los insumos de P5 puestos al día con F-26 (Q6). Henry respondió las siete objeciones y Q6. Nada firmado; falta el ensayo en lab-02.
 - 2026-11-20: los guards de P5 que faltaban: tres del §6.3 y dos de la objeción 3, más el chequeo de caja en `scripts/`. De 167 a 186 tests. F-27 (pg_net/http a PUBLIC): Henry eligió (a); el cierre espera a lab-02.
+- 2026-11-21: Slice 6 construido test primero sobre el stack local `bob-v1` (puertos 583xx, sin commitear; poca memoria en Docker). De 186 a 221 tests, once sabotajes vistos en rojo. D-31 cerrado; la ejecución de punta a punta queda como `todo`.
+- 2026-11-21: revisión del PR #26 aplicada en las mismas tres migraciones (no se aplicaron en ningún lado compartido). De 221 a 230 tests; cuatro dudas quedan como preguntas para Henry.
 - 2026-11-20: grill del Slice 3 con Henry (G1–G15, todas con la opción recomendada) y spec en `docs/slice-3-absent-not-zero.md`. F-28 a F-34 propuestos para 0.6, sin firmar. D-14 se aplica tal cual: el guion sirve para «no observado» y para «fuera de turno».
 - 2026-11-20: kit del ensayo de lab-02 (script, procedimiento y banco local) y, en Bzzz, el respaldo aparte de `bob`. F-35, F-36 y F-37 registrados. Nada corrido en ninguna caja.
 - 2026-11-21: correcciones de la revisión del PR #27, que se fusionó sin atenderla: F-28 corregido, F-38 nuevo, D-14 extendido; Henry decidió R3–R7 como se recomendaba y R5 pasa a F-39. Nada publicado en Relevo.
