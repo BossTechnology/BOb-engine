@@ -2473,6 +2473,44 @@ Henry's order.
 
 ---
 
+## P5 · Q6 reopened: the feeder runs the ghost reconciliation
+
+Henry, 2026-11-21: «El feeder». The ghost reconciliation asks the truth store
+(ClickHouse) for `member_refs_seen` (`reconciliation/ghosts.mjs`), and P5 §5.2
+keeps the BOb application off `bzzz-data`. So the 19 Nov answer to Q6, a timer
+in the BOb container, could not read what it reconciles. The feeder container
+already reads ClickHouse and runs it instead. This changes a P5 answer. D62
+is still unsigned.
+
+### F-40 · The feeder cannot run the reconciliation as built without a new grant — finding
+
+- As built on `main` (`742aa37`), the reconciliation runs as `bob_app`, one
+  tenant per transaction under the `org_id` claim. It reads `channels` and
+  `actor_external_refs`, inserts into `actors`, `actor_external_refs` and
+  `actor_ref_history`, and deletes the `actors` row it made when it loses a
+  race. `linkMemberRef` updates `actor_external_refs`.
+- `bob_feeder` holds none of that, by design: Q13 (11 Nov) says the feeder
+  never creates an actor, and P5 §3.2 gives it no grant on `channels` or
+  `actors`.
+- **No grant was widened, and no code or migration changed.** The options
+  put to Henry, in P5 §7, Q6:
+  - **(a) recommended:** the feeder writes `member_refs_seen` into a new `bob`
+    table (INSERT only, under the tenant's claim), and `bob_app` reconciles
+    from it in the BOb container. Q13 stands. One table, one INSERT grant, one
+    migration, and an amendment to contract §7.2 and §7.3a;
+  - **(b)** a `SECURITY DEFINER` function the feeder calls. It needs no table
+    grant, but it reverses Q13 in substance;
+  - **(c)** the feeder container also holds `bob_app`. It needs no grant, but it
+    is a second reader of `bob/app.env` (P5 §4);
+  - **(d)** widen `bob_feeder` on the actor tables and `channels`. It reverses
+    Q13.
+- **Answered** (Henry, 2026-11-21): «Go with (a)». Not built yet. Building it
+  needs the table, its INSERT grant to `bob_feeder`, the migration, the change
+  to `reconciliation/ghosts.mjs` (read the table, not `truth.memberRefsSeen`),
+  the feeder's write, and the contract amendment to §7.2 and §7.3a.
+
+---
+
 ## Slice 6 · Registries and the outbox, built
 
 Three migrations, `20261121100000` to `20261121100200`, and
