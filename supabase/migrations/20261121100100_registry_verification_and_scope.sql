@@ -20,6 +20,14 @@
 --        touches nothing else. Resolving the reference happens outside the
 --        database and invokes nothing; that half is not testable here.
 --
+-- ONLY VERIFY WRITES A VERDICT. verify_state, verified_at and verify_msg are
+-- not writable by bob_app or authenticated: their INSERT and UPDATE grants are
+-- per column and leave those three out. A binding is born unverified whatever
+-- an INSERT says. Verify stamps the database's clock (clock_timestamp()), and
+-- a verification time in the future is refused, or a binding dated ten years
+-- ahead would never go stale. A column added to autobotz later gets no grant
+-- until a migration gives it one.
+--
 -- THE LIMIT. A rule may not attach a binding that changes the real world
 -- unless the binding declares a usage limit: rate_limit_per_hour or
 -- invocation_cap_daily. concurrency_limit bounds how many run at once, not how
@@ -71,6 +79,38 @@ ALTER TABLE bob.autobotz
       CHECK (coalesce(rate_limit_per_hour, 1) > 0
          AND coalesce(concurrency_limit, 1) > 0
          AND coalesce(invocation_cap_daily, 1) > 0);
+
+-- ── Only Verify writes a verdict ────────────────────────────────────────────
+REVOKE INSERT, UPDATE ON bob.autobotz FROM bob_app, authenticated;
+DO $$
+DECLARE cols text;
+BEGIN
+  SELECT string_agg(format('%I', attname), ', ' ORDER BY attnum) INTO cols
+    FROM pg_attribute
+   WHERE attrelid = 'bob.autobotz'::regclass AND attnum > 0 AND NOT attisdropped
+     AND attname NOT IN ('verify_state', 'verified_at', 'verify_msg');
+  EXECUTE format('GRANT INSERT (%s), UPDATE (%s) ON bob.autobotz TO bob_app, authenticated',
+                 cols, cols);
+END $$;
+
+CREATE FUNCTION public.bob_autobotz_guard_verification()
+RETURNS trigger LANGUAGE plpgsql
+SET search_path = bob, public
+AS $$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    NEW.verify_state := 'unverified';
+    NEW.verified_at  := NULL;
+  ELSIF NEW.verified_at > clock_timestamp() THEN
+    RAISE EXCEPTION 'AutoBotz binding % cannot be verified in the future (%)',
+      NEW.id, NEW.verified_at USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NEW;
+END $$;
+
+CREATE TRIGGER trg_autobotz_guard_verification
+  BEFORE INSERT OR UPDATE ON bob.autobotz
+  FOR EACH ROW EXECUTE FUNCTION public.bob_autobotz_guard_verification();
 
 -- ── RS-31 · freshness, derived ──────────────────────────────────────────────
 CREATE FUNCTION public.bob_autobotz_freshness_window()
@@ -145,18 +185,23 @@ CREATE TRIGGER trg_autobotz_alert_on_failure
   FOR EACH ROW EXECUTE FUNCTION public.bob_autobotz_alert_on_failure();
 
 -- ── RS-35 · recording a verification touches the registry and nothing else ──
+-- SECURITY DEFINER, because the verdict columns are not the caller's to write.
+-- So it scopes itself: only a binding of the caller's own organization, read
+-- from the claim, exactly as the tenant policy would.
 CREATE FUNCTION public.bob_autobotz_record_verification(
-  p_autobotz_id uuid, p_ok boolean, p_message text, p_at timestamptz DEFAULT now())
+  p_autobotz_id uuid, p_ok boolean, p_message text)
 RETURNS text LANGUAGE plpgsql
+SECURITY DEFINER
 SET search_path = bob, public
 AS $$
 DECLARE s text;
 BEGIN
   UPDATE bob.autobotz
      SET verify_state = CASE WHEN p_ok THEN 'ok' ELSE 'failed' END,
-         verified_at  = p_at,
+         verified_at  = clock_timestamp(),
          verify_msg   = coalesce(p_message, '')
    WHERE id = p_autobotz_id
+     AND org_id = (auth.jwt() ->> 'org_id')::uuid
   RETURNING verify_state INTO s;
   IF s IS NULL THEN
     RAISE EXCEPTION 'no AutoBotz binding % is visible to this caller', p_autobotz_id
@@ -165,9 +210,9 @@ BEGIN
   RETURN s;
 END $$;
 
-REVOKE EXECUTE ON FUNCTION public.bob_autobotz_record_verification(uuid, boolean, text, timestamptz)
+REVOKE EXECUTE ON FUNCTION public.bob_autobotz_record_verification(uuid, boolean, text)
   FROM public, anon;
-GRANT EXECUTE ON FUNCTION public.bob_autobotz_record_verification(uuid, boolean, text, timestamptz)
+GRANT EXECUTE ON FUNCTION public.bob_autobotz_record_verification(uuid, boolean, text)
   TO bob_app, authenticated;
 
 -- ── RS-34 · the state where a binding is chosen ─────────────────────────────
@@ -193,6 +238,11 @@ RETURNS trigger LANGUAGE plpgsql
 SET search_path = bob, public
 AS $$
 BEGIN
+  -- FOR SHARE first, then the check: an edit removing the binding's limit
+  -- either finished before (and the check sees it) or waits for this rule to
+  -- commit (and its own check sees the rule). No write skew with
+  -- bob_autobotz_keeps_limit.
+  PERFORM 1 FROM bob.autobotz a WHERE a.id = NEW.autobotz_id FOR SHARE;
   IF NEW.autobotz_id IS NOT NULL AND EXISTS (
        SELECT 1 FROM bob.autobotz a
         WHERE a.id = NEW.autobotz_id AND a.mutative

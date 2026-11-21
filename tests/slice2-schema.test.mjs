@@ -228,14 +228,27 @@ describe('§10 · bob_app grants, found rather than listed', () => {
     await inTx(async () => {
       for (const p of await parents()) await ensurePartition(p.qualified)
       const projections = new Set((await projectionTables(db)).map((t) => t.qualified))
+      const { rows: keyed } = await db.query(`
+        SELECT DISTINCT format('%I.%I', n.nspname, c.relname) AS qualified
+          FROM pg_constraint k JOIN pg_class c ON c.oid = k.conrelid
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE k.contype = 'f' AND k.confrelid = 'bob.alert_log'::regclass`)
+      const keysAlert = new Set(keyed.map((k) => k.qualified))
       const problems = []
       for (const t of await tenantTables(db)) {
         const { rows } = await db.query(`
-          SELECT p, has_table_privilege('bob_app', $1::regclass, p) AS held
+          SELECT p, CASE WHEN p IN ('INSERT', 'UPDATE')
+                         THEN has_any_column_privilege('bob_app', $1::regclass, p)
+                         ELSE has_table_privilege('bob_app', $1::regclass, p) END AS held
             FROM unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE']) p`, [t.qualified])
         const held = new Set(rows.filter((r) => r.held).map((r) => r.p))
-        const want = projections.has(t.qualified)
-          ? ['SELECT'] : ['SELECT', 'INSERT', 'UPDATE', 'DELETE']
+        // Slice 6: a table that keys an alert keeps its rows (the trace from
+        // action to alert), so bob_app does not delete from it. Found by key,
+        // as in slice6-registries-outbox.test.mjs. INSERT and UPDATE may be
+        // column grants (autobotz keeps its verdict columns for Verify).
+        const want = projections.has(t.qualified) ? ['SELECT']
+          : keysAlert.has(t.qualified) ? ['SELECT', 'INSERT', 'UPDATE']
+          : ['SELECT', 'INSERT', 'UPDATE', 'DELETE']
         const got = ['SELECT', 'INSERT', 'UPDATE', 'DELETE'].filter((p) => held.has(p))
         if (got.join() !== want.join()) problems.push(`${t.qualified}: ${got.join(',') || 'none'}`)
       }

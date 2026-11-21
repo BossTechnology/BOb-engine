@@ -61,6 +61,16 @@ async function inTenantTx(fn, org = TENANT_A) {
   return inTx(async () => { await becomeTenant(db, org); return fn() })
 }
 
+// As bob_app under a tenant's claim, the way the application and the drain run.
+async function inAppTx(fn, org = TENANT_A) {
+  return inTx(async () => {
+    await db.query('SELECT set_config($1, $2, true)',
+      ['request.jwt.claims', JSON.stringify({ org_id: org })])
+    await db.query('SET LOCAL ROLE bob_app')
+    return fn()
+  })
+}
+
 // Run `sql` and return the error it raised, or null. Inside a savepoint, so the
 // caller's transaction survives.
 async function refusal(sql, params = []) {
@@ -125,10 +135,15 @@ describe('RS-30 · four verification states, never-verified distinct from verifi
       const okWithout = await refusal(
         `UPDATE autobotz SET verify_state = 'ok', verified_at = NULL WHERE id = $1`, [AB5])
       assert.equal(okWithout?.code, '23514', 'ok without a verification time was stored')
-      const neverWith = await refusal(`
+      const { rows: [born] } = await db.query(`
         INSERT INTO autobotz (org_id, type, label, reference, mutative, verify_state, verified_at)
-        VALUES ($1, 'agent', 'Claims a time', 'agents/x', false, 'unverified', now())`, [TENANT_A])
-      assert.equal(neverWith?.code, '23514', 'a never-verified binding carried a verification time')
+        VALUES ($1, 'agent', 'Claims to be verified', 'agents/x', false, 'ok', now())
+        RETURNING verify_state, verified_at`, [TENANT_A])
+      assert.deepEqual(born, { verify_state: 'unverified', verified_at: null },
+        'a binding was born verified without a verification')
+      const future = await refusal(`UPDATE autobotz SET verify_state = 'ok',
+                                    verified_at = now() + interval '10 years' WHERE id = $1`, [AB5])
+      assert.equal(future?.code, '23514', 'a verification time in the future was stored, so it never goes stale')
     })
   })
 })
@@ -205,11 +220,9 @@ describe('RS-33 · a failed verification raises an alert', () => {
       assert.equal(await alerts(), 0)
       await db.query(`SELECT public.bob_autobotz_record_verification($1, false, 'reference not found')`, [AB5])
       assert.equal(await alerts(), 1)
-      await db.query(`SELECT public.bob_autobotz_record_verification($1, false, 'still not found',
-                      now() + interval '1 minute')`, [AB5])
+      await db.query(`SELECT public.bob_autobotz_record_verification($1, false, 'still not found')`, [AB5])
       assert.equal(await alerts(), 2)
-      await db.query(`SELECT public.bob_autobotz_record_verification($1, true, 'resolved',
-                      now() + interval '2 minutes')`, [AB5])
+      await db.query(`SELECT public.bob_autobotz_record_verification($1, true, 'resolved')`, [AB5])
       assert.equal(await alerts(), 2)
       assert.equal(await state(AB5), 'ok')
     })
@@ -253,15 +266,73 @@ describe('RS-35 · a safe verification never causes a side effect', () => {
 
   test('Verify records its result and writes no intention, and nothing else', async () => {
     await inTx(async () => {
+      // The owner counts every table; Verify still needs a tenant's claim.
+      await db.query('SELECT set_config($1, $2, true)',
+        ['request.jwt.claims', JSON.stringify({ org_id: TENANT_A })])
       const before = await counts()
       assert.ok('bob.outbound_queue' in before, 'the outbox is not among the tables found')
       await db.query(`SELECT public.bob_autobotz_record_verification($1, true, 'resolved')`, [AB1])
       assert.deepEqual(await counts(), before)
-      await db.query(`SELECT public.bob_autobotz_record_verification($1, false, 'gone',
-                      now() + interval '1 minute')`, [AB1])
+      await db.query(`SELECT public.bob_autobotz_record_verification($1, false, 'gone')`, [AB1])
       const after = await counts()
       const changed = Object.keys(after).filter((k) => after[k] !== before[k])
       assert.deepEqual(changed, ['bob.alert_log'])
+    })
+  })
+})
+
+// ── Only Verify writes a verdict ───────────────────────────────────────────
+// Every verification column in BOb's schemas, found by name. None may be
+// written directly by the application's roles: the verdict comes from Verify,
+// whose time is the database's clock, so it can neither be claimed nor dated
+// into the future to stay fresh forever.
+const WRITERS = ['bob_app', 'authenticated', 'anon']
+async function verdictColumnFindings() {
+  const { rows } = await db.query(`
+    SELECT table_schema, table_name, column_name FROM information_schema.columns
+     WHERE table_schema = 'bob' AND column_name IN ('verify_state', 'verified_at', 'verify_msg')`)
+  assert.ok(rows.some((r) => r.table_name === 'autobotz' && r.column_name === 'verify_state'),
+    'the verdict discovery found nothing')
+  const findings = []
+  for (const r of rows) {
+    for (const role of WRITERS) for (const p of ['INSERT', 'UPDATE']) {
+      const { rows: [h] } = await db.query('SELECT has_column_privilege($1, $2::regclass, $3, $4) AS h',
+        [role, `${r.table_schema}.${r.table_name}`, r.column_name, p])
+      if (h.h) findings.push(`${role} ${p} ${r.table_name}.${r.column_name}`)
+    }
+  }
+  return findings
+}
+
+describe('RS-30, RS-31 · only Verify writes a verdict, and only with the database\'s clock', () => {
+  test('no application role can write a verification column', async () => {
+    assert.deepEqual(await verdictColumnFindings(), [])
+  })
+
+  test('as a tenant, claiming a verification directly is refused', async () => {
+    await inTenantTx(async () => {
+      assert.equal((await refusal(`UPDATE autobotz SET verify_state = 'ok' WHERE id = $1`, [AB5]))?.code, '42501')
+      assert.equal((await refusal(`UPDATE autobotz SET verified_at = now() WHERE id = $1`, [AB5]))?.code, '42501')
+      assert.equal((await refusal(`
+        INSERT INTO autobotz (org_id, type, label, reference, mutative, verify_state)
+        VALUES ($1, 'agent', 'x', 'agents/x', false, 'ok')`, [TENANT_A]))?.code, '42501')
+      // What the tenant may still do: register a binding and edit it.
+      await db.query(`INSERT INTO autobotz (org_id, type, label, reference, mutative)
+                      VALUES ($1, 'agent', 'Allowed', 'agents/y', false)`, [TENANT_A])
+      await db.query(`UPDATE autobotz SET label = 'Renamed' WHERE id = $1`, [AB5])
+    })
+  })
+
+  test('Verify stamps its own time, and cannot reach another tenant\'s binding', async () => {
+    await inTenantTx(async () => {
+      await db.query(`SELECT public.bob_autobotz_record_verification($1, true, 'ok')`, [AB5])
+      const { rows: [r] } = await db.query(
+        'SELECT verified_at >= now() AND verified_at <= clock_timestamp() AS stamped FROM autobotz WHERE id = $1', [AB5])
+      assert.equal(r.stamped, true)
+      assert.equal((await refusal(`SELECT public.bob_autobotz_record_verification($1, true, 'x')`, [B_HOOK]))?.code, 'P0002')
+      const { rows } = await db.query(`SELECT count(*)::int AS n FROM pg_proc
+        WHERE proname = 'bob_autobotz_record_verification' AND pronargs <> 3`)
+      assert.equal(rows[0].n, 0, 'Verify still takes a caller-supplied time')
     })
   })
 })
@@ -290,12 +361,36 @@ async function beforeTheMove() {
 const body = () => moveMigration().replace(/^\s*(BEGIN|COMMIT);\s*$/gm, '')
 
 describe('Webhook entries move to the AutoBotz registry, and Action responses repoint, at once', () => {
-  test('the move and the repoint are one transaction', () => {
-    const sql = moveMigration()
-    assert.equal((sql.match(/^\s*BEGIN;\s*$/gm) || []).length, 1)
-    assert.match(sql, /^\s*BEGIN;\s*$/m)
-    assert.match(sql.trimEnd(), /COMMIT;$/)
-    assert.match(sql, /UPDATE bob\.response_rules/)
+  test('the file is one transaction: BEGIN first, COMMIT last, and nothing outside', () => {
+    const statements = moveMigration().replace(/--[^\n]*/g, '').split(';')
+      .map((x) => x.trim()).filter(Boolean)
+    assert.equal(statements[0], 'BEGIN')
+    assert.equal(statements.at(-1), 'COMMIT')
+    assert.equal(statements.filter((x) => /^(BEGIN|COMMIT|ROLLBACK)$/i.test(x)).length, 2)
+  })
+
+  test('replayed and made to fail at its last step, the move leaves nothing behind', async () => {
+    await inTx(async () => {
+      await beforeTheMove()
+      const W = 'aaaaaaaa-4444-4000-8000-0000000000e3'
+      await db.query(`INSERT INTO notification_channels (id, org_id, type, label, values)
+                      VALUES ($1, $2, 'webhook', 'A hook', '{https://hooks.example.test/a}')`, [W, TENANT_A])
+      const { rows: [r] } = await db.query(`
+        INSERT INTO response_rules (org_id, type, name, channel_ids)
+        VALUES ($1, 'action', 'By channel', ARRAY[$2]::uuid[]) RETURNING id`, [TENANT_A, W])
+      // The last data step is the DELETE from the communication registry.
+      await db.query(`CREATE FUNCTION pg_temp.refuse() RETURNS trigger LANGUAGE plpgsql
+                      AS $f$ BEGIN RAISE EXCEPTION 'injected at the last step'; END $f$`)
+      await db.query(`CREATE TRIGGER zz_refuse BEFORE DELETE ON bob.notification_channels
+                      FOR EACH ROW EXECUTE FUNCTION pg_temp.refuse()`)
+      const e = await refusal(body())
+      assert.match(e?.message ?? '', /injected at the last step/)
+      const { rows: moved } = await db.query('SELECT id FROM autobotz WHERE id = $1', [W])
+      assert.deepEqual(moved, [], 'the binding exists although the move failed')
+      const { rows: [still] } = await db.query(
+        'SELECT channel_ids, webhook_url IS NULL AS no_inline FROM response_rules WHERE id = $1', [r.id])
+      assert.deepEqual(still, { channel_ids: [W], no_inline: true }, 'the Action response was repointed by a failed move')
+    })
   })
 
   test('replayed: every webhook becomes a binding, and every Action response points at one', async () => {
@@ -490,7 +585,7 @@ describe('The outbox · approval, the causing alert, and what drains', () => {
   })
 
   test('an intention is written queued and moves only to drained, once', async () => {
-    await inTenantTx(async () => {
+    await inAppTx(async () => {
       await db.query('UPDATE autobotz SET rate_limit_per_hour = 10 WHERE id = $1', [AB1])
       const { rule, alert } = await actionFor(AB1)
       const pre = await refusal(`INSERT INTO outbound_queue (org_id, response_rule_id, alert_log_id, idempotency_key, state)
@@ -525,6 +620,125 @@ describe('The outbox · approval, the causing alert, and what drains', () => {
          WHERE q.autobotz_id = $1 GROUP BY 1, 2`, [AB1])
       assert.deepEqual(rows, [{ metric_id: 'abandonment', value: '12', n: 14 }])
     })
+  })
+})
+
+// ── The trace from action to alert cannot be cut ───────────────────────────
+// Every table that holds a key to alert_log, found. Deleting a row from one
+// would lose why an action happened, and deleting an intention would also give
+// its binding room under its limit again. Only bob_app moves an intention, and
+// only through the drain's one transition.
+async function traceFindings() {
+  const { rows: tables } = await db.query(`
+    SELECT DISTINCT format('%I.%I', n.nspname, c.relname) AS qualified
+      FROM pg_constraint k JOIN pg_class c ON c.oid = k.conrelid
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE k.contype = 'f' AND k.confrelid = 'bob.alert_log'::regclass`)
+  assert.ok(tables.some((t) => t.qualified === 'bob.outbound_queue'), 'the trace discovery found nothing')
+  const findings = []
+  for (const t of tables) {
+    for (const role of WRITERS) {
+      const { rows: [h] } = await db.query(`
+        SELECT has_table_privilege($1, $2::regclass, 'DELETE') AS del,
+               has_table_privilege($1, $2::regclass, 'TRUNCATE') AS trunc,
+               has_any_column_privilege($1, $2::regclass, 'UPDATE') AS upd`, [role, t.qualified])
+      if (h.del) findings.push(`${role} DELETE ${t.qualified}`)
+      if (h.trunc) findings.push(`${role} TRUNCATE ${t.qualified}`)
+      if (h.upd && role !== 'bob_app') findings.push(`${role} UPDATE ${t.qualified}`)
+    }
+  }
+  return findings
+}
+
+describe('The outbox · the trace from action to alert cannot be cut', () => {
+  test('no application role deletes a row that keys an alert; only bob_app updates one', async () => {
+    assert.deepEqual(await traceFindings(), [])
+  })
+
+  test('as a tenant, deleting or draining an intention directly is refused', async () => {
+    await inTenantTx(async () => {
+      await db.query('UPDATE autobotz SET rate_limit_per_hour = 1 WHERE id = $1', [AB1])
+      const { rule, alert } = await actionFor(AB1)
+      const { rows: [q] } = await intend(TENANT_A, rule, alert, 'cut-1')
+      assert.equal((await refusal('DELETE FROM outbound_queue WHERE id = $1', [q.id]))?.code, '42501')
+      assert.equal((await refusal(`UPDATE outbound_queue SET state = 'drained' WHERE id = $1`, [q.id]))?.code, '42501')
+      // And the limit still holds: the one written counts.
+      assert.match((await refusal(`INSERT INTO outbound_queue (org_id, response_rule_id, alert_log_id, idempotency_key)
+                                   VALUES ($1, $2, $3, 'cut-2')`, [TENANT_A, rule, alert]))?.message ?? '', /rate_limit_per_hour/)
+    })
+  })
+})
+
+describe('The outbox · the clock is the statement\'s, not the transaction\'s', () => {
+  test('a long transaction cannot date its intentions at its own start', async () => {
+    await inAppTx(async () => {
+      await db.query('RESET ROLE')
+      await db.query('UPDATE autobotz SET rate_limit_per_hour = 10 WHERE id = $1', [AB1])
+      const { rule, alert } = await actionFor(AB1)
+      await db.query('SET LOCAL ROLE bob_app')
+      await db.query('SELECT pg_sleep(0.05)')
+      const { rows: [q] } = await intend(TENANT_A, rule, alert, 'clock-1')
+      const { rows: [c] } = await db.query('SELECT $1::timestamptz > now() AS later', [q.created_at])
+      assert.equal(c.later, true, 'the intention carries the transaction start')
+      await db.query('SELECT pg_sleep(0.05)')
+      const { rows: [d] } = await db.query('SELECT * FROM public.bob_outbox_drain(100) WHERE id = $1', [q.id])
+      assert.ok(new Date(d.drained_at) > new Date(q.created_at), 'drained_at is not the statement\'s clock')
+    })
+  })
+})
+
+// Two writers at once, on two connections, each as bob_app under A's claim.
+describe('Concurrency · two writers cannot both find room', () => {
+  let c1, c2
+  const rules = []
+  before(async () => {
+    c1 = await connectAs('bob_app'); c2 = await connectAs('bob_app')
+  })
+  after(async () => {
+    await c1?.end(); await c2?.end()
+    await db.query('DELETE FROM outbound_queue WHERE response_rule_id = ANY($1)', [rules])
+    await db.query('DELETE FROM response_rules WHERE id = ANY($1)', [rules])
+    await db.query('DELETE FROM alert_log WHERE org_id = $1 AND metric_id = $2', [TENANT_A, 'abandonment'])
+    await db.query('UPDATE autobotz SET rate_limit_per_hour = NULL WHERE id = $1', [AB1])
+  })
+  const claim = (c) => c.query('SELECT set_config($1, $2, true)',
+    ['request.jwt.claims', JSON.stringify({ org_id: TENANT_A })])
+  const settle = (p) => p.then(() => null, (e) => e)
+  const pause = (ms) => new Promise((r) => setTimeout(r, ms))
+
+  test('with a limit of one an hour, the second of two concurrent intentions is refused', async () => {
+    await db.query('UPDATE autobotz SET rate_limit_per_hour = 1 WHERE id = $1', [AB1])
+    const { rule, alert } = await actionFor(AB1)
+    rules.push(rule)
+    const sql = `INSERT INTO outbound_queue (org_id, response_rule_id, alert_log_id, idempotency_key)
+                 VALUES ($1, $2, $3, $4)`
+    await c1.query('BEGIN'); await claim(c1)
+    await c2.query('BEGIN'); await claim(c2)
+    await c1.query(sql, [TENANT_A, rule, alert, 'race-1'])
+    const second = settle(c2.query(sql, [TENANT_A, rule, alert, 'race-2']))
+    await pause(300)
+    await c1.query('COMMIT')
+    const e = await second
+    await c2.query(e ? 'ROLLBACK' : 'COMMIT')
+    assert.match(e?.message ?? 'both were accepted', /rate_limit_per_hour/)
+  })
+
+  test('a rule attaching a binding and an edit removing its limit cannot both win', async () => {
+    await db.query('UPDATE autobotz SET rate_limit_per_hour = 5 WHERE id = $1', [AB1])
+    await db.query('DELETE FROM outbound_queue WHERE response_rule_id = ANY($1)', [rules])
+    await db.query('DELETE FROM response_rules WHERE id = ANY($1)', [rules])
+    rules.length = 0
+    await c1.query('BEGIN'); await claim(c1)
+    await c2.query('BEGIN'); await claim(c2)
+    const { rows: [r] } = await c1.query(`INSERT INTO response_rules (org_id, type, name, autobotz_id)
+                                          VALUES ($1, 'action', 'Race', $2) RETURNING id`, [TENANT_A, AB1])
+    rules.push(r.id)
+    const edit = settle(c2.query('UPDATE autobotz SET rate_limit_per_hour = NULL WHERE id = $1', [AB1]))
+    await pause(300)
+    await c1.query('COMMIT')
+    const e = await edit
+    await c2.query(e ? 'ROLLBACK' : 'COMMIT')
+    assert.equal(e?.code ?? 'the limit was removed under an attached rule', '23514')
   })
 })
 

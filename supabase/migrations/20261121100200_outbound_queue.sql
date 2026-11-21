@@ -29,7 +29,9 @@
 -- AN INTENTION MOVES ONCE. Written `queued` (or turned into `awaiting_approval`
 -- by BOb, never by the writer), then `queued` to `drained`, stamped by the
 -- database. Nothing else about it changes. Its time is the database's: a writer
--- cannot backdate one out of the limit's window.
+-- cannot backdate one out of the limit's window, and the clock is the
+-- statement's (clock_timestamp()), not the transaction's start.
+-- Nobody the application runs as deletes an intention.
 -- ════════════════════════════════════════════════════════════════════════════
 
 BEGIN;
@@ -72,8 +74,13 @@ CREATE POLICY "org_outbound_queue" ON bob.outbound_queue FOR ALL
   USING      (org_id = (auth.jwt() ->> 'org_id')::uuid)
   WITH CHECK (org_id = (auth.jwt() ->> 'org_id')::uuid);
 
-REVOKE ALL ON bob.outbound_queue FROM anon, service_role;
-GRANT SELECT, INSERT, UPDATE, DELETE ON bob.outbound_queue TO bob_app, authenticated;
+-- No DELETE for anyone the application runs as: deleting an intention would
+-- lose why an action happened and give its binding room under its limit
+-- again. Only bob_app updates, and the transition trigger allows one change.
+-- The rows go with their organization (ON DELETE CASCADE, as the owner).
+REVOKE ALL ON bob.outbound_queue FROM anon, service_role, authenticated, bob_app;
+GRANT SELECT, INSERT ON bob.outbound_queue TO bob_app, authenticated;
+GRANT UPDATE ON bob.outbound_queue TO bob_app;
 
 -- ── Admission: the intention as BOb writes it ───────────────────────────────
 CREATE FUNCTION public.bob_outbox_admit()
@@ -89,7 +96,9 @@ BEGIN
     RAISE EXCEPTION 'An intention is written queued. BOb decides whether it waits for '
       'approval, and only the drain marks one drained' USING ERRCODE = 'check_violation';
   END IF;
-  NEW.created_at := now();
+  -- The statement's clock, not the transaction's: a long transaction must not
+  -- date its intentions at its own start, outside the window.
+  NEW.created_at := clock_timestamp();
 
   SELECT * INTO r FROM bob.response_rules
    WHERE id = NEW.response_rule_id AND org_id = NEW.org_id;
@@ -118,7 +127,7 @@ BEGIN
 
   IF b.rate_limit_per_hour IS NOT NULL THEN
     SELECT count(*) INTO n FROM bob.outbound_queue
-     WHERE autobotz_id = b.id AND created_at > now() - interval '1 hour';
+     WHERE autobotz_id = b.id AND created_at > clock_timestamp() - interval '1 hour';
     IF n >= b.rate_limit_per_hour THEN
       RAISE EXCEPTION 'rate_limit_per_hour: AutoBotz binding % has % intentions in the '
         'last hour, and its limit is %', b.id, n, b.rate_limit_per_hour
@@ -127,7 +136,7 @@ BEGIN
   END IF;
   IF b.invocation_cap_daily IS NOT NULL THEN
     SELECT count(*) INTO n FROM bob.outbound_queue
-     WHERE autobotz_id = b.id AND created_at > now() - interval '24 hours';
+     WHERE autobotz_id = b.id AND created_at > clock_timestamp() - interval '24 hours';
     IF n >= b.invocation_cap_daily THEN
       RAISE EXCEPTION 'invocation_cap_daily: AutoBotz binding % has % intentions in the '
         'last 24 hours, and its cap is %', b.id, n, b.invocation_cap_daily
@@ -166,7 +175,7 @@ BEGIN
          IS NOT DISTINCT FROM
          (OLD.id, OLD.org_id, OLD.response_rule_id, OLD.autobotz_id, OLD.alert_log_id,
           OLD.idempotency_key, OLD.correlation_id, OLD.created_at) THEN
-    NEW.drained_at := now();
+    NEW.drained_at := clock_timestamp();
     RETURN NEW;
   END IF;
   RAISE EXCEPTION 'An intention moves once, from queued to drained, and is otherwise '
