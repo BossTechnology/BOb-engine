@@ -14,7 +14,7 @@
 - Kit del ensayo de lab-02 para P5 (rama `claude/gallant-tu-a8b569`), sin correr en ninguna caja:
   - `scripts/ensayo-migracion-lab.sh` (`--dry-run`, `--ejecutar`, `--deshacer`) y `docs/p5-failed-migration-procedure.md`;
   - probado de punta a punta contra una copia local de la pila de identidad de lab-02 (mismos digests), con cada comprobación vista fallar por sabotaje;
-  - medido: con el CLI 2.120.0 una migración que falla no deja nada, envuelta o no. Hallazgos F-28 (`GRANT … TO current_user` tumba el servidor en la imagen de la caja), F-29 (`pg_dump -n bob` pierde la pertenencia a publicaciones) y F-30 (CI en Postgres 15, la caja en 17.6);
+  - medido: con el CLI 2.120.0 una migración que falla no deja nada, envuelta o no. Hallazgos F-35 (`GRANT … TO current_user` tumba el servidor en la imagen de la caja), F-36 (`pg_dump -n bob` pierde la pertenencia a publicaciones) y F-37 (CI en Postgres 15, la caja en 17.6);
   - el kit corre `scripts/box-check.mjs` y anota si lab-02 tiene `pg_net` o `http` (F-27);
   - en Bzzz, PR aparte: `backup.sh` saca `bob.sql.gz` sin datos de `proj_*`, verificado contra lo vivo.
 - Guards de P5 (rama `p5-role-guards`): los tres que faltaban del §6.3 (tres roles y no más, `bob_ai_ro` solo vistas, sin salida a red) y los dos de la objeción 3:
@@ -88,4 +88,4 @@
 - 2026-11-19: PR #21 fusionado por orden de Henry (`c4ebf1d`), con CI en verde. Slice 2 cerrado.
 - 2026-11-19: PR #21 fusionado (`c4ebf1d`) y aviso de 0.5.3 publicado en la tarea 6. Abogado del diablo sobre P5 con siete objeciones, y los insumos de P5 puestos al día con F-26 (Q6). Henry respondió las siete objeciones y Q6. Nada firmado; falta el ensayo en lab-02.
 - 2026-11-20: los guards de P5 que faltaban: tres del §6.3 y dos de la objeción 3, más el chequeo de caja en `scripts/`. De 167 a 186 tests. F-27 (pg_net/http a PUBLIC): Henry eligió (a); el cierre espera a lab-02.
-- 2026-11-20: kit del ensayo de lab-02 (script, procedimiento y banco local) y, en Bzzz, el respaldo aparte de `bob`. F-28, F-29 y F-30 registrados. Nada corrido en ninguna caja.
+- 2026-11-20: kit del ensayo de lab-02 (script, procedimiento y banco local) y, en Bzzz, el respaldo aparte de `bob`. F-35, F-36 y F-37 registrados. Nada corrido en ninguna caja.

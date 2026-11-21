@@ -492,9 +492,9 @@ window, not before the signature**, two things exist.
 local copy of lab-02's identity stack. What they measured is in
 `Documentation/contract-amendments.md` ("P5 · The lab-02 rehearsal kit"):
 - with CLI 2.120.0 a failing file leaves nothing behind, wrapped or not;
-- F-28: `GRANT … TO current_user` terminates the server on the box's image;
-- F-29: `pg_dump -n bob` loses the publication membership;
-- F-30: CI runs Postgres 15 and the box runs 17.6.
+- F-35: `GRANT … TO current_user` terminates the server on the box's image;
+- F-36: `pg_dump -n bob` loses the publication membership;
+- F-37: CI runs Postgres 15 and the box runs 17.6.
 
 The lab-02 run is still owed. D62 waits on it.
 

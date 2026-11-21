@@ -2224,11 +2224,11 @@ a box.
   transaction: owners, grants, default privileges, the two definer views, the
   `SECURITY DEFINER` functions, policies, triggers, constraints, indexes,
   sequences, comments and every row outside `proj_*`. The publication
-  membership is the exception (F-29).
+  membership is the exception (F-36).
 - **The reference feeder rebuilds the projections identically**, row for row,
   `computed_at` aside.
 
-### F-28 · `GRANT <role> TO current_user` terminates the server on the box's image — finding
+### F-35 · `GRANT <role> TO current_user` terminates the server on the box's image — finding
 
 On `17.6.1.136`, with `supautils` loaded, `GRANT bob_feeder TO current_user`
 run as `postgres` ends every connection, and the server goes through recovery.
@@ -2243,7 +2243,7 @@ does not crash.
 - Not changed here: the suite. If the CI image moves to 17.x, those tests will
   need to name the role.
 
-### F-29 · `pg_dump -n bob` does not carry the publication membership — finding
+### F-36 · `pg_dump -n bob` does not carry the publication membership — finding
 
 `bob.alerts`, `bob.anomalies`, `bob.metric_snapshots` and
 `bob.sentiment_readings` are in `supabase_realtime`. `pg_dump -n bob` writes no
@@ -2255,12 +2255,12 @@ Realtime no longer sees them, and nothing reports an error.
   does the same, and its fingerprint covers publication membership.
 - Seen failing: with the membership not added back, the fingerprint differs.
 
-### F-30 · CI applies the chain on Postgres 15, and the boxes run 17.6 — finding
+### F-37 · CI applies the chain on Postgres 15, and the boxes run 17.6 — finding
 
 `supabase/config.toml` and CI use `major_version = 15`. lab-02 runs
 `supabase/postgres:17.6.1.136`. Measured: the whole chain applies cleanly on
 17.6, and on that image the migration role `postgres` is not a superuser, has
-CREATEROLE and has BYPASSRLS. F-28 is a difference between the two that CI
+CREATEROLE and has BYPASSRLS. F-35 is a difference between the two that CI
 cannot see. Moving CI to 17.x is not part of this change; it is for Henry to
 decide.
 

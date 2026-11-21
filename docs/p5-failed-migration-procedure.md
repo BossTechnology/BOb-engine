@@ -58,7 +58,7 @@ What is never done because of BOb:
   applied.
 - Running the test suite against the box: it loads and deletes a fixture.
 - `GRANT <role> TO current_user` on the box's image. It terminates the whole
-  Postgres server, the portal's logins with it (F-28). Name the role.
+  Postgres server, the portal's logins with it (F-35). Name the role.
 
 ---
 
@@ -109,7 +109,7 @@ docker exec bzzz-supabase-db pg_dump -U supabase_admin -d postgres -n bob --excl
   against the live table. The manifest says `postgres:bob tablas=N filas=M
   publicaciones=K archivo=bob.sql.gz`, or `postgres:bob no-aplica` on a box
   without BOb.
-- **It does not carry the publication membership** (F-29). `backup.sh`
+- **It does not carry the publication membership** (F-36). `backup.sh`
   writes it to `bob_publicaciones.txt` beside the dump.
 - It does not carry `supabase_migrations` either: the record of what was
   applied stays where it is.
