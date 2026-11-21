@@ -65,7 +65,7 @@
 
 ## Pendiente
 - Slice 3: que Federico acepte F-28 a F-34, F-38 y F-39 (0.6) y diga cuáles son las «nueve reglas» y los «siete consumidores». El aviso y su corrección están publicados en la tarea 6. El PR de implementación está abierto; falta el texto de 0.6 en el contrato cuando Federico acepte, y lo que cambie vuelve como migración.
-- Slice 3, para Henry: las once decisiones de construcción en amendments («Slice 3 · The absent-not-zero state, built»), F-45 (corregir la tabla del §8.2 de la spec: la web queda `pending` por R3) y F-46 (`organizations` no tenía política para `bob_app`; el guard de tenancy no descubre tablas sin `org_id`).
+- Slice 3: Henry confirmó el 21 nov las trece decisiones de construcción y la corrección de F-45 (spec §8, FR-32: la web queda `pending` por R3). F-46: el guard de tablas con llave `id` va en el PR #43, apilado sobre este.
 - Abiertos del Slice 3 (spec §10): ceros por actor en el drill-down (se decide con el Slice 7), materializar `bob_cell_state` solo si el `EXPLAIN` lo pide, ceros de `hallucinations` cuando el alimentador pueda ver el ground truth, y F-34 (resolución de referencias AREP).
 - Bob-New PR #29 (matriz mínima): su «no configurado» no lee los marcadores de D-14. La matriz definitiva lee `v_cell_state` y no reimplementa las reglas.
 - P5 (D62): las siete objeciones del §8 están respondidas, y Q6 se reabrió el 2026-11-21 (F-40). Henry eligió (a) en Q6. Antes de firmar falta el ensayo en lab-02. El ensayo en lab-02 (migración amañada, las nueve sin envolver, `db push` y restaurar `bob` solo) va antes de la firma.
@@ -86,7 +86,7 @@
 - F-47: fusionar el PR y, con eso, correr el ensayo en lab-02 (`--dry-run`, luego `--ejecutar`) desde ese commit. lab-02 necesita la CLI de Supabase 2.120.0.
 - Slice 6 cerrado: PR #26 y PR #31 en `main`. Queda abierto para P5 si el outbox necesita un estado `claimed` (el stub marca `drained` antes del intento). Bob-New tiene que seguir el cambio de columnas de `response_rules` y llamar a Verify antes de la primera intención.
 - P5 Q6, opción (a), construida y fusionada (PR #33, `f8c8474`). `bob.member_refs_seen` con RLS por `org_id`, INSERT solo para `bob_feeder`, SELECT y DELETE para `bob_app`; `stageMemberRefs` en el alimentador de referencia; `reconciliation/ghosts.mjs` lee la tabla como `bob_app` y borra lo que consumió, con la ventana de H3 y el barrido de 395 días. Enmienda del contrato §7.2 y §7.3a propuesta como F-41 y avisada a Federico en la tarea 6 el 21 nov (cambia quién llama a `member_refs_seen`, entregable de 3.7); falta su respuesta, y con ella si el CHECK de la ventana se queda. D62 sigue sin firmar.
-- Slice 3: Henry revisa el PR de implementación y las decisiones de construcción; no se fusiona hasta que Federico acepte 0.6 en la tarea 6. Con 0.6 aceptado, escribir su texto en el contrato en el mismo PR.
+- Slice 3: decisiones de construcción confirmadas por Henry (21 nov). El PR #40 no se fusiona hasta que Federico acepte 0.6 en la tarea 6; con 0.6 aceptado, escribir su texto en el contrato en el mismo PR.
 - P5 (D62): el kit del ensayo (#25), los guards de P5 (#24) y los insumos (#22) están en `main`. Falta que Henry corra en lab-02 `scripts/ensayo-migracion-lab.sh --dry-run` y luego `--ejecutar`, con la evidencia en `evidence/ENSAYO/` de Bzzz. Con eso F-27 se cierra con (b) o con (c), según haya `pg_net` o `http`, y, si confirma el §6.2, Henry firma D62.
 - La tarea 3.7 de BzzzBX implementa contra el contrato 0.5.3, con `member_refs_seen` como cuarto entregable (turno de Federico).
 
