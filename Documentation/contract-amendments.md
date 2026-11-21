@@ -3129,6 +3129,31 @@ run from a `main` without it.
 Limit: Postgres lists at most 100 objects in the CASCADE's notice. The kit's
 count check would fail past that, loudly, not silently.
 
+## P5 · the rehearsal on lab-02 — run
+
+Run on bzzz-lab-02 on 21 Nov, on Henry's authorization, from BOb-engine
+`5e5b9be` (after F-47, before Slice 3), CLI 2.120.0, box image
+`supabase/postgres:17.6.1.136`. `--dry-run`: 5 checks, all as expected, 33
+migrations to push. `--ejecutar`: 41 checks, all as expected. The two rigged
+migrations left nothing, `schema_migrations` stopped just before each, F-15
+held at the end, the CASCADE took outside `bob` exactly the one dependent saved
+(`public.bob_outbox_drain`), the fingerprint of `bob` and `public` was
+identical after the restore, the projections were rebuilt row for row,
+`auth.users` (5 accounts) was untouched from start to finish, and box-check
+passed. BOb's chain stays applied on lab-02, without synthetic data.
+
+F-27: on lab-02 `http` and `pg_net` are available and not installed, before
+and after the chain.
+
+Found on the box: the kit compared inventories with `comm`, which wants the
+shell's collation, while the inventory comes in the database's. On lab-02
+(`en_US.UTF-8`) `comm` warned that its input was not sorted. Today's listing
+was right (105 lines either way), but `--deshacer` reads the same comparison
+to decide what to drop. Both sides are now sorted bytewise before `comm`.
+
+Not run on the box: the Bzzz side. lab-02's Bzzz is at `bceaa4e`, without
+bzzz#365, so its `backup.sh` does not write `bob.sql.gz` yet.
+
 ---
 
 *Boss.Technology · BOb v1 · Internal only*
