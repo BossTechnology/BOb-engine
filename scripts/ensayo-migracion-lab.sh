@@ -208,6 +208,11 @@ objetos_ensayo() {
        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relname LIKE 'ensayo\_p5\_%'"
 }
 # Every object outside the catalog, by name, to know what the chain added.
+# The inventory comes out in the database's collation, and comm wants the
+# shell's. On lab-02 (en_US.UTF-8) they differ, and comm then misses lines,
+# which --deshacer relies on. Both sides are sorted bytewise here, so files
+# from an earlier run compare right too.
+comm_c() { LC_ALL=C comm "$1" <(LC_ALL=C sort "$2") <(LC_ALL=C sort "$3"); }
 inventario() {
   q "SELECT 'schema|' || nspname FROM pg_namespace WHERE nspname NOT LIKE 'pg\_%' AND nspname <> 'information_schema'
      UNION ALL
@@ -532,7 +537,7 @@ ejecutar)
   ev "- F-27 · extensiones de salida tras la cadena: \`$(extensiones_salida)\`"
   inventario > "$RUN/inventario-despues.txt"
   ev "- lo que la cadena añadió fuera de bob y supabase_migrations:"
-  comm -13 "$RUN/inventario-antes.txt" "$RUN/inventario-despues.txt" \
+  comm_c -13 "$RUN/inventario-antes.txt" "$RUN/inventario-despues.txt" \
     | grep -Ev '^(rel|function|type|trigger)\|(bob|supabase_migrations)\.|^schema\|(bob|supabase_migrations)$' \
     | sed 's/^/  - /' | redactar >> "$EV" || true
   ;;
@@ -541,7 +546,7 @@ deshacer)
   { echo "# Deshacer el ensayo P5 en $HOST_ACTUAL · $SELLO"; echo; echo "Corrida: \`$(basename "$RUN")\`"; } > "$EV"
   CUENTAS0="$(auth_cuentas)"; AUTH0="$(auth_huella)"
   inventario > "$RUN/inventario-ahora.txt"
-  comm -13 "$RUN/inventario-antes.txt" "$RUN/inventario-ahora.txt" > "$RUN/sobra.txt"
+  comm_c -13 "$RUN/inventario-antes.txt" "$RUN/inventario-ahora.txt" > "$RUN/sobra.txt"
   paso "Lo que sobra respecto al inventario de antes"
   sed 's/^/  - /' "$RUN/sobra.txt" | redactar >> "$EV"
   # What was added, by kind, outside bob and supabase_migrations (those two go
