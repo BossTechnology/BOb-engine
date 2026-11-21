@@ -360,3 +360,50 @@ export async function tenantTablesUnreadableByApi(client) {
   }
   return out
 }
+
+// F-44. TRUNCATE does not go through row-level security: whoever holds it on a
+// tenant table can empty every tenant's rows in one statement, whatever the
+// policies say. So no role the application runs as holds it, on any tenant
+// table in any schema, partitions included. Read with has_table_privilege, so a
+// grant to PUBLIC or through a role counts.
+export const NEVER_TRUNCATES = ['anon', 'authenticated', 'bob_app', 'bob_feeder', 'bob_ai_ro']
+
+export async function truncateFindings(client) {
+  const { rows } = await client.query(`
+    SELECT r.rolname AS role, format('%I.%I', n.nspname, c.relname) AS qualified, c.relname
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+      JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'org_id' AND NOT a.attisdropped
+      CROSS JOIN (SELECT unnest($1::text[]) AS rolname) r
+     WHERE c.relkind IN ('r', 'p')
+       AND n.nspname NOT LIKE 'pg\\_%' AND n.nspname <> 'information_schema'
+       AND EXISTS (SELECT 1 FROM pg_roles x WHERE x.rolname = r.rolname)
+       AND has_table_privilege(r.rolname, c.oid, 'TRUNCATE')
+     ORDER BY 2, 1`, [NEVER_TRUNCATES])
+  return rows.map((r) => ({
+    table: r.relname,
+    rule: 'ID-10',
+    finding: `${r.role} holds TRUNCATE on ${r.qualified}, and TRUNCATE skips row-level security`,
+  }))
+}
+
+// The same, before a table exists: default privileges the migration owner sets
+// must not hand TRUNCATE to those roles, in a schema that holds a tenant table
+// (discovered) or in `public`, where a table lands when no schema is named.
+// Supabase's defaults in `public` did, which is how the tables that moved to
+// `bob` got it. Supabase's own schemas (storage, …) hold no tenant table.
+export async function truncateDefaultFindings(client) {
+  const { rows } = await client.query(`
+    SELECT d.defaclnamespace::regnamespace::text AS schema, g.rolname AS grantee
+      FROM pg_default_acl d
+      CROSS JOIN LATERAL aclexplode(d.defaclacl) e
+      JOIN pg_roles g ON g.oid = e.grantee
+     WHERE d.defaclobjtype = 'r' AND d.defaclrole = current_user::regrole
+       AND e.privilege_type = 'TRUNCATE' AND g.rolname = ANY($1)
+       AND (d.defaclnamespace = 'public'::regnamespace OR EXISTS (
+             SELECT 1 FROM pg_class c
+               JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'org_id' AND NOT a.attisdropped
+              WHERE c.relnamespace = d.defaclnamespace AND c.relkind IN ('r', 'p')))
+     ORDER BY 1, 2`, [NEVER_TRUNCATES])
+  return rows.map((r) => `tables ${r.schema} creates hand TRUNCATE to ${r.grantee} by default`)
+}
+

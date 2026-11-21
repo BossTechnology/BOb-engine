@@ -3018,7 +3018,7 @@ changed here:
   `bob.users` (only SELECT policies; F-42 made `bob_app`'s side exact, not this
   one) and on `bob.baselines` (deny-all on purpose).
 
-### F-44 · `authenticated` holds TRUNCATE on 26 tables in `bob` — finding
+### F-44 · `authenticated` holds TRUNCATE on 26 tables in `bob` — closed, revoked
 
 TRUNCATE does not go through row-level security. `authenticated` holds it on 26
 tables in `bob`, among them `organizations`, `users`, `actors`, `alert_log` and
@@ -3031,6 +3031,35 @@ a defect whether or not a path exists yet. `anon` holds it on none.
 To rule on: revoke TRUNCATE from `authenticated` on all of `bob` (and the
 default privileges that hand it out), with a discovered guard that no
 application-facing role holds TRUNCATE on a tenant table.
+
+
+## F-44 · closed: no role the application runs as can TRUNCATE
+
+Ruled by Henry on 21 Nov: revoke, and stop handing it out. Migration
+`20261121170000`:
+
+- revokes TRUNCATE on every table in `bob` from PUBLIC, `anon`,
+  `authenticated`, `bob_app`, `bob_feeder` and `bob_ai_ro`. Only
+  `authenticated` held it (26 tables, no partitions); every other privilege is
+  untouched;
+- stops the migration owner's default privileges in `public` from giving
+  TRUNCATE to `anon` and `authenticated`, which is where the 26 got it.
+
+Two discovered guards in `tests/tenancy.test.mjs` (helpers in `rls.mjs`):
+
+- no role in `NEVER_TRUNCATES` holds TRUNCATE on any table carrying `org_id`,
+  in any schema, partitions included, read with `has_table_privilege` (PUBLIC
+  and role membership count);
+- the migration owner's default privileges hand TRUNCATE to none of them, in
+  `public` and in any schema that holds a tenant table. Supabase's own schemas
+  (`storage` keeps such a default) hold no tenant table and are left alone.
+
+Seen failing: both guards before the migration (the 26 tables; the default in
+`public`); the meta probes, in `public` and in `bob`, for a granted TRUNCATE and
+a default one (in `public` the probe also shows `anon` getting it by default);
+and, after the migration, three sabotages: TRUNCATE back on `users` for
+`authenticated`, TRUNCATE on `actors` to PUBLIC, and the `public` default back.
+pgTAP 18 of 18 on the shared local stack; the suite's clean run is CI's.
 
 ---
 
