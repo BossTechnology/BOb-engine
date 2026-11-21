@@ -2296,7 +2296,85 @@ tenant B's binding a limit first, so only the key is left to refuse.
 Locally the guard ran before the stub was tracked, so it never saw the file. The
 stub now uses the intention's id with no namespace.
 
-**Counts.** 186 → 221: 218 pass and 3 are `todo`. pgTAP: 9.
+**Counts.** 186 → 221: 218 pass and 3 are `todo`. pgTAP: 9. After the review below: 230, 227 pass, 3 `todo`.
+
+---
+
+## Slice 6 · An independent review of the pull request, applied
+
+The three Slice 6 migrations were edited in place, not appended to. They have
+run nowhere shared (the local stack only), so the append-only rule does not
+apply yet. Each fix went test first, and each new guard was seen failing.
+
+### Fixed
+
+1. **No DELETE on the outbox.** `bob_app` and `authenticated` held DELETE on
+   `outbound_queue`. Deleting an intention gave its binding room under its
+   limit again and lost the trace from intention to alert. Both lose DELETE and
+   TRUNCATE. A guard discovers every table that keys `alert_log` and refuses
+   DELETE and TRUNCATE to the application's roles. The F-19 grants test now
+   expects SELECT, INSERT and UPDATE on those tables.
+2. **Only `bob_app` updates an intention.** `authenticated` could
+   `SET state = 'drained'` directly, which made the drain's REVOKE meaningless.
+   UPDATE is now `bob_app`'s alone, and the "moves once" test runs as `bob_app`.
+3. **Only Verify writes a verdict (RS-30, RS-31).**
+   - `verify_state`, `verified_at` and `verify_msg` are no longer writable by
+     `bob_app` or `authenticated`: INSERT and UPDATE are granted per column,
+     without those three.
+   - A binding is born unverified, whatever an INSERT says.
+   - A verification time in the future is refused. Dated ten years ahead, a
+     binding would never go stale.
+   - `bob_autobotz_record_verification()` no longer takes a time. It stamps
+     `clock_timestamp()`, runs SECURITY DEFINER, and scopes itself to the
+     caller's claim.
+   - A column added to `autobotz` later gets no grant until a migration gives
+     it one.
+   - The F-19 grants test now reads INSERT and UPDATE per column.
+4. **The statement's clock.** Admission stamps `created_at`, and measures the
+   hour and the 24 hours, with `clock_timestamp()`, and the drain stamps
+   `drained_at` the same way. Under `now()`, a long transaction dated its
+   intentions at its own start.
+5. **No write skew between attaching and removing a limit.** The attach
+   trigger takes `FOR SHARE` on the binding before it checks. The order is the
+   fix: the review asked for the lock, and taking it after the check would
+   still lose the race.
+6. **Concurrency, tested.** Two `bob_app` connections: with a limit of one an
+   hour, the second of two concurrent intentions is refused. An attach and a
+   limit removal cannot both win. The "one transaction" test now checks the
+   file's statements (BEGIN first, COMMIT last, nothing else), and a replay
+   that fails at its last step leaves no binding and no repointed response.
+
+### Verified by sabotage, after the review
+
+| Sabotage | Red |
+|---|---|
+| DELETE on the outbox to `bob_app` | the trace guard; F-19 |
+| UPDATE on the outbox to `authenticated` | the trace guard; drain directly as a tenant |
+| UPDATE (`verify_state`) to `authenticated` | the verdict-column guard; claiming a verification directly |
+| INSERT not forced to unverified | the state and its time cannot disagree |
+| A future verification time allowed | the same |
+| Admission stamping `now()` | the clock is the statement's |
+| Admission without `FOR UPDATE` on the binding | the concurrent limit of one |
+| The attach trigger without `FOR SHARE` | attach and limit removal cannot both win |
+| Verify not scoped to the claim | cannot reach another tenant's binding |
+| A `COMMIT; BEGIN;` inside the move | the file is one transaction |
+
+### Questions for Henry (from the review, not changed)
+
+- **An Action with an inline `webhook_url` and another organization's id in
+  `channel_ids`.** The move counts the inline one as the single webhook and
+  leaves the foreign id in `channel_ids`. Should it refuse instead?
+- **RS-32 and scope.** Changing `scope_kind` or `scope_ref` does not invalidate
+  a verification, because scope says where a binding applies, not what it
+  invokes. Is that the reading?
+- **The stub drains before it reports.** `drained` is committed before any
+  `delivery_attempt` exists, so if the stub dies in between, an intention is
+  drained with no outcome. The real transmitter will have to answer this.
+  Should the outbox carry a claimed state?
+- **Admission does not look at `verify_state`.** An unverified, failed or stale
+  binding still gets intentions. Should one need to be verified, and fresh?
+
+**Counts.** 221 → 230: 227 pass and 3 are `todo`. pgTAP: 9.
 
 ---
 

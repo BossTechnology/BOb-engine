@@ -18,7 +18,8 @@
   - `bob.outbound_queue`: los límites se aplican al escribir, lo que requiere aprobación nada lo drena, un binding que cambia el mundo no se adjunta sin límite y cada intención lleva su alerta. El stub (`outbox/stub-drainer.mjs`) drena y el resultado vuelve por `proj_deliveries`;
   - ID-11 completo: `scope_kind` en umbrales, reglas de anomalía y de texto, y el test los descubre;
   - D-31 cerrado. Un guard nuevo comprueba que BOb no guarde credenciales. Cada guard nuevo se vio fallar (once sabotajes), y el de credenciales estaba mal en su primera corrida;
-  - suite: 221 tests, 218 pasan y 3 son `todo`. pgTAP en `supabase/tests/database` (9). `supabase test db` sin ruta falla también en `main`, porque corre los fixtures.
+  - revisión independiente aplicada: el outbox no se borra, solo `bob_app` lo actualiza, solo Verify escribe el veredicto (con el reloj de la base y nunca en el futuro), `clock_timestamp()` en el outbox y locks contra las carreras, con tests concurrentes. Diez sabotajes más, todos en rojo. Cuatro preguntas para Henry en amendments;
+  - suite: 230 tests, 227 pasan y 3 son `todo`. pgTAP en `supabase/tests/database` (9). `supabase test db` sin ruta falla también en `main`, porque corre los fixtures.
 - Guards de P5 (rama `p5-role-guards`): los tres que faltaban del §6.3 (tres roles y no más, `bob_ai_ro` solo vistas, sin salida a red) y los dos de la objeción 3:
   - `scripts/box-check.mjs`, el chequeo de solo lectura que corre la caja después de migrar: una organización y su `slug` igual a `bzzz.tenant`, y además los dos guards de roles;
   - `boxTenant` en el alimentador, que manda a la ruta A los eventos de otro tenant y no los escribe.
@@ -91,3 +92,4 @@
 - 2026-11-19: PR #21 fusionado (`c4ebf1d`) y aviso de 0.5.3 publicado en la tarea 6. Abogado del diablo sobre P5 con siete objeciones, y los insumos de P5 puestos al día con F-26 (Q6). Henry respondió las siete objeciones y Q6. Nada firmado; falta el ensayo en lab-02.
 - 2026-11-20: los guards de P5 que faltaban: tres del §6.3 y dos de la objeción 3, más el chequeo de caja en `scripts/`. De 167 a 186 tests. F-27 (pg_net/http a PUBLIC): Henry eligió (a); el cierre espera a lab-02.
 - 2026-11-21: Slice 6 construido test primero sobre el stack local `bob-v1` (puertos 583xx, sin commitear; poca memoria en Docker). De 186 a 221 tests, once sabotajes vistos en rojo. D-31 cerrado; la ejecución de punta a punta queda como `todo`.
+- 2026-11-21: revisión del PR #26 aplicada en las mismas tres migraciones (no se aplicaron en ningún lado compartido). De 221 a 230 tests; cuatro dudas quedan como preguntas para Henry.
