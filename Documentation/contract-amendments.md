@@ -389,7 +389,7 @@ repository — was not tracked.
 
 ---
 
-### D-31 · What does `mutative = true` cause BOb to do? — OPEN
+### D-31 · What does `mutative = true` cause BOb to do? — CLOSED in Slice 6 (see the end of this file)
 
 BR-3 says BOb refuses to register a binding without a ruling. It does not say
 what BOb does with the ruling once it has it.
@@ -2470,6 +2470,201 @@ The notice on Relevo task 6 (20 Nov) carries F-28 as first written and says
 D-14's markers come first without saying D-14 is extended. The correction
 (F-28 corrected, F-38, F-39, F-31 reworded) was posted there on 21 Nov, by
 Henry's order.
+
+---
+
+## Slice 6 · Registries and the outbox, built
+
+Three migrations, `20261121100000` to `20261121100200`, and
+`tests/slice6-registries-outbox.test.mjs`. RS-30 to RS-35 are cited by ID only:
+the Behavioural Rules document is internal and this repository is public.
+
+### D-31 · Closed — what BOb writes, and when it refuses to write
+
+Settled in the scope map and built here. BOb never executes and never holds a
+customer credential; it writes an intention to `bob.outbound_queue` and
+something else transmits it.
+- **Limits at write time.** `rate_limit_per_hour` (rolling hour),
+  `invocation_cap_daily` (rolling 24 hours) and `concurrency_limit` (written and
+  not yet drained) are checked when the intention is inserted, under a lock on
+  the binding. With ten an hour, the eleventh is refused. The intention's time
+  is the database's, so it cannot be backdated out of the window.
+- **Approval.** A binding with `requires_approval` gets its intention written
+  `awaiting_approval`. Nothing drains that state and nothing leaves it.
+  Approving one is not in v1.
+- **A limit before attaching.** An Action response cannot attach a mutative
+  binding that declares neither `rate_limit_per_hour` nor
+  `invocation_cap_daily`, and an attached binding cannot lose its limit.
+  `concurrency_limit` does not count: it bounds how many run at once, not how
+  many there are.
+- **The causing alert.** `alert_log_id` is NOT NULL and keyed by organization.
+
+### Choices the build made — for Henry
+
+1. **Moved webhooks are ruled on the refusing side.** BR-3 never asked these
+   entries whether they change the world. They move `mutative = true`,
+   `requires_approval = true`, with the reason in `verify_msg`. The migration
+   rules on nothing in the other direction. Nothing moves on the chain as it
+   starts.
+2. **The move stops and names rows** for a webhook entry without exactly one
+   address, for an Alert or Alarm response that sends to a webhook, and for an
+   Action response that does not name exactly one webhook of its own
+   organization.
+3. **Exempt attachments.** A moved webhook attached before migration 2 has no
+   limit. It is exempt from the attach rule, the same way the BR-3 constraint
+   exempted rows that came before it, and migration 3 refuses an intention for
+   it anyway. The query that lists them is in migration 2.
+4. **A failed verification is a `warning`** in `alert_log` (`alert_type
+   'verification_failed'`, `autobotz_id` set). RS-25 asks that an execution
+   failure be as prominent as a threshold breach; this is a verification
+   failure, and the severity is open.
+5. **The freshness window is 30 days**, one function
+   (`bob_autobotz_freshness_window()`), taken from the original migration's
+   comment.
+6. **The stub drain runs as `bob_app`**, under the box's single claim. Which
+   role the real transmitter holds is a P5 question, not a fourth role.
+7. **`proj_deliveries.outbound_id` still has no foreign key.** The outcome
+   joins the outbox by value, and the read-back test joins it.
+
+### ID-11 completes (F-05)
+
+`threshold_configs`, `anomaly_rules` and `text_rules` gain `scope_kind`
+(default `company`) and `scope_ref`. The tenancy test discovers every table
+with `scope_kind`, has a floor of four, requires each to be a tenant table, and
+needs tenant B to own a company-scoped row in each. The two-tenant fixture gains
+one row per tenant in the three tables.
+
+### Not testable until execution exists
+
+The outbox drains to a stub (`outbox/stub-drainer.mjs`), the stub reports a
+`delivery_attempt` event, and the reference feeder writes it to
+`proj_deliveries`, read back as `bob_app`. That a drained intention reaches a
+real provider and its outcome returns is a `todo` in the suite, stated rather
+than claimed. Execution must not be switched on before the emission slice.
+
+### Consumer impact
+
+`response_rules.webhook_url`, `webhook_method` and `webhook_payload` are
+dropped, and `notification_channels` refuses `type = 'webhook'`. Any client
+that wrote those columns or that type needs to follow (the F-11 lesson). Bob-New
+is outside this repository and was not changed.
+
+### `supabase test db`
+
+The bare command fails on `main` too: it runs `supabase/tests/fixtures/*.sql`
+as pgTAP and finds no plan. pgTAP now lives in `supabase/tests/database/`, and
+CI runs `supabase test db supabase/tests/database`.
+
+### Verified by sabotage
+
+Each change was applied to the database, or to a copy of the code, then the
+suite was run and the change undone.
+
+| Sabotage | Red |
+|---|---|
+| The rate check removed from admission | the eleventh is refused; no backdating |
+| Approval ignored on admission | written awaiting approval; the read-back |
+| The drain takes `awaiting_approval`, transition guard off | the same, and "moves once" |
+| The RS-32 trigger off | four RS-32 cases |
+| The RS-33 trigger off | both RS-33 cases, and RS-35 (the failure changes no table) |
+| Stale never derived | RS-30 (both), RS-31 |
+| The attach-limit trigger off | attached only with a limit |
+| The picker not security-invoker | RS-34 (shows another tenant) |
+| The outbox without RLS | ID-10 structural (discovered, no new code) |
+| Scope discovery pinned to `public` | ID-11 discovery floor |
+| The move forgets inline webhooks | the replayed move |
+| A column `api_token` | the credential guard (a test of its own) |
+
+**One guard was wrong on its first run.** The credential pattern took `token`
+anywhere and reported `bobee_conversations.token_count`. Now it matches `token`
+only at the end of a name. And the cross-tenant attach probe was
+refused by the limit rule before the tenant key could refuse it. It now gives
+tenant B's binding a limit first, so only the key is left to refuse.
+
+**Caught in CI by an existing guard.** The stub built its ids as
+`` `stub:${id}` ``, which slice2-schema's namespace-literal guard refuses.
+Locally the guard ran before the stub was tracked, so it never saw the file. The
+stub now uses the intention's id with no namespace.
+
+**Counts.** 186 → 221: 218 pass and 3 are `todo`. pgTAP: 9. After the review below: 230, 227 pass, 3 `todo`.
+
+---
+
+## Slice 6 · An independent review of the pull request, applied
+
+The three Slice 6 migrations were edited in place, not appended to. They have
+run nowhere shared (the local stack only), so the append-only rule does not
+apply yet. Each fix went test first, and each new guard was seen failing.
+
+### Fixed
+
+1. **No DELETE on the outbox.** `bob_app` and `authenticated` held DELETE on
+   `outbound_queue`. Deleting an intention gave its binding room under its
+   limit again and lost the trace from intention to alert. Both lose DELETE and
+   TRUNCATE. A guard discovers every table that keys `alert_log` and refuses
+   DELETE and TRUNCATE to the application's roles. The F-19 grants test now
+   expects SELECT, INSERT and UPDATE on those tables.
+2. **Only `bob_app` updates an intention.** `authenticated` could
+   `SET state = 'drained'` directly, which made the drain's REVOKE meaningless.
+   UPDATE is now `bob_app`'s alone, and the "moves once" test runs as `bob_app`.
+3. **Only Verify writes a verdict (RS-30, RS-31).**
+   - `verify_state`, `verified_at` and `verify_msg` are no longer writable by
+     `bob_app` or `authenticated`: INSERT and UPDATE are granted per column,
+     without those three.
+   - A binding is born unverified, whatever an INSERT says.
+   - A verification time in the future is refused. Dated ten years ahead, a
+     binding would never go stale.
+   - `bob_autobotz_record_verification()` no longer takes a time. It stamps
+     `clock_timestamp()`, runs SECURITY DEFINER, and scopes itself to the
+     caller's claim.
+   - A column added to `autobotz` later gets no grant until a migration gives
+     it one.
+   - The F-19 grants test now reads INSERT and UPDATE per column.
+4. **The statement's clock.** Admission stamps `created_at`, and measures the
+   hour and the 24 hours, with `clock_timestamp()`, and the drain stamps
+   `drained_at` the same way. Under `now()`, a long transaction dated its
+   intentions at its own start.
+5. **No write skew between attaching and removing a limit.** The attach
+   trigger takes `FOR SHARE` on the binding before it checks. The order is the
+   fix: the review asked for the lock, and taking it after the check would
+   still lose the race.
+6. **Concurrency, tested.** Two `bob_app` connections: with a limit of one an
+   hour, the second of two concurrent intentions is refused. An attach and a
+   limit removal cannot both win. The "one transaction" test now checks the
+   file's statements (BEGIN first, COMMIT last, nothing else), and a replay
+   that fails at its last step leaves no binding and no repointed response.
+
+### Verified by sabotage, after the review
+
+| Sabotage | Red |
+|---|---|
+| DELETE on the outbox to `bob_app` | the trace guard; F-19 |
+| UPDATE on the outbox to `authenticated` | the trace guard; drain directly as a tenant |
+| UPDATE (`verify_state`) to `authenticated` | the verdict-column guard; claiming a verification directly |
+| INSERT not forced to unverified | the state and its time cannot disagree |
+| A future verification time allowed | the same |
+| Admission stamping `now()` | the clock is the statement's |
+| Admission without `FOR UPDATE` on the binding | the concurrent limit of one |
+| The attach trigger without `FOR SHARE` | attach and limit removal cannot both win |
+| Verify not scoped to the claim | cannot reach another tenant's binding |
+| A `COMMIT; BEGIN;` inside the move | the file is one transaction |
+
+### Questions for Henry (from the review, not changed)
+
+- **An Action with an inline `webhook_url` and another organization's id in
+  `channel_ids`.** The move counts the inline one as the single webhook and
+  leaves the foreign id in `channel_ids`. Should it refuse instead?
+- **RS-32 and scope.** Changing `scope_kind` or `scope_ref` does not invalidate
+  a verification, because scope says where a binding applies, not what it
+  invokes. Is that the reading?
+- **The stub drains before it reports.** `drained` is committed before any
+  `delivery_attempt` exists, so if the stub dies in between, an intention is
+  drained with no outcome. The real transmitter will have to answer this.
+  Should the outbox carry a claimed state?
+- **Admission does not look at `verify_state`.** An unverified, failed or stale
+  binding still gets intentions. Should one need to be verified, and fresh?
+
+**Counts.** 221 → 230: 227 pass and 3 are `todo`. pgTAP: 9.
 
 ---
 
