@@ -3,6 +3,7 @@
 Una línea por cambio entregado, en lenguaje de usuario.
 
 ## Sin publicar
+- Spec del Slice 3 («absent-not-zero»): cada celda dice si su cifra falta porque nada puede llegar (y qué declarar), porque todavía no se sabe, porque no se observó nada o porque no pasó nada, y el cero observado lo escribe el alimentador. Una sola implementación en la base para gráficas, matriz, sentimiento y BObee. Siete cambios del contrato quedan propuestos para 0.6 (F-28 a F-34), sin firmar.
 - Guards de P5: solo los tres roles de BOb tienen permisos en `bob`, `bob_ai_ro` no lee ni escribe ninguna tabla, y ningún rol puede llamar a `pg_net` ni a `http`. Hay un chequeo de solo lectura para correr en la caja después de migrar (una organización, con el tenant de la caja). El alimentador, configurado para el tenant de la caja, cuenta los eventos de otro tenant en la ruta A y no los escribe.
 - Insumos de P5 (D62) al día después del Slice 2: el contrato firmado en 0.5.1 y ya en 0.5.3, F-21 y F-22 construidos, `channel_capabilities` en la matriz de permisos, los guards de roles que faltan y la pregunta de quién programa la reconciliación de fantasmas. Las siete objeciones de la revisión previa a la firma quedan abiertas para Henry.
 - Contrato de proyección 0.5.3: cada canal declara sus capacidades, y el alimentador las lee en su mapa de canales. Así una etiqueta que falta solo se cuenta como `label_missing` en los canales que esperan etiquetas.

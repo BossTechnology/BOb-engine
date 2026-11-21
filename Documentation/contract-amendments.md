@@ -2181,6 +2181,81 @@ covers it until F-27 closes by (b) or (c).
 
 **Counts.** 167 → 186: 184 pass and 2 are `todo`.
 
+
+## Slice 3 · The absent-not-zero state, spec (proposed for 0.6)
+
+Decided by Henry in the Slice 3 grill on 20 Nov (G1 to G15), from the thin
+Performance matrix (Bob-New PR #29) read over the reference feeder's output.
+The spec is `docs/slice-3-absent-not-zero.md`. **Nothing is built and the
+contract stays at 0.5.3.** The seven changes below are proposed for 0.6. They
+go to Federico on Relevo task 6, and the draft note is prepared for Henry and
+is not posted. They are written into the contract when accepted, in the Slice 3
+implementation PR.
+
+### F-28 · §5, §8 · Liveness has two sources; the feeder writes the observed zero
+
+The matrix showed no zero at all. §5 ties liveness to `health_uptime`, and no
+channel declares it, so "not observed" and "observed, none" were both "no row".
+- **Traffic**: an interaction with activity in the bucket is evidence of
+  liveness for that bucket, for every capability the channel declares.
+- **Probe**: Q9's `health_uptime` stays the source when there is no traffic.
+- At seal, the feeder writes the zero: `proj_metric_counts` with
+  `event_count = 0` and the bucket's `session_count`, and `proj_durations` with
+  `n = 0`. Never on an undeclared capability, never without liveness.
+- 3.7 owes it as much as the reference feeder does.
+
+### F-29 · §9.1 · Three capabilities
+
+Disambiguation, escalations and abandoned in queue had no capability, so they
+could never render not configured. With F-28 they would have received zeros
+that nobody observed. New: `disambiguation`, `escalation`, `queue`. Presence
+only, declared per channel, never mapped from `channel_type`. The catalog goes
+from ten capabilities to thirteen. Mapping them from `channel_actor_mix` was
+refused: two actors present does not prove a handoff path.
+
+### F-30 · §9.1 · The union becomes union plus coverage
+
+"The drill-down reads the union of capabilities" let Voice leave the
+label-failure total unannounced. The union now decides whether a row is shown.
+The total sums only the observed cells and carries coverage: "n of m channels",
+with each excluded channel and its state and reasons.
+
+### F-31 · §5 · The cell vocabulary and where it lives
+
+Six states, evaluated in order: `not_applicable`, `not_configured`, `pending`,
+`not_observed`, `observed`, plus `off_shift` in the per-actor drill-down.
+- An ordered list of reasons. `provisional` is a flag on `observed` (O1 keeps
+  unsealed rows rendered).
+- D-14's markers come first: `telemetry_started_at` (D-18) and
+  `bob_source_key_unset()` (D-19, SR-2).
+- The em dash serves both `not_observed` (D-14) and `off_shift` (Relevo task
+  10), told apart by state, never by glyph.
+- It lives in the database: `bob.v_cell_state`, `bob_cell_rollup()` and
+  `v_ai_cell_state` for BObee. The application only paints.
+
+D-14 is applied, not amended.
+
+### F-32 · §5 · A declared-absent actor is an observed zero
+
+FR-11 asks for exactly 0 when an actor is absent from every selected channel,
+and UI-03 asks every zero to explain itself. A `present = false` row in
+`channel_actor_mix` gives `observed` 0 with `actor_not_present`. An undeclared
+mix gives `not_configured` with `mix_not_declared`, which is the PR-10 split
+FR-23 already uses.
+
+### F-33 · §6.1 · Three metrics never attribute to `user`
+
+Resolved, disambiguation and escalations attribute to whoever did them, and
+§6.1 did not forbid the customer. The cells are `not_applicable` under `user`,
+and a guard fails if the feeder ever writes such a row.
+
+### F-34 · §7.2 · AREP ref resolution is open
+
+"Inherits the ASA shape when it exists" leaves how an AREP ref resolves
+unwritten. Slice 3 needs nothing more: AREP cells follow the same rules, and
+the matrix shows the column only when some selected channel declares AREP
+present. Named as open, outside Slice 3.
+
 ---
 
 *Boss.Technology · BOb v1 · Internal only*
