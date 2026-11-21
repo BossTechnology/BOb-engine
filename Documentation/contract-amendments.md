@@ -2509,6 +2509,185 @@ is still unsigned.
   to `reconciliation/ghosts.mjs` (read the table, not `truth.memberRefsSeen`),
   the feeder's write, and the contract amendment to §7.2 and §7.3a.
 
+## P5 · Q6 (a), built: the feeder stages the member refs, `bob_app` makes the ghosts
+
+Henry, 2026-11-21: «Go with (a)» (F-40; P5 §7, Q6). Built on branch
+`p5-q6a-staged-member-refs`, on top of PR #29, not merged and not applied to
+any box. D62 is still unsigned.
+
+What was built:
+- `supabase/migrations/20261121140000_member_refs_seen.sql`: the table
+  `bob.member_refs_seen` (`org_id`, `channel_id`, `ref`, `first_seen`,
+  `last_seen`, `window_from`, `window_to`, `staged_at`), RLS by the `org_id`
+  claim as on every tenant table, and the grant helper
+  `bob_grant_feeder_staging()`. INSERT for `bob_feeder`, SELECT and DELETE for
+  `bob_app`, nothing for anyone else. `channels` gains `UNIQUE (id, org_id)`
+  so the staged row's channel key carries its tenant.
+- `feeder/reference-feeder.mjs`, `stageMemberRefs`: for each channel BOb maps,
+  it asks the truth store for `member_refs_seen` over `[from, to)`, leaves out
+  the refs `v_feeder_actor_map` already maps, and stages the rest. One tenant
+  per transaction under its claim (F-22). It honours `boxTenant` (objection
+  3). A replayed window stages nothing twice.
+- `reconciliation/ghosts.mjs`: reads the table instead of
+  `truth.memberRefsSeen`, still as `bob_app`, one tenant per transaction. It
+  consumes the staged rows in its window with one `DELETE … RETURNING`, so a
+  failed run leaves them staged. The guard stays: member refs only, rung
+  `ghost`, never a non-`user` actor, the refs BOb knows subtracted. The
+  trailing window of H3 stays, and the sweep keeps the 395-day retention
+  window (C-14). The sweep also deletes staged rows last seen before
+  retention, with no ghost. The functions no longer take a truth store, and
+  the tenant is `{ orgId }`: the slug was only for the truth store's frame.
+
+### F-41 · Contract §7.2 and §7.3a: the reconciliation's window comes from `bob.member_refs_seen` — proposed
+
+- **§7.2** said the reconciliation "runs as `bob_app` … it asks the truth
+  store which member refs were seen in the window", with "no new table" and
+  "no change to the feeder's grants". Under Q6 (a) the feeder asks, and
+  stages; `bob_app` reads the window from the table and deletes what it
+  consumed. One new table, and one new grant: INSERT for `bob_feeder` on it.
+- **§7.3a.** The frame, the output and the paging are unchanged. The caller is
+  the feeder, with its read-only ClickHouse role, not the BOb application. For
+  3.7 the deliverable is the same; who calls it is not.
+- **§7.4.** Unchanged: the feeder reads exactly two views. It writes the
+  staging table and cannot read it.
+- **§10.** A new guard row, "Staged refs", and the ghost path row now reads
+  through the table.
+- Written into `docs/contracts/projection-contract.md` marked
+  **[PROPOSED, F-41]**, with the replaced text struck through. The version
+  stays 0.5.3 until it is accepted. Not yet sent to Federico on Relevo task
+  6.
+
+### How the guards find the table
+
+- **By its grants, not its name.** A feeder staging table is a base table,
+  outside the `proj_` names, that `bob_feeder` can write (after the review:
+  INSERT, UPDATE, DELETE or TRUNCATE) and cannot SELECT from (`feederStagingTables()` in `tests/helpers/rls.mjs`). Every one
+  found is held to exactly INSERT for `bob_feeder`, SELECT and DELETE for
+  `bob_app`, and nothing for `bob_ai_ro`, `anon`, `authenticated`,
+  `service_role` or PUBLIC, on the table and on every column
+  (`stagingGrantFindings()`). It must carry `org_id`.
+- **PR-4's discovery** took any table the feeder can write as a projection.
+  It now leaves out a table the feeder cannot read; a `proj_` table stays a
+  projection by name whatever its grants. Granting the feeder SELECT on the
+  staging table turns it back into a projection, and PR-4 reports it.
+- **Q13.** An INSERT grant on `actors` to `bob_feeder` makes `actors` look
+  like a staging table, and the staging rule reports it, since `bob_app`
+  holds INSERT and UPDATE there.
+- **`bob_app` grants (§10).** The discovered staging tables are the third
+  kind: SELECT and DELETE.
+- **Tenancy (ID-10).** The leak checks read every tenant table as
+  `authenticated`. A table `authenticated` cannot read cannot leak to it, and
+  reading it would only raise, so the checks leave such tables out. A new
+  test pins that set to the staging tables: a table that loses its grant by
+  accident appears there instead of vanishing from the leak checks.
+- **"The feeder reads nothing else" (F-21)** is unchanged, and passes: an
+  INSERT grant gives no read.
+
+### Seen failing
+
+Each guard was seen red before it was trusted. Measured on the local
+Supabase, one sabotage at a time, each reverted before the next. A run is
+the five files that touch the table: `p5-q6-member-refs`, `slice2-schema`,
+`slice2-feeder`, `tenancy` and `p5-roles`. The column says what went red.
+
+| Sabotage | Red |
+|---|---|
+| None (the baseline) | nothing (the F-27 `todo` only) |
+| Before the migration: the table does not exist | every test in `p5-q6-member-refs` |
+| `bob_feeder` SELECT on the table | found as staging; SELECT is refused; exactly eight (it became a projection) |
+| `bob_feeder` UPDATE | every staging table holds exactly its grants; UPDATE is refused |
+| `bob_feeder` DELETE | the same; DELETE is refused |
+| The policy ignores the claim (`USING (true)`) | a tenant B row refused; no claim refused; `bob_app` sees and deletes its own tenant only; every `org_id` table has a tenant-scoped policy (ID-10) |
+| The channel key without `org_id` | a tenant A row naming a tenant B channel is refused |
+| `authenticated` SELECT | exact grants; `authenticated` refused; the API-unreadable set is the staging tables (ID-10) |
+| `bob_app` INSERT | exact grants; `bob_app` INSERT refused; `bob_app` grants (§10) |
+| `bob_feeder` INSERT on `actors` (Q13) | exact grants (`actors` reported); `bob_app` grants (§10); the API-unreadable set |
+| `bob_feeder` loses INSERT | found as staging, and every test that writes as the feeder |
+| Another tenant table unreadable to `authenticated` (`channels`) | the API-unreadable set is the staging tables, and only those (ID-10) |
+| The reconciliation reads the rows and does not delete them | the ghost path, four tests: what it consumed is still staged |
+| No retention clamp | the sweep makes a ghost for a ref past retention; the trailing window |
+| The reconciliation ignores its trailing window | the trailing window (H3); the sweep |
+| The feeder stages refs it already maps | it leaves out the refs it maps; the ghost path; the claim and box tests |
+| The feeder ignores `boxTenant` when staging | boxed to tenant A, nothing of tenant B is staged |
+| PR-4's discovery without the staging exception | not a projection; exactly eight; partitions granted; `bob_app` grants; provenance; PR-4 (tenancy) |
+
+One test was wrong on its first run and was corrected, not loosened. "PUBLIC
+given SELECT" expected the staging rule to report it. A grant to PUBLIC is a
+grant to `bob_feeder` too, so the table stops being staging and becomes a
+projection by its grants, and PR-4 reports `bob_app` holding DELETE on it.
+The test now asserts that.
+
+Where it ran: `supabase db reset --no-seed` and `pnpm test` on the local
+stack, after rebasing onto `main` (`9b900a1`): 264 tests, 261 pass, 0 fail,
+3 `todo`. The full chain was also reset on a second, separate local stack
+before the rebase. Nothing was run against any box.
+
+### Review of PR #33 — fixed on the same branch
+
+Two reviews, one from the peer session and three points from Henry («Send
+them to fix»). Every fix landed test first, and every new guard was seen red.
+
+- **Discovery (high).** A staging table was a table the feeder could INSERT
+  into and not read. A DELETE on `actors` fell through both discoveries. Now
+  any write counts (INSERT, UPDATE, DELETE or TRUNCATE, on the table or a
+  column), and the staging rule reports the extra privilege.
+- **Grantees (medium).** `stagingGrantFindings()` read the roles it named.
+  It now also reads every grantee from the table's and its columns' ACLs, and
+  a role it does not know is a finding.
+- **Ref shape (medium).** `ref` is held to `^m:.` and 256 characters by a
+  CHECK, and `isMemberRef()` in `reconciliation/ghosts.mjs` checks it again
+  before a ghost is made.
+- **A run leaves a mark (low).** `bob.member_refs_runs`, a second staging
+  table: one row per tenant per run, even with nothing staged, in the same
+  transaction as the last batch. `stagingRunWarnings()` in
+  `scripts/box-checks.mjs` warns on a tenant with no run or an old one, and
+  `box-check.mjs` prints it as a warning that does not fail the check
+  (`--staging-max-age-hours`, default 24).
+- **A test that could not fail (low).** "A second run creates nothing" now
+  stages a known ref by hand and asserts the reconciliation creates nothing
+  and consumes it.
+- **Expiry before the early return (low).** The sweep now expires by
+  retention even for a tenant with no channel. Unreachable today: the channel
+  key cascades, and `source_key` is NOT NULL. No test, said so here.
+- **Per-tenant errors.** One tenant's failure is returned as `error` on that
+  tenant, without a run row, and the others stage.
+- **Cadence (Henry).** Contract §7.2 now says the feeder stages the trailing
+  window at least as often as `bob_app` reconciles. A row staged later than
+  that waits for the sweep: a delay, not a loss. A test stages one behind the
+  window and sees the frequent run leave it and the sweep take it.
+- **Sweep size (Henry).** `stageMemberRefs` writes as it reads, `batchSize`
+  rows per transaction (2,000 by default), each under the claim. The counts it
+  returns are unchanged.
+- **`service_role` (Henry).** `bob_grant_feeder_staging()` had EXECUTE
+  revoked from PUBLIC, `anon` and `authenticated` only. `service_role` is
+  added. The migration had not run anywhere shared (it is not on `main`), so
+  it was edited in place. A test reads the function's ACL and accepts its
+  owner alone.
+
+**For Federico, not changed.** The table refuses a row whose `first_seen` is
+before the window asked for or whose `last_seen` is at or after its end. That
+holds if §7.3a's `member_refs_seen` reports first and last seen *within* the
+frame. If ClickHouse reports them over all time, every such tenant's staging
+fails (and is reported, without stopping the others). Which it is decides
+whether the CHECK stays. To ask on Relevo task 6 with the F-41 notice.
+
+Seen failing, after the review (shared local stack, one at a time, each
+reverted):
+
+| Sabotage | Red |
+|---|---|
+| Tests written, code not yet changed | 13: discovery finds both tables; DELETE on `actors`, UPDATE (`actor_id`) on `actor_external_refs`, TRUNCATE on `actor_ref_history`; an unknown role's table and column grants; the ref CHECK; `isMemberRef`; the three run-row and warning tests; a run row per tenant; per-tenant isolation |
+| `service_role` given EXECUTE on the helper | the helper is executable by its owner alone |
+| The feeder writes in one transaction | more refs than one batch are written in several transactions |
+| The frequent run ignores its trailing window | the late-staged ref waits for the sweep; H3; the sweep; the known-ref test; the batch test |
+| The reconciliation trusts any staged ref | the reconciliation's own check agrees with the table's |
+| The feeder writes no run row | one run row per tenant per run; the batch test; F-22 |
+| One tenant's failure stops the rest | a failing tenant is reported and the other stages |
+
+Where it ran: `supabase db reset --no-seed` and `pnpm test` on the shared
+local stack: 279 tests, 276 pass, 0 fail, 3 `todo`. Nothing was run against
+any box.
+
 ---
 
 ## Slice 6 · Registries and the outbox, built
@@ -2803,7 +2982,7 @@ tenant's rows. F-43 is why writes are checked more loosely: per command,
 
 ## F-43 · closed: bob_app reads audit_log and writes nothing
 
-Ruled by Henry on 21 Nov: revoke. Migration `20261121140000` revokes INSERT,
+Ruled by Henry on 21 Nov: revoke. Migration `20261121150000` revokes INSERT,
 UPDATE, DELETE and TRUNCATE on `bob.audit_log` from `bob_app`, which keeps
 SELECT. The initial schema meant this from the start: its only policy is
 `org_audit_read`, FOR SELECT, and nobody in the application writes the trail.

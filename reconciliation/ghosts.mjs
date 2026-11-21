@@ -1,20 +1,25 @@
-// The ghost reconciliation. Projection contract 0.5.2 §7.2 and §7.3a.
+// The ghost reconciliation. Projection contract 0.5.2 §7.2 and §7.3a, as
+// amended by F-41 (P5 Q6 (a), Henry, 2026-11-21).
 //
-// It runs as bob_app, one tenant per transaction under that tenant's claim. It
-// asks the truth store which member refs were seen in a trailing window
-// (member_refs_seen), subtracts the refs BOb already knows, and creates a ghost
-// for each one left: a `user` actor at rung `ghost`, its ref, and the first row
-// of its linkage history. It never creates any other kind of actor, and keeps
-// no cursor (H3).
+// It runs as bob_app, one tenant per transaction under that tenant's claim, in
+// the BOb container. It reads no truth store: the feeder container asks
+// ClickHouse for member_refs_seen and stages what it sees in
+// bob.member_refs_seen (feeder/reference-feeder.mjs, stageMemberRefs). Here
+// the staged rows inside a trailing window are consumed (deleted, in the same
+// transaction), the refs BOb already knows are subtracted, and a ghost is
+// created for each one left: a `user` actor at rung `ghost`, its ref, and the
+// first row of its linkage history. It never creates any other kind of actor,
+// and keeps no cursor (H3). If the transaction fails, the rows it consumed are
+// still staged for the next run.
 //
-// Its scheduler hands it the tenant: (org_id, tenant_slug). bob_app cannot
-// enumerate organizations or read their slugs under RLS, which is right for a
-// tenant-scoped credential; the finding is recorded in contract-amendments.md.
+// Its scheduler hands it the tenant, { orgId }: one organization per box (P5
+// objection 3). bob_app cannot enumerate organizations under RLS, which is
+// right for a tenant-scoped credential; the finding is recorded in
+// contract-amendments.md (F-26).
 
 import { createHash } from 'node:crypto'
 
 export const RETENTION_DAYS = 395   // C-14
-const PAGE = 500
 
 // A display id for a ghost. Derived from the ref, so the same ref always gets
 // the same id, and nothing about the person is in it (§5.1 of the data model).
@@ -42,48 +47,73 @@ export function trailingWindow(now, intervalSeconds, largestLagSeconds) {
   return { from: new Date(to.getTime() - (intervalSeconds + largestLagSeconds) * 1000), to }
 }
 
-async function reconcileWindow(db, truth, { orgId, tenantSlug }, windowOf) {
+// Never reach past retention (C-14): a ref last seen before it is gone from
+// the truth store, and a ghost for it would have nothing to project.
+function clampToRetention(window, now) {
+  const floor = new Date(new Date(now).getTime() - RETENTION_DAYS * 86_400_000)
+  return { from: window.from < floor ? floor : window.from, to: window.to }
+}
+
+async function reconcileWindow(db, { orgId }, now, windowOf, { expire = false } = {}) {
+  if (!orgId) throw new Error('reconcile needs the tenant: { orgId }')
   return withTenant(db, orgId, async () => {
     const { rows: channels } = await db.query(
-      `SELECT source_key, lag_seconds FROM bob.channels
+      `SELECT lag_seconds FROM bob.channels
         WHERE org_id = $1 AND source_key IS NOT NULL`, [orgId])
-    if (!channels.length) return { created: [], window: null }
+    // No channel left: the sweep still expires by retention alone (review of
+    // PR #33, point 6). Unreachable today, since the channel FK cascades.
     const largestLag = Math.max(0, ...channels.map((c) => c.lag_seconds ?? 0))
-    const window = windowOf(largestLag)
+    const window = clampToRetention(windowOf(largestLag), now)
 
-    const frame = { tenant_slug: tenantSlug, source_keys: channels.map((c) => c.source_key), ...window }
-    const seen = []
-    let after = null
-    do {
-      const page = await truth.memberRefsSeen(frame, { limit: PAGE, after })
-      seen.push(...page.rows)
-      after = page.next
-    } while (after !== null)
-    if (!seen.length) return { created: [], window }
+    // Past retention: removed, never reconciled. Only the sweep does this, so
+    // the frequent run touches nothing outside its window.
+    let expired = 0
+    if (expire) {
+      ({ rowCount: expired } = await db.query(
+        'DELETE FROM bob.member_refs_seen WHERE org_id = $1 AND last_seen < $2',
+        [orgId, window.from]))
+    }
+    if (!channels.length) return { created: [], window: null, expired }
+
+    // Consumed: every staged row of the tenant seen inside the window. A
+    // concurrent run waits on these rows and then finds them gone.
+    const { rows: staged } = await db.query(
+      `DELETE FROM bob.member_refs_seen
+        WHERE org_id = $1 AND last_seen >= $2 AND first_seen <= $3
+       RETURNING ref, first_seen`, [orgId, window.from, window.to])
+    if (!staged.length) return { created: [], window, expired }
+
+    const firstSeen = new Map()
+    for (const s of staged) {
+      if (!isMemberRef(s.ref)) continue
+      const t = new Date(s.first_seen)
+      if (!firstSeen.has(s.ref) || t < firstSeen.get(s.ref)) firstSeen.set(s.ref, t)
+    }
+    const seen = [...firstSeen.keys()].sort()
 
     const { rows: known } = await db.query(
       'SELECT ref FROM bob.actor_external_refs WHERE org_id = $1 AND ref = ANY($2::text[])',
-      [orgId, seen.map((s) => s.external_ref)])
+      [orgId, seen])
     const knownRefs = new Set(known.map((k) => k.ref))
 
     const created = []
-    for (const s of seen) {
-      if (knownRefs.has(s.external_ref)) continue
+    for (const ref of seen) {
+      if (knownRefs.has(ref)) continue
       const { rows: [actor] } = await db.query(
         `INSERT INTO bob.actors (org_id, actor_type, display_id, identity_rung)
          VALUES ($1, 'user', $2, 'ghost') RETURNING id`,
-        [orgId, ghostDisplayId(orgId, s.external_ref)])
+        [orgId, ghostDisplayId(orgId, ref)])
       // Idempotent on (org_id, ref): a concurrent run that got there first wins.
       const { rowCount } = await db.query(
         `INSERT INTO bob.actor_external_refs (org_id, actor_id, ref) VALUES ($1, $2, $3)
-         ON CONFLICT (org_id, ref) DO NOTHING`, [orgId, actor.id, s.external_ref])
+         ON CONFLICT (org_id, ref) DO NOTHING`, [orgId, actor.id, ref])
       if (!rowCount) { await db.query('DELETE FROM bob.actors WHERE id = $1', [actor.id]); continue }
       await db.query(
         `INSERT INTO bob.actor_ref_history (org_id, ref, actor_id, identity_rung, valid_from)
-         VALUES ($1, $2, $3, 'ghost', $4)`, [orgId, s.external_ref, actor.id, s.first_seen])
-      created.push({ ref: s.external_ref, actorId: actor.id, firstSeen: s.first_seen })
+         VALUES ($1, $2, $3, 'ghost', $4)`, [orgId, ref, actor.id, firstSeen.get(ref)])
+      created.push({ ref, actorId: actor.id, firstSeen: firstSeen.get(ref) })
     }
-    return { created, window }
+    return { created, window, expired }
   })
 }
 
@@ -95,18 +125,20 @@ function rebuildWindow(created, now) {
   return { from: new Date(Math.floor(earliest / 300_000) * 300_000), to: new Date(now) }
 }
 
-export async function reconcileGhosts(db, truth, tenant, { now, intervalSeconds }) {
-  const { created, window } = await reconcileWindow(db, truth, tenant,
+export async function reconcileGhosts(db, tenant, { now, intervalSeconds }) {
+  const { created, window } = await reconcileWindow(db, tenant, now,
     (lag) => trailingWindow(now, intervalSeconds, lag))
   return { created, window, rebuild: rebuildWindow(created, now) }
 }
 
-// The slower sweep over the whole retention window (H3).
-export async function sweepGhosts(db, truth, tenant, { now }) {
+// The slower sweep over the whole retention window (H3). It also removes the
+// staged rows that fell out of retention before anything consumed them.
+export async function sweepGhosts(db, tenant, { now }) {
   const to = new Date(now)
   const from = new Date(to.getTime() - RETENTION_DAYS * 86_400_000)
-  const { created, window } = await reconcileWindow(db, truth, tenant, () => ({ from, to }))
-  return { created, window, rebuild: rebuildWindow(created, now) }
+  const { created, window, expired } = await reconcileWindow(db, tenant, now,
+    () => ({ from, to }), { expire: true })
+  return { created, window, expired, rebuild: rebuildWindow(created, now) }
 }
 
 // A linkage (D-12): the ref now points at another member, from `at`. Appends
@@ -126,4 +158,11 @@ export async function linkMemberRef(db, { orgId, ref, actorId, rung, at, now }) 
     const t = new Date(first.t).getTime()
     return { from: new Date(Math.floor(t / 300_000) * 300_000), to: new Date(now) }
   })
+}
+
+// A member pseudonym as §7.3a writes it: the m: prefix, something after it,
+// at most 256 characters. The table CHECKs the same; this keeps a non-member
+// ref from becoming a ghost if that CHECK is ever loosened.
+export function isMemberRef(ref) {
+  return typeof ref === 'string' && ref.startsWith('m:') && ref.length > 2 && ref.length <= 256
 }

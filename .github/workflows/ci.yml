@@ -116,6 +116,10 @@ jobs:
         env:
           SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
         run: node --test --test-concurrency=1 tests/p5-roles.test.mjs
+      - name: P5 Q6 (a) · the staged member refs, INSERT only for the feeder, under the tenant's claim
+        env:
+          SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+        run: node --test --test-concurrency=1 tests/p5-q6-member-refs.test.mjs
       - name: BR-3 · the mutative exemption is closed, and the F-07 rulings are a fixture
         env:
           SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres

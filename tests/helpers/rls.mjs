@@ -119,7 +119,8 @@ export async function structuralFindings(client) {
 // savepoint and given back, so the meta-test can call this over a probe it has
 // not rolled back yet.
 export async function aggregateLeakFindings(client, tenant, other) {
-  const tables = await tenantTables(client)
+  const hidden = new Set((await tenantTablesUnreadableByApi(client)).map((t) => t.qualified))
+  const tables = (await tenantTables(client)).filter((t) => !hidden.has(t.qualified))
   const owns = new Map()
   let otherRows = 0
   for (const t of tables) {
@@ -165,6 +166,11 @@ export async function aggregateLeakFindings(client, tenant, other) {
 //     authenticated. Thirteen months across eight tables is about a hundred of
 //     them, so the partitions are checked, not only the parents.
 //
+// One exception, found the same way: a table bob_feeder can insert into but
+// cannot read is a feeder staging table (P5 Q6 (a)), not a projection. A
+// projection the feeder cannot read is still caught: its proj_ name keeps it
+// here, and a staging table is held to an exact grant set of its own.
+//
 // Privileges are read with has_table_privilege, which is what Postgres
 // enforces: a grant to PUBLIC, or one inherited through a role, counts.
 const NEVER_WRITES = ['public', 'anon', 'authenticated', 'bob_app']
@@ -181,10 +187,14 @@ export async function projectionTables(client) {
          AND n.nspname <> 'information_schema'
          AND c.relkind IN ('r', 'p')
          AND (c.relname LIKE 'proj\\_%'
-              OR EXISTS (
-                SELECT 1 FROM aclexplode(c.relacl) a
-                 WHERE a.grantee = 'bob_feeder'::regrole
-                   AND a.privilege_type IN ('INSERT', 'UPDATE', 'DELETE')))
+              OR (EXISTS (
+                    SELECT 1 FROM aclexplode(c.relacl) a
+                     WHERE a.grantee = 'bob_feeder'::regrole
+                       AND a.privilege_type IN ('INSERT', 'UPDATE', 'DELETE'))
+                  -- A feeder staging table (P5 Q6 (a)) is not a projection:
+                  -- the feeder inserts into it and cannot read it. It is held
+                  -- to its own rule by stagingGrantFindings below.
+                  AND has_table_privilege('bob_feeder', c.oid, 'SELECT')))
     ), lineage AS (
       SELECT oid FROM named
       UNION
@@ -238,4 +248,115 @@ export async function projectionGrantFindings(client) {
     }
   }
   return findings
+}
+
+// P5 Q6 (a) · feeder staging tables. Found by their grants, in any schema: a
+// base table outside the proj_ names that bob_feeder can write in any way
+// (INSERT, UPDATE, DELETE or TRUNCATE, on the table or on a column) and
+// cannot SELECT from. The feeder drops rows there; bob_app consumes them.
+// Today that is bob.member_refs_seen and bob.member_refs_runs, and the suite
+// asserts both are found.
+//
+// Any write, not INSERT alone (review of PR #33): a write the feeder holds
+// without SELECT is not a projection either, so with INSERT alone here a
+// DELETE on `actors` fell through both discoveries. It lands here, and the
+// staging rule reports the privilege it should not hold.
+export async function feederStagingTables(client) {
+  const { rows } = await client.query(`
+    SELECT format('%I.%I', n.nspname, c.relname) AS qualified,
+           c.relname AS table_name, c.oid::text AS oid
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE n.nspname NOT LIKE 'pg\\_%'
+       AND n.nspname <> 'information_schema'
+       AND c.relkind IN ('r', 'p')
+       AND c.relname NOT LIKE 'proj\\_%'
+       AND (has_table_privilege('bob_feeder', c.oid, 'INSERT, UPDATE, DELETE, TRUNCATE')
+            OR has_any_column_privilege('bob_feeder', c.oid, 'INSERT, UPDATE'))
+       AND NOT has_table_privilege('bob_feeder', c.oid, 'SELECT')
+     ORDER BY 1`)
+  return rows
+}
+
+// What each role holds on a staging table, and nothing more, on the table or
+// on any column. `bob_grant_feeder_staging()` grants exactly this. A table
+// that does not match is a finding; so is one without org_id, since the
+// feeder writes it under a tenant's claim (F-22). The roles below are checked
+// by name, and every other grantee is discovered from the table's and its
+// columns' ACLs: any role not named here that holds anything is a finding.
+export const STAGING_GRANTS = {
+  bob_feeder: ['INSERT'],
+  bob_app: ['SELECT', 'DELETE'],
+  bob_ai_ro: [],
+  anon: [],
+  authenticated: [],
+  service_role: [],
+  public: [],
+}
+const ALL_PRIVILEGES = ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']
+const COLUMN_PRIVILEGES = new Set(['SELECT', 'INSERT', 'UPDATE', 'REFERENCES'])
+
+export async function stagingGrantFindings(client) {
+  const findings = []
+  const tenant = new Set((await tenantTables(client)).map((t) => t.qualified))
+  for (const t of await feederStagingTables(client)) {
+    const { rows: grantees } = await client.query(`
+      SELECT DISTINCT CASE WHEN a.grantee = 0 THEN 'public'
+                           ELSE pg_get_userbyid(a.grantee) END AS role, a.privilege_type
+        FROM pg_class c, aclexplode(c.relacl) a
+       WHERE c.oid = $1::oid AND a.grantee <> c.relowner
+      UNION
+      SELECT DISTINCT CASE WHEN a.grantee = 0 THEN 'public'
+                           ELSE pg_get_userbyid(a.grantee) END, a.privilege_type
+        FROM pg_attribute at JOIN pg_class c ON c.oid = at.attrelid,
+             aclexplode(at.attacl) a
+       WHERE at.attrelid = $1::oid AND at.attacl IS NOT NULL AND a.grantee <> c.relowner
+       ORDER BY 1, 2`, [t.oid])
+    const unknown = new Map()
+    for (const g of grantees) {
+      if (g.role in STAGING_GRANTS) continue
+      if (!unknown.has(g.role)) unknown.set(g.role, [])
+      unknown.get(g.role).push(g.privilege_type)
+    }
+    for (const [role, privileges] of unknown) {
+      findings.push({ table: t.table_name, rule: 'P5 Q6',
+        finding: `${role} holds ${privileges.join(', ')} on a feeder staging table, and is ` +
+          'no role it may grant to. Pass the table through bob_grant_feeder_staging()' })
+    }
+    if (!tenant.has(t.qualified)) {
+      findings.push({ table: t.table_name, rule: 'P5 Q6',
+        finding: 'is a feeder staging table without org_id, so no claim holds its rows to a tenant' })
+    }
+    for (const [role, want] of Object.entries(STAGING_GRANTS)) {
+      const { rows } = await client.query(`
+        SELECT p,
+               CASE WHEN p = ANY($4::text[])
+                    THEN has_any_column_privilege($1, $2::oid, p)
+                    ELSE has_table_privilege($1, $2::oid, p) END AS held
+          FROM unnest($3::text[]) p`,
+      [role, t.oid, ALL_PRIVILEGES, [...COLUMN_PRIVILEGES]])
+      const got = rows.filter((r) => r.held).map((r) => r.p)
+      if (got.join() !== want.join()) {
+        findings.push({ table: t.table_name, rule: 'P5 Q6',
+          finding: `${role} holds ${got.join(', ') || 'nothing'} on a feeder staging table; ` +
+            `it must hold ${want.join(', ') || 'nothing'}. Pass the table through ` +
+            'bob_grant_feeder_staging()' })
+      }
+    }
+  }
+  return findings
+}
+
+// Tenant tables `authenticated` cannot read at all. They cannot leak to it, so
+// the leak checks that read as `authenticated` leave them out; the tenancy
+// suite asserts this set is the staging tables and nothing else, so the
+// exclusion cannot hide a table that lost its grant by accident.
+export async function tenantTablesUnreadableByApi(client) {
+  const out = []
+  for (const t of await tenantTables(client)) {
+    const { rows: [r] } = await client.query(
+      "SELECT has_table_privilege('authenticated', $1::regclass, 'SELECT') AS ok", [t.qualified])
+    if (!r.ok) out.push(t)
+  }
+  return out
 }

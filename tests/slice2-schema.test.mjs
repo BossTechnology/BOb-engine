@@ -19,7 +19,7 @@ import {
   connect, loadFixture, loadRoster, tenantTables, REPO_ROOT, TENANT_A, TENANT_B,
 } from './helpers/db.mjs'
 import {
-  projectionTables, projectionGrantFindings, structuralFindings,
+  projectionTables, projectionGrantFindings, structuralFindings, feederStagingTables,
 } from './helpers/rls.mjs'
 
 let db
@@ -229,7 +229,9 @@ const SIGN_IN = new Set(['bob.users'])
 const READ_ONLY = new Set(['bob.audit_log'])
 
 describe('§10 · bob_app grants, found rather than listed', () => {
-  test('non-projections: SELECT, INSERT, UPDATE, DELETE. Projections: SELECT only', async () => {
+  // P5 Q6 (a): a feeder staging table, found by its grants, is the third
+  // kind. bob_app reads what the feeder staged and deletes what it consumed.
+  test('non-projections: SELECT, INSERT, UPDATE, DELETE. Projections: SELECT only. Staging: SELECT, DELETE', async () => {
     await inTx(async () => {
       for (const p of await parents()) await ensurePartition(p.qualified)
       const projections = new Set((await projectionTables(db)).map((t) => t.qualified))
@@ -239,6 +241,8 @@ describe('§10 · bob_app grants, found rather than listed', () => {
           JOIN pg_namespace n ON n.oid = c.relnamespace
          WHERE k.contype = 'f' AND k.confrelid = 'bob.alert_log'::regclass`)
       const keysAlert = new Set(keyed.map((k) => k.qualified))
+      const staging = new Set((await feederStagingTables(db)).map((t) => t.qualified))
+      assert.ok(staging.has('bob.member_refs_seen'), 'the staging discovery found nothing')
       const problems = []
       for (const t of await tenantTables(db)) {
         const { rows } = await db.query(`
@@ -251,9 +255,12 @@ describe('§10 · bob_app grants, found rather than listed', () => {
         // action to alert), so bob_app does not delete from it. Found by key,
         // as in slice6-registries-outbox.test.mjs. INSERT and UPDATE may be
         // column grants (autobotz keeps its verdict columns for Verify).
+        // P5 Q6 (a): a feeder staging table, found by its grants, is read and
+        // consumed: SELECT and DELETE.
         // F-42: bob.users says who may sign in, and only the operator's
         // provisioning writes it. bob_app reads it and stamps last_login_at.
         const want = projections.has(t.qualified) || READ_ONLY.has(t.qualified) ? ['SELECT']
+          : staging.has(t.qualified) ? ['SELECT', 'DELETE']
           : SIGN_IN.has(t.qualified) ? ['SELECT', 'UPDATE']
           : keysAlert.has(t.qualified) ? ['SELECT', 'INSERT', 'UPDATE']
           : ['SELECT', 'INSERT', 'UPDATE', 'DELETE']
