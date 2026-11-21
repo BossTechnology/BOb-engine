@@ -10,9 +10,10 @@ if that is not enough, restore `bob` alone and rebuild the projections.
 run end to end on 2026-11-20 against a local copy of lab-02's identity stack
 (the same `supabase/postgres:17.6.1.136` and `gotrue:v2.189.0` digests as
 Bzzz `compose/l6-supabase.yml`, with CLI 2.120.0). Every statement marked
-**measured** comes from that run. **The lab-02 run is still owed** (P5 §8,
-objection 5). If it contradicts a measured line here, this file is corrected
-before D62 is signed.
+**measured** comes from that run. **Run on lab-02 on 2026-11-21** (P5 §8,
+objection 5), from BOb-engine `5e5b9be` (33 migrations, before Slice 3):
+41 checks, all as expected. It contradicted no measured line here. Its
+redacted evidence is in Bzzz `evidence/ENSAYO/`.
 
 **Who.** Henry, or someone he authorizes, in a window announced to the
 company. Never an agent and never a running service (P5 §6.2).

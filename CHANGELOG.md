@@ -4,6 +4,7 @@ Una línea por cambio entregado, en lenguaje de usuario.
 
 ## Sin publicar
 - El chequeo de tenancy también revisa las tablas que son el tenant (hoy `organizations`, con llave `id`), no solo las que tienen `org_id`; `bob_app` ya no tiene permisos de escritura sobre `organizations` que la seguridad por filas le negaba siempre (F-46).
+- El ensayo de P5 corrió en lab-02: 41 comprobaciones, todas como se esperaba, con la cadena aplicada y `auth.users` sin tocar. El kit compara inventarios sin depender del idioma de la caja.
 - Restaurar `bob` solo ya no se lleva las funciones de `public` que dependen de él: el procedimiento y el kit del ensayo las guardan antes de borrar `bob` y las reponen después (`scripts/bob-dependientes.sh`). `service_role` ya no puede drenar el outbox (F-47).
 - Ningún rol con el que corre la aplicación puede vaciar una tabla de un golpe (TRUNCATE), algo que se saltaba la separación entre organizaciones.
 - Slice 3: cada celda de las gráficas, la matriz y BObee dice si es un cero observado, no observado, pendiente, no configurado o no aplica, con los motivos de por qué y qué declarar; los totales de varios canales dicen cuántos canales cubren. El alimentador escribe el cero solo cuando el canal estaba vivo y la métrica declarada. Las funciones de la celda viven en `bob`, así que restaurar `bob` solo las trae consigo. Contrato 0.6 sin aceptar todavía.

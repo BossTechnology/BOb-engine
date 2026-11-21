@@ -3134,6 +3134,36 @@ green after the move. See "In `bob`, so `bob` restores alone" under Slice 3.
 Limit: Postgres lists at most 100 objects in the CASCADE's notice. The kit's
 count check would fail past that, loudly, not silently.
 
+## P5 · the rehearsal on lab-02 — run
+
+Run on bzzz-lab-02 on 21 Nov, on Henry's authorization, from BOb-engine
+`5e5b9be` (after F-47, before Slice 3), CLI 2.120.0, box image
+`supabase/postgres:17.6.1.136`. `--dry-run`: 5 checks, all as expected, 33
+migrations to push. `--ejecutar`: 41 checks, all as expected. The two rigged
+migrations left nothing, `schema_migrations` stopped just before each, F-15
+held at the end, the CASCADE took outside `bob` exactly the one dependent saved
+(`public.bob_outbox_drain`), the fingerprint of `bob` and `public` was
+identical after the restore, the projections were rebuilt row for row,
+`auth.users` (5 accounts) was untouched from start to finish, and box-check
+passed. BOb's chain stays applied on lab-02, without synthetic data.
+
+F-27: on lab-02 `http` and `pg_net` are available and not installed, before
+and after the chain.
+
+Found on the box: the kit compared inventories with `comm`, which wants the
+shell's collation, while the inventory comes in the database's. On lab-02
+(`en_US.UTF-8`) `comm` warned that its input was not sorted. Today's listing
+was right (105 lines either way), but `--deshacer` reads the same comparison
+to decide what to drop. Both sides are now sorted bytewise before `comm`.
+
+The Bzzz side: lab-02 runs Bzzz `main` at `ec8a17c`, without bzzz#365. The
+new `backup.sh` was run once without installing it, from `main` at `945859b`:
+it exits 0 and its manifest says `postgres:bob tablas=33 filas=0
+publicaciones=4 archivo=bob.sql.gz`, the 33 tables matching what is live. The
+nightly backup is still the installed one. Deploying Bzzz `main` there is
+separate: its plan brings up `compose/l7-bob.yml`, which needs a bob-web
+image lab-02 does not have.
+
 ## Slice 3 · The absent-not-zero state, built
 
 Built from `docs/slice-3-absent-not-zero.md` with F-28 (corrected), F-29 to
@@ -3141,14 +3171,16 @@ F-34, F-38 and F-39. **The contract stays at 0.5.3**: Federico has not
 accepted 0.6, so its text is not written into the contract here. It goes in
 when he accepts, and anything he changes comes back as a migration.
 
-Two migrations, append-only:
+Two migrations, append-only, numbered after `20261121190000` (PR #41): lab-02
+has the chain applied through it, and `supabase db push` refuses a file older
+than the last one applied unless told `--include-all`.
 
-- `20261121180000_slice3_catalog_and_feeder_map.sql`: the three capabilities
+- `20261121200000_slice3_catalog_and_feeder_map.sql`: the three capabilities
   (F-29, thirteen in all), `bob.cell_catalog` (one row per metric: source,
   actor grain, applicable actor types, required capabilities, precondition,
   degenerate, undefined-by), and `actor_types` on `v_feeder_channel_map`
   (F-38), still granted to `bob_feeder` only.
-- `20261121180100_slice3_cell_state.sql`: `bob.bob_cell_state(org,
+- `20261121200100_slice3_cell_state.sql`: `bob.bob_cell_state(org,
   channels[], from, to)`, `bob_cell_rollup` with coverage (F-30),
   `bob_available_state` (FR-23's reasons translated, `no_channels_selected` to
   `not_applicable`), `bob_actor_cell_state` (the per-actor drill-down with
