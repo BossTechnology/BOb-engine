@@ -3,6 +3,7 @@
 Una línea por cambio entregado, en lenguaje de usuario.
 
 ## Sin publicar
+- Ningún rol con el que corre la aplicación puede vaciar una tabla de un golpe (TRUNCATE), algo que se saltaba la separación entre organizaciones.
 - Slice 3: cada celda de las gráficas, la matriz y BObee dice si es un cero observado, no observado, pendiente, no configurado o no aplica, con los motivos de por qué y qué declarar; los totales de varios canales dicen cuántos canales cubren. El alimentador escribe el cero solo cuando el canal estaba vivo y la métrica declarada. Contrato 0.6 sin aceptar todavía.
 - El registro de auditoría tampoco se puede escribir con la sesión de un usuario: solo se lee.
 - El registro de auditoría ya no se puede escribir desde la aplicación: `bob_app` solo lo lee.

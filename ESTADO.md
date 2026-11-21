@@ -4,7 +4,7 @@
 
 ## Tarea actual
 - Slice 3 construido (rama `slice-3-absent-not-zero`, PR abierto, sin fusionar): catálogo de celdas, tres capacidades nuevas, `actor_types` en el mapa del alimentador, `bob_cell_state`, `bob_cell_rollup`, `bob_available_state`, `bob_actor_cell_state` y `v_ai_cell_state` para BObee, todos con cuerpo `BEGIN ATOMIC`; el alimentador escribe el cero observado al sellar. Hallazgos F-45 y F-46. El contrato sigue en 0.5.3: el texto de 0.6 espera a Federico.
-- F-43, segunda mitad (PR #37, fusionado): `authenticated` tampoco escribe en `audit_log`. Hallazgo F-44: `authenticated` tiene TRUNCATE en 26 tablas de `bob`, y TRUNCATE no pasa por RLS. Espera decisión de Henry.
+- F-43 cerrado (PR #35 y PR #37 en `main`). F-44 cerrado (PR #39, fusionado: `a5bfc7f`): ningún rol de la aplicación tiene TRUNCATE en una tabla con `org_id`, y los privilegios por defecto de `public` ya no lo reparten.
 - F-43 cerrado (PR #35, fusionado: `76bd3a9`): `bob_app` solo lee `audit_log`. El guard de tenancy revisa también las escrituras por comando.
 - Quién entra a la caja (PR #34, fusionado (`e392c44`)): `bob_app` lee `bob.users` de su org y sella `last_login_at`; se quita el trigger `on_auth_user_created`; altas con `scripts/provision-user.mjs`, en seco por defecto; `box-check` avisa si no hay usuario activo. Resuelto por Henry el 21 nov. F-42 (excepción de §10) y F-43 cerrado en la línea de arriba.
 - Slice 6 («Registries and the outbox»): PR #26 fusionado en `main` (`d86eb08`) por orden de Henry, con los cuatro checks en verde. Seguimiento en el PR #31, fusionado: la admisión al outbox exige una verificación `ok` y fresca, como resolvió Henry el 21 nov. La ejecución de punta a punta sigue como `todo` hasta que exista.
@@ -124,4 +124,5 @@
 - 2026-11-21: «Siguiente paso» al día con lo fusionado (#22, #24, #25, #33, #35); no cambió nada pendiente.
 - 2026-11-21: F-43 completo (también `authenticated`). F-44 registrado: TRUNCATE para `authenticated` en 26 tablas de `bob`.
 - 2026-11-21: aviso de F-41 publicado en la tarea 6 por orden de Henry. Salió dos veces por error (13:31 y 13:32, iguales); una nota breve pide leer el primero. Turno de Federico.
+- 2026-11-21: F-44 por orden de Henry: TRUNCATE revocado a los roles de la aplicación en `bob` y en los privilegios por defecto de `public`, con dos guards descubiertos.
 - 2026-11-21: Slice 3 construido en un stack local propio (proyecto `bob-v1-slice3`, puerto 59322), sin tocar el compartido. Las migraciones se renumeraron dos veces, a `…180000`, porque el PR #37 tomó `…160000` y el #39 `…170000`; los hallazgos son F-45 y F-46 porque el #37 tomó F-44.

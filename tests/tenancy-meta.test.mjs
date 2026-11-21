@@ -14,6 +14,7 @@ import {
 } from './helpers/db.mjs'
 import {
   structuralFindings, projectionGrantFindings, aggregateLeakFindings,
+  truncateFindings, truncateDefaultFindings,
 } from './helpers/rls.mjs'
 
 let db
@@ -134,6 +135,32 @@ describe('ID-12 · the tenancy suite detects what it claims to detect', () => {
         const hit = findings.find((f) => f.table === 'meta_probe_app_open')
         assert.ok(hit, 'a policy reachable by bob_app that ignores org_id went unreported')
         assert.match(hit.finding, /does not constrain org_id/)
+      })
+    })
+
+    test(`TRUNCATE on a tenant table, granted to an application role, is reported (in ${s})`, async () => {
+      await probe(s, `
+        CREATE TABLE $S.meta_probe_truncate (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          org_id UUID NOT NULL);
+        ALTER TABLE $S.meta_probe_truncate ENABLE ROW LEVEL SECURITY;
+        CREATE POLICY "tenant" ON $S.meta_probe_truncate FOR ALL
+          USING (org_id = (auth.jwt() ->> 'org_id')::uuid);
+        GRANT TRUNCATE ON $S.meta_probe_truncate TO authenticated;`, async () => {
+        // In public, Supabase's default privileges also hand it to anon.
+        const hits = (await truncateFindings(db)).filter((f) => f.table === 'meta_probe_truncate')
+        assert.ok(hits.some((f) => /^authenticated holds TRUNCATE/.test(f.finding)),
+          'TRUNCATE for authenticated on a tenant table went unreported')
+      })
+    })
+
+    test(`a default privilege handing out TRUNCATE is reported (in ${s})`, async () => {
+      await probe(s, `
+        CREATE TABLE $S.meta_probe_default_truncate (org_id UUID NOT NULL);
+        ALTER DEFAULT PRIVILEGES IN SCHEMA $S GRANT TRUNCATE ON TABLES TO bob_app;`, async () => {
+        const findings = await truncateDefaultFindings(db)
+        assert.ok(findings.some((f) => f.startsWith(`tables ${s} creates hand TRUNCATE to bob_app`)),
+          `a default TRUNCATE in ${s} went unreported: ${JSON.stringify(findings)}`)
       })
     })
 

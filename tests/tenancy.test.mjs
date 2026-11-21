@@ -12,6 +12,7 @@ import {
 import {
   structuralFindings, projectionGrantFindings, aggregateLeakFindings,
   feederStagingTables, tenantTablesUnreadableByApi,
+  truncateFindings, truncateDefaultFindings,
 } from './helpers/rls.mjs'
 
 let db
@@ -165,6 +166,17 @@ describe('ID-10 · every read and write is constrained to a single organisation'
     })
     assert.equal(rows.length, 1)
     assert.equal(rows[0].id, TENANT_A)
+  })
+})
+
+describe('F-44 · no role the application runs as can TRUNCATE a tenant table', () => {
+  test('none holds TRUNCATE on a table carrying org_id, in any schema', async () => {
+    const findings = await truncateFindings(db)
+    assert.deepEqual(findings.map((f) => f.finding), [])
+  })
+
+  test('the migration owner\'s default privileges hand TRUNCATE to none of them', async () => {
+    assert.deepEqual(await truncateDefaultFindings(db), [])
   })
 })
 
