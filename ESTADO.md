@@ -12,6 +12,7 @@
 - Tarea de Relevo «Licence scan on BOb, CHASS1S and Momentum dependency trees»: respuesta publicada el 5 nov con la distribución de licencias de producción y de desarrollo; turno de Federico.
 
 ## Hecho
+- P5 Q6 reabierta (rama `p5-q6-feeder-runs-reconciliation`): `docs/p5-application-layer.md` registra la respuesta de Henry del 2026-11-21 («El feeder») en el §1, el §3.2, el §4, el §5.2, el §6.2 y el §7, y F-40 deja las cuatro opciones de permisos para Henry. Sin código ni migraciones.
 - Spec del Slice 3 (rama `slice-3-absent-not-zero-spec`): estados, orden de resolución, regla de cada fila de la matriz, tests de aceptación de FR-32, UI-03, PR-10 y SR-2 contra una sola implementación, el fixture ampliado y la lista de enmiendas F-28 a F-34. `CONTEXT.md` gana el vocabulario de la celda. Nada construido; el contrato sigue en 0.5.3.
 - Kit del ensayo de lab-02 para P5 (rama `claude/gallant-tu-a8b569`), sin correr en ninguna caja:
   - `scripts/ensayo-migracion-lab.sh` (`--dry-run`, `--ejecutar`, `--deshacer`) y `docs/p5-failed-migration-procedure.md`;
@@ -48,11 +49,11 @@
 - Slice 3: que Federico acepte F-28 a F-34 (0.6) y diga cuáles son las «nueve reglas» y los «siete consumidores». El aviso ya está publicado en la tarea 6. Después, el PR de implementación: catálogo, `v_cell_state`, `bob_cell_rollup`, `v_ai_cell_state`, los ceros del alimentador, el fixture ampliado y el texto de 0.6 en el contrato.
 - Abiertos del Slice 3 (spec §10): ceros por actor en el drill-down (se decide con el Slice 7), materializar `v_cell_state` según el `EXPLAIN`, y F-34 (resolución de referencias AREP).
 - Bob-New PR #29 (matriz mínima): su «no configurado» no lee los marcadores de D-14. La matriz definitiva lee `v_cell_state` y no reimplementa las reglas.
-- P5 (D62): Q6 y las siete objeciones del §8 están respondidas. Antes de firmar falta solo el ensayo en lab-02. El ensayo en lab-02 (migración amañada, las nueve sin envolver, `db push` y restaurar `bob` solo) va antes de la firma.
+- P5 (D62): las siete objeciones del §8 están respondidas, y Q6 se reabrió el 2026-11-21 (F-40). Antes de firmar faltan la elección de Henry en Q6 y el ensayo en lab-02. El ensayo en lab-02 (migración amañada, las nueve sin envolver, `db push` y restaurar `bob` solo) va antes de la firma.
 - F-27: Henry eligió (a) el 20 nov. El guard revisa el EXECUTE efectivo sobre lo instalado, y el caso instalado queda en CI como `todo`. Cerrarlo con (b) o con (c) depende de si lab-02 ya tiene `pg_net`. **El kit del ensayo de lab-02 tiene que revisarlo** con `scripts/box-check.mjs`.
 - Hallazgo para Bzzz (objeción 6): GoTrue está en `bzzz-edge` y recibe `supabase.env` entero, con la contraseña del superusuario de Postgres. Va a una decisión de Bzzz, no a P5.
 - Hallazgo en P5 §6.2: `restore.sh` no restaura Postgres. La identidad se restaura a mano, y la respuesta a la objeción 2 lo reemplaza con un respaldo y una recuperación propios de `bob`.
-- F-26 resuelto en P5 Q6: un temporizador en el contenedor de BOb corre la reconciliación como `bob_app`, con el `org_id` y el `slug` de la caja como configuración de aprovisionamiento.
+- P5 Q6 (F-26) reabierta el 2026-11-21: Henry pasó la reconciliación de fantasmas al alimentador («El feeder»), porque pide `member_refs_seen` a ClickHouse y BOb no entra en `bzzz-data`. Tal como está construida escribe `actors` como `bob_app`, y `bob_feeder` no tiene esos permisos (F-40). No se amplió ningún permiso. Henry elige entre (a) el alimentador escribe los `member_refs_seen` en una tabla de `bob` y `bob_app` reconcilia (recomendada), (b) una función definer, (c) `bob_app` también en el contenedor del alimentador o (d) ampliar `bob_feeder`. D62 sigue sin firmar.
 - Fuera del Slice 2: dónde se escribe la medición p99 de H2; la igualdad de `affected_members` espera el endpoint de 3.7.
 - Límites del alimentador de referencia, a propósito: no escribe `proj_durations`, `proj_channel_health` ni `proj_rum_signals` (el fixture no trae esa instrumentación), y lee 24 horas de contexto antes de la ventana.
 - P5 (D62): el abogado del diablo ya corrió (19 nov, §8). Antes de la firma (objeción 5): ensayo en lab-02 de una migración amañada para fallar a mitad de cadena, con dump antes, que también restaure `bob` solo, y el procedimiento escrito (primero arreglo hacia delante y, si no alcanza, restaurar `bob` y reconstruir las proyecciones). F-21 y F-22 quedaron cerrados en el Slice 2.
@@ -63,6 +64,7 @@
 - Nada.
 
 ## Siguiente paso
+- P5 Q6: Henry elige (a), (b), (c) o (d) de F-40. Con (a), (b) o (d) hace falta una migración y una enmienda del contrato (§7.2 y §7.3a) antes de construir.
 - Slice 3: spec fusionada (PR #27). Turno de Federico en la tarea 6 para F-28 a F-34 y las dos preguntas del mapa de alcance.
 - Henry revisa los dos PRs del kit (BOb-engine y Bzzz), y con ellos fusionados corre en lab-02 `--dry-run` y luego `--ejecutar`. La evidencia va a `evidence/ENSAYO/` de Bzzz. Con eso: F-27 se cierra con (b) o (c), y D62 se puede firmar.
 - Henry revisa el PR #24 (guards de P5). El ensayo de lab-02 revisa si hay `pg_net` o `http` y, con eso, F-27 se cierra con (b) o con (c).

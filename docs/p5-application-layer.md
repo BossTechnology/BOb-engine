@@ -15,6 +15,15 @@ before the signature (§8). Henry answered Q6 and all seven objections the
 same day; his answers are recorded under each one. What is left before the
 signature is the lab-02 rehearsal (§8, objection 5).
 
+Updated on 2026-11-21: **Henry changed his answer to Q6.** The 19 Nov answer
+put the ghost reconciliation in the BOb container. The reconciliation asks the
+truth store (ClickHouse) for `member_refs_seen`, and §5.2 keeps the BOb
+application off `bzzz-data`. Henry: «El feeder». The feeder container runs it,
+because it already reads ClickHouse. As built, the reconciliation writes
+`actors` as `bob_app`, and `bob_feeder` holds no grant there. So the move
+reopens a grant question, which is now for Henry (§7, Q6; F-40). This changes
+a P5 answer. D62 is still unsigned.
+
 The decision itself is a BzzzBX decision: **D62** in the BzzzBX register. The
 route plan called it D39\*, and D39 went to retention. Henry signs it. This
 file is what it is written from.
@@ -38,6 +47,8 @@ not be read as permission to apply them to any box.
 - **[OPEN]**: a question the decision has to answer. They are listed in §7
   and §8. As of 2026-11-19, all are answered: Q1–Q6 and the seven
   objections of §8.
+  - *2026-11-21:* Henry answered Q6 again («El feeder»). How the feeder
+    runs it, without widening `bob_feeder` on its own, is open (§7, Q6).
 - **[FINDING]**: something wrong in what is on `main` today, found while
   writing this. It is recorded in `Documentation/contract-amendments.md`.
 
@@ -87,7 +98,7 @@ not be read as permission to apply them to any box.
 | The box applies them with the same CLI CI uses, lab first | **[PROPOSED]** | §6.2 |
 | A rehearsed failed migration on lab-02 and a written procedure, before the first window (not before the signature) | **[DECIDED]** as a condition (Federico) | §6.2 |
 | Two defects in the feeder's access as built | **[FINDING]** F-21, F-22. Fixed in Slice 2 (PR #20) and run against a database by the reference feeder (PR #21); each guard seen failing | §3.3 |
-| Who schedules the ghost reconciliation, and where it reads the tenant list | **[DECIDED]** (Henry, 19 Nov) the BOb container, with the box's single `org_id` and slug from provisioning (F-26) | §7, Q6 |
+| Who schedules the ghost reconciliation, and where it reads the tenant list | ~~**[DECIDED]** (Henry, 19 Nov) the BOb container, with the box's single `org_id` and slug from provisioning (F-26)~~ **[DECIDED]** (Henry, 2026-11-21): «El feeder», the feeder container, which already reads ClickHouse. **[OPEN]** how, since as built it writes `actors` as `bob_app` (F-40) | §7, Q6 |
 | The seven objections of the devil's-advocate review | **[DECIDED]** (Henry, 19 Nov), all seven answered. The lab-02 rehearsal comes before the signature | §8 |
 
 ---
@@ -194,6 +205,10 @@ Each entry and its source:
 - **The feeder never creates an actor** **[DECIDED]** (Relevo task 6 Q13, 11 Nov). The
   BOb-side reconciliation that creates ghosts runs as `bob_app`, from member
   refs only, with a guard (contract §10).
+  - *2026-11-21 (Q6, F-40):* Henry moved the reconciliation to the feeder
+    container. This matrix does not change until he picks one of Q6's
+    options. Options (a) and (c) keep this ruling as written; (b) and (d)
+    would reopen it.
 - **The partition function** **[DECIDED]** (contract §3; 0.2 Q7, ruled 10 Nov):
   `SECURITY DEFINER`, owned by the migration owner, EXECUTE granted to
   `bob_feeder` alone.
@@ -343,8 +358,14 @@ asks.
 | none (new) | BOb's migration owner | `/opt/bzzz/secrets/bob/migrador.env` | The migration step of §6.2, and nothing else |
 | `bzzz/supabase-ro` | `bob_ai_ro` login | `/opt/bzzz/secrets/bob/ai-ro.env` | The inference service |
 | `bzzz/apps` | `bob_app` login | `/opt/bzzz/secrets/bob/app.env` | The BOb container |
-| none (new) | `bob_feeder` login | `/opt/bzzz/secrets/bob/feeder.env` | The reference feeder first, then 3.7 (§3.1) |
+| none (new) | `bob_feeder` login | `/opt/bzzz/secrets/bob/feeder.env` | The reference feeder first, then 3.7 (§3.1). From 2026-11-21 its container also runs the ghost reconciliation's ClickHouse read (Q6) |
 
+- *2026-11-21 (Q6):* Henry moved the ghost reconciliation to the feeder
+  container («El feeder»). Which file that container reads depends on the
+  option he picks in §7, Q6. Under (a), (b) and (d) it reads `feeder.env`
+  alone, and `app.env` keeps the BOb container as its only reader. Under (c)
+  the feeder container would also read `app.env`, a second reader, which the
+  rule below forbids.
 - **One credential per file, and one reader per file.** Rotation follows
   `docs/OPERACION_rotacion_secretos.md`.
 - **The LOGIN step.** A role becomes LOGIN and gets its password when the box is
@@ -407,6 +428,12 @@ The reasons:
 | Feeder | yes | yes, read-only role | no |
 | Inference service | yes, `bob_ai_ro` | yes (task 5.7) | through Traefik only |
 
+- *2026-11-21 (Q6, F-40):* this table is why Q6 changed. The ghost
+  reconciliation asks the truth store for `member_refs_seen`. The 19 Nov
+  answer ran it in the BOb application, which has no `bzzz-data`. Henry moved
+  it to the feeder, which does («El feeder»). The table itself does not
+  change: the BOb application still never joins `bzzz-data`.
+
 ---
 
 ## 6 · The migration mechanism
@@ -440,6 +467,11 @@ The reasons:
 | How it is tried first | Development runs on a local Supabase pinned to the box's images and to CI's CLI version (§5.1, Q3 **[DECIDED]**). Then `supabase db push --dry-run` on `bzzz-lab-02`, the real apply there, then `bzzz-model-01`, then the company boxes. lab-02 is where every chain is applied first. This is plan §3.6's `--plan` habit, and D16's rule that tests run on another machine, never on a second copy |
 | How it is checked after | A read-only check against the box: the applied versions equal the pinned commit's files, and the role guards of §6.3 that need no fixture. The full suite never runs against a company box: it loads and deletes a fixture |
 | If it fails | See below. Nothing is rolled back by hand |
+
+- *2026-11-21 (Q6, F-40):* moving the ghost reconciliation to the feeder
+  container changes no row of this table. But options (a), (b) and (d) of
+  §7, Q6 each need a new migration (a table, a function or a grant). It goes
+  through this step, lab-02 first, like any other. Option (c) needs none.
 
 **If a migration fails mid-chain.** What these inputs say today is read, not
 measured:
@@ -520,7 +552,8 @@ the other three were built on 2026-11-20. The third column says where each one s
 
 Three questions for Federico, and three for Henry. None reopened a ruling.
 Q1–Q5 were answered by 2026-11-18. Q6 came from Slice 2 on 2026-11-19 and was
-answered the same day. The decision is still unsigned.
+answered the same day. Henry changed that answer on 2026-11-21, which reopens
+how it is built (Q6 below). The decision is still unsigned.
 
 1. **Q1 · Are these the three roles?** `bob_app`, `bob_feeder` and `bob_ai_ro`,
    from Handoff §4.3, with `bzzz/supabase-ro` being `bob_ai_ro`. The route plan
@@ -559,7 +592,9 @@ answered the same day. The decision is still unsigned.
    - where it runs;
    - with what credential it reads the tenant list.
    It cannot be `bob_app` (RLS) or the service role (§3.4).
-   **Answered** (Henry, 2026-11-19): **(a) the BOb container.**
+   ~~**Answered** (Henry, 2026-11-19): **(a) the BOb container.**~~
+   Superseded on 2026-11-21 (below). The 19 Nov reasoning is kept as it was
+   written. Its first bullet still stands, since the box has one tenant.
    - Objection 3 settled one organization per customer box, so the box
      already knows its only tenant. Its `org_id` and slug are fixed when the
      box is provisioned. Nothing has to list organizations from the
@@ -576,12 +611,78 @@ answered the same day. The decision is still unsigned.
      more process reading `bob/app.env`, which breaks §4's one reader per
      file.
 
+   **Answered again** (Henry, 2026-11-21): **«El feeder».**
+   - The reconciliation asks the truth store for `member_refs_seen`
+     (`reconciliation/ghosts.mjs`, `truth.memberRefsSeen`). The truth store is
+     ClickHouse, and §5.2 keeps the BOb application off `bzzz-data`. So the
+     19 Nov answer could not read what it reconciles.
+   - The feeder container already reads ClickHouse, with its read-only
+     role (task 3.6). It runs the reconciliation, not the BOb container.
+
+   **[FINDING] F-40 · as built, the feeder cannot run it without a new
+   grant.** Read against `main` (`742aa37`):
+   - `reconciliation/ghosts.mjs` runs as `bob_app`, one tenant per
+     transaction under the `org_id` claim. It reads `channels`
+     (`source_key`, `lag_seconds`) and `actor_external_refs`. It inserts
+     into `actors`, `actor_external_refs` and `actor_ref_history`. It
+     deletes the `actors` row it made when it loses a race. `linkMemberRef`
+     updates `actor_external_refs`.
+   - `bob_feeder` holds none of that: SELECT on the two feeder views, the
+     projections, and EXECUTE on the partition function (§3.2;
+     `20261118100100`, `20261119100000`, `20261118100200`).
+   - Q13 (11 Nov): the feeder never creates an actor.
+
+   Nothing was widened. **[OPEN] for Henry: which of these four.**
+   - **(a) Recommended. The feeder reads, `bob_app` writes.** The feeder
+     container reads `member_refs_seen` from ClickHouse and writes it to a
+     new table in `bob` (for example `bob.member_refs_seen`: `org_id`,
+     `channel_id`, `ref`, window). It writes one tenant per transaction under
+     that tenant's claim, as F-22 does. RLS by `org_id`, INSERT only for
+     `bob_feeder`, SELECT and DELETE for `bob_app`. It can leave out refs
+     that `v_feeder_actor_map`, which it already reads, already maps. The
+     BOb container's timer reconciles from that table as `bob_app`, as on
+     19 Nov, reading nothing from ClickHouse.
+     - *Why:* the half that needs ClickHouse is in the feeder, as Henry
+       ruled. The half that creates actors stays `bob_app`, so Q13, PR-4 and
+       §4 stand as written.
+     - *Cost:* one table, one INSERT grant to `bob_feeder` on that table
+       only, one migration, and a contract amendment (§7.2 and §7.3a, the
+       window's source). The reconciliation's tests keep their shape: the
+       table stands in for `truth.memberRefsSeen`.
+   - **(b) A definer function the feeder calls.** A `SECURITY DEFINER`
+     function, owned by the migration owner, with EXECUTE to `bob_feeder`
+     alone, does the reconciliation, guard included. The partition function
+     is the precedent (contract §3).
+     - *Why:* the whole reconciliation runs in the feeder container, with no
+       grant on any table.
+     - *Against:* the feeder then creates actors, through the function. That
+       reverses Q13 in substance and needs Federico's ruling. The guard moves
+       from JavaScript into SQL. Not recommended unless (a)'s extra table is
+       unwanted.
+   - **(c) The feeder container also holds `bob_app`.** It runs today's code
+     unchanged, as `bob_app`.
+     - *Why:* no grant and no migration.
+     - *Against:* a second reader of `bob/app.env`, the exact reason the host
+       timer was rejected on 19 Nov (§4). Two roles in one process also blurs
+       the guard that the feeder holds `bob_feeder` and nothing else. Not
+       recommended.
+   - **(d) Widen `bob_feeder`.** INSERT, UPDATE and DELETE on `actors`,
+     `actor_external_refs` and `actor_ref_history`, and SELECT on
+     `channels`.
+     - *Against:* it reverses Q13 and the §3.2 entry that the feeder holds no
+       grant on `channels` or `actors`. The §6.3 guard "Feeder reads nothing
+       else" would have to change. Not recommended.
+   - Under (a), that guard stands as built: an INSERT grant gives no read.
+
 **What stands between these inputs and the signature.**
 
 - **Before signing:**
   - The devil's-advocate review on P5. It was run on 2026-11-19, and its seven
     objections are in §8.
   - Henry's answers to §8 and to Q6, all given on 2026-11-19.
+  - *2026-11-21:* Henry's choice among Q6's options (a) to (d), after he
+    moved the reconciliation to the feeder. It is a grant question, so it is
+    settled before the signature.
 - **Before signing as well** (Henry, 2026-11-19, §8 objection 5): the
   failed-migration rehearsal on lab-02, including a restore of `bob` alone,
   and the written procedure (§6.2).
