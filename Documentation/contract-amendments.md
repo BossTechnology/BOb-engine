@@ -3108,7 +3108,21 @@ Measured on the local bench (same digests as lab-02, CLI 2.120.0):
   after the restore, `bob_outbox_drain` with `{postgres, bob_app}` only;
 - the bench, 21 cases, all matching, among them the new `sin-dependientes`
   sabotage, which fails the fingerprint check;
-- PR40_PENDIENTE
+- with PR #40 merged on top (throwaway, not pushed): the script finds and
+  saves the five dependents (`bob_outbox_drain` and Slice 3's
+  `bob_cell_state`, `bob_cell_rollup`, `bob_actor_cell_state`,
+  `bob_ai_cell_state`), but **the restore of `bob.sql.gz` fails**:
+  `bob.v_ai_cell_state` selects from `public.bob_ai_cell_state()`, which
+  reads `bob` tables. The view lives in `bob` and the function outside it,
+  so the bob-only dump cannot be restored before the function exists, and
+  the function cannot be created before `bob`'s tables do. It is the only
+  object in `bob` that depends on a function outside it.
+
+Open, for Henry, before PR #40 merges: break that cycle. Either PR #40 keeps
+the view and its function on one side (both in `bob`, or both in `public`
+and saved by the script), or the procedure creates a stub of the function
+before `bob.sql.gz` and replaces it after, keeping its OID. Until then, the
+rehearsal on lab-02 is run from a `main` without PR #40.
 
 Limit: Postgres lists at most 100 objects in the CASCADE's notice. The kit's
 count check would fail past that, loudly, not silently.
