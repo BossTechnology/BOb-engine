@@ -124,13 +124,49 @@ describe('ID-10 · every read and write is constrained to a single organisation'
 })
 
 describe('ID-11 · registry scope never crosses a tenant boundary', () => {
-  // Company scope means THIS company. Provable in Slice 0 against
-  // autobotz.scope_kind, which lands in migration 1.
-  //
-  // STATED GAP: notification_channels, threshold_configs, anomaly_rules and
-  // text_rules do not gain scope columns until Migration Order Phase C, so
-  // ID-11 is only partially covered here and completes in Slice 6. Recorded in
-  // the Phase 0 Cut List rather than discovered later.
+  // Company scope means THIS company. Slice 0 could prove it only for
+  // autobotz; Slice 6 gives threshold_configs, anomaly_rules and text_rules
+  // their scope columns (F-05), so the check runs over every table that carries
+  // scope_kind, found in the catalog. A registry that gains scope later is
+  // checked without anyone extending a list.
+  async function scopedRegistries() {
+    const { rows } = await db.query(`
+      SELECT format('%I.%I', c.table_schema, c.table_name) AS qualified, c.table_name
+        FROM information_schema.columns c
+        JOIN information_schema.tables t
+          ON t.table_schema = c.table_schema AND t.table_name = c.table_name
+       WHERE c.column_name = 'scope_kind' AND t.table_type = 'BASE TABLE'
+         AND c.table_schema NOT LIKE 'pg\\_%' AND c.table_schema <> 'information_schema'
+       ORDER BY 1`)
+    return rows
+  }
+  const SCOPE_FLOOR = ['anomaly_rules', 'autobotz', 'text_rules', 'threshold_configs']
+
+  test('discovery finds every scoped registry, and each is a tenant table', async () => {
+    const found = await scopedRegistries()
+    const names = new Set(found.map((r) => r.table_name))
+    assert.deepEqual(SCOPE_FLOOR.filter((n) => !names.has(n)), [],
+      'scope discovery is broken: a registry with scope_kind was not found')
+    const tenant = new Set((await tenantTables(db)).map((t) => t.qualified))
+    assert.deepEqual(found.filter((r) => !tenant.has(r.qualified)).map((r) => r.qualified), [],
+      'a scoped registry carries no org_id, so its company scope means every company')
+  })
+
+  test('company scope resolves within one tenant only, in every scoped registry', async () => {
+    const leaks = []
+    for (const r of await scopedRegistries()) {
+      const { rows: [other] } = await db.query(
+        `SELECT count(*)::int AS n FROM ${r.qualified} WHERE scope_kind = 'company' AND org_id = $1`,
+        [TENANT_B])
+      assert.ok(other.n > 0, `${r.table_name}: tenant B has no company-scoped row, so no leak could show`)
+      const seen = await asTenant(db, TENANT_A, async () => (await db.query(
+        `SELECT count(*)::int AS n FROM ${r.qualified}
+          WHERE scope_kind = 'company' AND org_id <> $1`, [TENANT_A])).rows[0].n)
+      if (seen > 0) leaks.push(`${r.table_name}: ${seen}`)
+    }
+    assert.deepEqual(leaks, [], 'company scope reached beyond this company')
+  })
+
   test('company-scoped AutoBotz bindings resolve within one tenant only', async () => {
     const rows = await asTenant(db, TENANT_A, async () => {
       const { rows } = await db.query(

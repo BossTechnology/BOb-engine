@@ -46,3 +46,23 @@ INSERT INTO notification_channels (id, org_id, type, label, values) VALUES
    'aaaaaaaa-0000-4000-8000-000000000001', 'email', 'A ops', '{a@example.test}'),
   ('bbbbbbbb-4444-4000-8000-000000000002',
    'bbbbbbbb-0000-4000-8000-000000000002', 'email', 'B ops', '{b@example.test}');
+
+-- One company-scoped entry each in the three registries that gain scope in
+-- Slice 6 (F-05), so ID-11 has another tenant's row to leak in every one.
+INSERT INTO threshold_configs (id, org_id, metric_id, upper_bound) VALUES
+  ('aaaaaaaa-7777-4000-8000-000000000001',
+   'aaaaaaaa-0000-4000-8000-000000000001', 'abandonment', 10),
+  ('bbbbbbbb-7777-4000-8000-000000000002',
+   'bbbbbbbb-0000-4000-8000-000000000002', 'abandonment', 20);
+
+INSERT INTO anomaly_rules (id, org_id, metric_id, rule_type, name) VALUES
+  ('aaaaaaaa-7777-4000-8000-000000000011',
+   'aaaaaaaa-0000-4000-8000-000000000001', 'abandonment', 'known', 'A spike'),
+  ('bbbbbbbb-7777-4000-8000-000000000012',
+   'bbbbbbbb-0000-4000-8000-000000000002', 'abandonment', 'known', 'B spike');
+
+INSERT INTO text_rules (id, org_id, metric_id, name, condition, value) VALUES
+  ('aaaaaaaa-7777-4000-8000-000000000021',
+   'aaaaaaaa-0000-4000-8000-000000000001', 'temas', 'A refunds', 'keyword', 'refund'),
+  ('bbbbbbbb-7777-4000-8000-000000000022',
+   'bbbbbbbb-0000-4000-8000-000000000002', 'temas', 'B refunds', 'keyword', 'refund');
