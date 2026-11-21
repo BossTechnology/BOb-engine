@@ -129,6 +129,24 @@ export async function loadFeederWorld(client) {
   }
 }
 
+// The cell's world (Slice 3 spec §8.1): telemetry started for tenant A, the
+// new capabilities, a chat channel with humans declared absent and an app
+// channel with no mix. Loaded after the feeder's world.
+export async function loadSlice3World(client) {
+  const sql = readFileSync(
+    resolve(REPO_ROOT, 'supabase/tests/fixtures/slice3_world.sql'),
+    'utf8',
+  )
+  await client.query('BEGIN')
+  try {
+    await client.query(sql)
+    await client.query('COMMIT')
+  } catch (e) {
+    await client.query('ROLLBACK')
+    throw e
+  }
+}
+
 // A second connection that acts as one of BOb's roles for its whole session,
 // the way the feeder and the reconciliation hold their credential. It takes no
 // fixture lock: the file that opens it already holds one through connect(),

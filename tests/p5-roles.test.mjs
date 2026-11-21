@@ -156,11 +156,10 @@ describe('P5 §6.3 · bob_ai_ro reads views only (IR-1)', () => {
     assert.deepEqual(rows.map((r) => r.qualified), [], 'bob_ai_ro can write')
   })
 
-  // No v_ai_* view exists yet (P5 §3.2). An absent set must not pass as a
-  // checked one: while there is none, bob_ai_ro reads nothing at all, and the
-  // day one appears this test asks for the views to be readable and for
-  // nothing else to be.
-  test('bob_ai_ro reads exactly the v_ai_* views, and today that is none', async (t) => {
+  // An absent set must not pass as a checked one: bob_ai_ro reads the v_ai_*
+  // views (P5 §3.2) and nothing else. Slice 3 added the first,
+  // bob.v_ai_cell_state (R6); the test asks for exactly the views found.
+  test('bob_ai_ro reads exactly the v_ai_* views', async (t) => {
     const views = await aiViews()
     const { rows } = await db.query(`
       SELECT format('%I.%I', n.nspname, c.relname) AS qualified

@@ -536,7 +536,7 @@ describe('F-21 · the feeder reads its two views, and nothing else', () => {
       assert.deepEqual(channels.rows.map((r) => r.org_id).sort(), [TENANT_A, TENANT_B])
       const cols = Object.keys((await db.query('SELECT * FROM bob.v_feeder_channel_map LIMIT 1')).rows[0])
       assert.deepEqual(cols, ['channel_id', 'org_id', 'tenant_slug', 'source_key',
-        'lag_seconds', 'adapter_kind', 'idle_bound_seconds', 'capabilities'])
+        'lag_seconds', 'adapter_kind', 'idle_bound_seconds', 'capabilities', 'actor_types'])
       const actors = await db.query('SELECT DISTINCT org_id::text FROM bob.v_feeder_actor_map')
       assert.deepEqual(actors.rows.map((r) => r.org_id).sort(), [TENANT_A, TENANT_B])
     })
@@ -789,8 +789,14 @@ describe('§10 · nothing typed that must be declared', () => {
          AND pg_get_viewdef(v.oid) ~ 'channel_capabilities'
          AND pg_get_viewdef(v.oid) ~ 'channel_type'
       UNION ALL
+      -- A BEGIN ATOMIC body (Slice 3) leaves prosrc empty and lives in
+      -- prosqlbody, so the definition is read whole.
       SELECT p.oid::regprocedure::text FROM pg_proc p
-       WHERE p.prosrc ~ 'channel_capabilities' AND p.prosrc ~ 'channel_type'`)
+       WHERE p.prokind IN ('f', 'p')
+         AND p.pronamespace NOT IN (SELECT oid FROM pg_namespace
+                                     WHERE nspname LIKE 'pg\\_%' OR nspname = 'information_schema')
+         AND pg_get_functiondef(p.oid) ~ 'channel_capabilities'
+         AND pg_get_functiondef(p.oid) ~ 'channel_type'`)
     assert.deepEqual(rows, [])
   })
 

@@ -264,9 +264,12 @@ describe('§4.1 · every turn accounted at seal', () => {
     const sealable = new Date('2026-11-18T14:05:00Z').getTime() + ch[VOICE_A].lag_seconds * 1000 <=
       new Date(FIXTURE.watermark).getTime()
     assert.ok(sealable, 'voice 14:00 is behind its lag, so only the capability can keep it out')
+    // Slice 3 (F-28): the bucket had traffic and seals, so voice now carries
+    // the observed zeros of what it declares (resolution). No label row.
     const { rows: voice } = await db.query(
       `SELECT metric_id FROM bob.proj_metric_counts
-        WHERE channel_id = $1 AND bucket_start = '2026-11-18 14:00:00+00'`, [VOICE_A])
+        WHERE channel_id = $1 AND bucket_start = '2026-11-18 14:00:00+00'
+          AND metric_id IN ('abstained', 'classifier_down', 'label_missing')`, [VOICE_A])
     assert.deepEqual(voice, [])
   })
 
