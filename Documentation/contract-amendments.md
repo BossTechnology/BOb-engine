@@ -3226,6 +3226,9 @@ Henry's ruling: "Both in bob".
   chain is applied, before any fixture, and step 5 checks that `bob` is back to
   exactly those. Still discovered, and a fixture row left anywhere (including
   `organizations`) still fails it.
+- **The rehearsal, end to end.** `probar-local.sh` with Supabase CLI 2.120.0,
+  on this branch with PR #41 merged in (throwaway tree, not pushed): every case
+  matches, the bob-alone restore included.
 
 ### Build choices, for Henry to confirm
 
