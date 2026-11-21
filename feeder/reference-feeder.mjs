@@ -16,8 +16,9 @@
 // writes proj_durations (response time, and interaction duration at the close)
 // and proj_channel_health from an uptime probe, and at seal it writes the
 // observed zero: for every sealed bucket with liveness (traffic or probe),
-// every metric of ZERO_RULES whose capability the channel declares, and the
-// actor types the channel declares present. Never for a metric of
+// every metric of ZERO_RULES that it MEASURES (has a counting path for) and
+// whose capability the channel declares, and the actor types the channel
+// declares present. Never for a metric of
 // ZERO_PRECONDITIONS whose precondition it cannot see met. RUM stays
 // unwritten: that is Slice 4.
 //
@@ -28,7 +29,7 @@
 
 import {
   MEMBER_REF, kindOf, LABEL_STATES, LABEL_FAILURES, CLOSE_METRIC,
-  ZERO_RULES, ZERO_PRECONDITIONS, TRAFFIC_KINDS,
+  ZERO_RULES, ZERO_PRECONDITIONS, MEASURED, TRAFFIC_KINDS,
 } from './event-mapping.mjs'
 
 export const DEFAULT_FEEDER_VERSION = 'reference-feeder/0.1'
@@ -318,7 +319,7 @@ function rowsOf(T, watermark) {
   })
 
   // F-28, F-38 · the observed zero, at seal. For every sealed bucket with
-  // liveness, every metric whose capability the channel declares, for the
+  // liveness, every metric it counts and whose capability the channel declares, for the
   // actor types present on it (degenerate metrics: `user`), where no row was
   // counted. Never for a precondition it cannot see met.
   const have = new Set([
@@ -330,6 +331,7 @@ function rowsOf(T, watermark) {
     const ch = l.channel
     const session = closes.get(`${ch.channel_id}|${l.bucket}`) ?? 0
     for (const [m, rule] of Object.entries(ZERO_RULES)) {
+      if (!MEASURED.has(m)) continue
       const pre = ZERO_PRECONDITIONS[m]
       if (pre === 'ground_truth') continue
       if (pre === 'idle_bound' && ch.idle_bound_seconds === null) continue

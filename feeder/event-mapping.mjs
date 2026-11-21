@@ -38,6 +38,18 @@ export const ZERO_RULES = {
   interaction_duration: { table: 'proj_durations',     capability: 'resolution',     actors: ['user'], degenerate: true },
 }
 
+// F-28 · the zero is written only for a metric the feeder counts. A zero for
+// a metric with no counting path would be a zero nobody observed: an
+// abandonment the feeder cannot see would still read as "observed, none".
+// The reference feeder counts resolved and escalations at the close, response
+// time from the turns, and interaction duration at the close. It has no idle
+// detection, no disambiguation event and no queue event, so abandoned,
+// disambiguation and abandoned_in_queue get no row at all and render
+// not_observed. A metric joins this set in the same change that gives it a
+// counting path; tests/slice3-cell-state.test.mjs sees each one counted above
+// zero from the fixture, and no row for the others. 3.7 owes the same rule.
+export const MEASURED = new Set(['resolved', 'escalations', 'response_time', 'interaction_duration'])
+
 // F-28, corrected · the closed list of metrics whose measurement has a
 // precondition beyond the capability. A metric that gains one joins it in the
 // same change; the guard compares it with the catalog's `precondition`.

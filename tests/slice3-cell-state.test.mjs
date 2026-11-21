@@ -23,7 +23,7 @@ import {
 import { MemoryTruthStore } from '../feeder/memory-truth-store.mjs'
 import { runFeeder } from '../feeder/reference-feeder.mjs'
 import {
-  ZERO_RULES, ZERO_PRECONDITIONS, LABEL_FAILURES, TRAFFIC_KINDS, kindOf,
+  ZERO_RULES, ZERO_PRECONDITIONS, MEASURED, LABEL_FAILURES, TRAFFIC_KINDS, kindOf,
 } from '../feeder/event-mapping.mjs'
 
 const read = (f) => JSON.parse(readFileSync(resolve(REPO_ROOT, f), 'utf8'))
@@ -711,13 +711,60 @@ describe('F-28, corrected · no zero for a preconditioned metric', () => {
     assert.deepEqual([c.state, c.reasons], ['not_configured', ['no_ground_truth']])
   })
 
-  test('a channel with traffic and no idle bound gets no abandoned row; with the bound, it does', async () => {
-    const { rows } = await db.query(`SELECT channel_id FROM bob.proj_metric_counts
-      WHERE org_id = $1 AND metric_id = 'abandoned' GROUP BY channel_id`, [TENANT_A])
-    assert.deepEqual(rows.map((r) => r.channel_id), [WHATSAPP])
+  test('a channel with traffic and no idle bound: abandoned is not_configured, and no row', async () => {
+    const { rows } = await db.query(`SELECT 1 FROM bob.proj_metric_counts
+      WHERE org_id = $1 AND channel_id = $2 AND metric_id = 'abandoned'`, [TENANT_A, CHAT])
+    assert.equal(rows.length, 0)
     const c = one(await cells(TENANT_A, [CHAT], { from: '2026-11-18T14:30:00Z', to: '2026-11-18T14:35:00Z' }),
       { metric: 'abandoned', actor_type: 'asa' })
     assert.deepEqual([c.state, c.reasons], ['not_configured', ['idle_bound_not_declared']])
+  })
+})
+
+// The review of PR #40: a zero for a metric the feeder has no way to count is
+// a zero nobody observed. WhatsApp declares disambiguation, queue and an idle
+// bound, has traffic and a probe, and the feeder counts none of the three.
+describe('F-28 · a zero only for a metric the feeder counts', () => {
+  const UNMEASURED = Object.keys(ZERO_RULES).filter((m) => !MEASURED.has(m))
+
+  test('every measured metric is counted above zero from the fixture (it has a counting path)', async () => {
+    const { rows } = await db.query(`
+      SELECT DISTINCT metric_id AS m FROM bob.proj_metric_counts
+       WHERE org_id = ANY($1::uuid[]) AND event_count > 0
+      UNION SELECT DISTINCT measure FROM bob.proj_durations
+       WHERE org_id = ANY($1::uuid[]) AND n > 0`, [TENANTS])
+    const counted = new Set(rows.map((r) => r.m))
+    for (const m of MEASURED) assert.ok(counted.has(m), `${m} is in MEASURED but never counted`)
+    for (const m of MEASURED) assert.ok(m in ZERO_RULES, `${m} is in MEASURED but has no zero rule`)
+  })
+
+  test('a metric with no counting path gets no row at all, where its declarations are all there', async () => {
+    const { rows: [w] } = await db.query(`
+      SELECT c.idle_bound_seconds, array_agg(cc.capability ORDER BY cc.capability) AS caps
+        FROM bob.channels c JOIN bob.channel_capabilities cc ON cc.channel_id = c.id
+       WHERE c.id = $1 GROUP BY c.id`, [WHATSAPP])
+    assert.ok(w.idle_bound_seconds !== null, 'WhatsApp declares an idle bound')
+    for (const c of ['disambiguation', 'queue']) assert.ok(w.caps.includes(c), `WhatsApp declares ${c}`)
+    assert.ok(UNMEASURED.includes('abandoned') && UNMEASURED.includes('disambiguation')
+      && UNMEASURED.includes('abandoned_in_queue'))
+    const { rows } = await db.query(`
+      SELECT metric_id AS m, count(*)::int AS n FROM bob.proj_metric_counts
+       WHERE org_id = ANY($1::uuid[]) AND metric_id = ANY($2) GROUP BY 1
+      UNION ALL
+      SELECT measure, count(*)::int FROM bob.proj_durations
+       WHERE org_id = ANY($1::uuid[]) AND measure = ANY($2) GROUP BY 1`, [TENANTS, UNMEASURED])
+    assert.deepEqual(rows, [])
+  })
+
+  test('so their cells read not_observed on a sealed bucket with liveness, never observed', async () => {
+    assert.ok((await livenessInTruth()).has(`${WHATSAPP}|2026-11-18T03:00:00.000Z`), 'the probe bucket is live')
+    const list = await cells(TENANT_A, [WHATSAPP], { from: '2026-11-18T03:00:00Z', to: '2026-11-18T03:05:00Z' })
+    for (const m of ['abandoned', 'disambiguation', 'abandoned_in_queue']) {
+      const mine = list.filter((c) => c.metric === m)
+      assert.ok(mine.length > 0, `no ${m} cell`)
+      assert.deepEqual(mine.filter((c) => c.state === 'observed'), [], `${m} observed`)
+      assert.ok(mine.some((c) => c.state === 'not_observed'), `${m} never not_observed`)
+    }
   })
 })
 
