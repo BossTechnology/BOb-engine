@@ -2448,9 +2448,9 @@ All five were decided with the recommended option:
 ### The 0.6 notice already posted
 
 The notice on Relevo task 6 (20 Nov) carries F-28 as first written and says
-D-14's markers come first without saying D-14 is extended. A correction is
-drafted in the PR that carries this entry, for Henry to decide whether to send
-it. It is not posted.
+D-14's markers come first without saying D-14 is extended. The correction
+(F-28 corrected, F-38, F-39, F-31 reworded) was posted there on 21 Nov, by
+Henry's order.
 
 ---
 
