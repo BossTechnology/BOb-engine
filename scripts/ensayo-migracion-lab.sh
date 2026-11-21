@@ -420,6 +420,9 @@ ejecutar)
   comprobar "las ocho proyecciones existen" 8 \
     "$(q "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'bob' AND c.relkind = 'p' AND c.relname LIKE 'proj\_%'")"
   comprobar "auth.users sin tocar" "$CUENTAS0 $AUTH0" "$(auth_cuentas) $(auth_huella)"
+  # What the chain itself leaves in bob, before any fixture: configuration a
+  # migration seeds (bob.cell_catalog, Slice 3) is part of the box, not data.
+  conteos_bob > "$RUN/conteos-cadena.txt"
 
   paso "4 · Restaurar bob solo y reconstruir las proyecciones"
   ev_bloque "datos sintéticos (fixtures del repo, todo inventado)" mundo cargar
@@ -490,7 +493,8 @@ ejecutar)
 
   paso "5 · Dejar la caja con la cadena y sin datos sintéticos"
   ev_bloque "quitar los tenants del fixture" mundo limpiar
-  comprobar "sin filas del fixture en bob" "" "$(conteos_bob | grep -v '=0$' || true)"
+  comprobar "sin filas del fixture en bob (lo que deja la cadena, y nada más)" \
+    "$(grep -v '=0$' "$RUN/conteos-cadena.txt" || true)" "$(conteos_bob | grep -v '=0$' || true)"
   comprobar "F-15 al terminar" "$VERSIONES_REALES" "$(versiones_aplicadas)"
   comprobar "auth.users sin tocar, de principio a fin" "$CUENTAS0 $AUTH0" "$(auth_cuentas) $(auth_huella)"
 
