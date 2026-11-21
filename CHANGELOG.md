@@ -3,6 +3,7 @@
 Una línea por cambio entregado, en lenguaje de usuario.
 
 ## Sin publicar
+- El registro de auditoría ya no se puede escribir desde la aplicación: `bob_app` solo lo lee.
 - Quién entra a la caja: bob-web puede leer los usuarios de su organización; registrarse en GoTrue ya no crea un usuario de BOb, y el operador da de alta a cada persona con `scripts/provision-user.mjs`. El chequeo de la caja avisa si nadie puede entrar.
 - Slice 6: el outbox ya no acepta intenciones para un binding de AutoBotz sin verificar, con la verificación fallida o vencida; hay que verificarlo otra vez después de editarlo.
 - Insumos de P5 (D62): la reconciliación de fantasmas pasa al contenedor del alimentador, que ya lee ClickHouse, por decisión de Henry del 21 nov. El alimentador deja los miembros que ve en una tabla de BOb, y BOb crea los fantasmas desde ella, así que el alimentador sigue sin crear actores. D62 sigue sin firmar.

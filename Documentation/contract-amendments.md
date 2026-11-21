@@ -2767,7 +2767,7 @@ tenant table. `bob.users` is now the exception: SELECT, and UPDATE of
 `last_login_at` only, because who may sign in is the operator's to write. The
 §10 grants test names it (`SIGN_IN` in `tests/slice2-schema.test.mjs`).
 
-### F-43 · bob.audit_log · bob_app is granted writes that RLS refuses — finding
+### F-43 · bob.audit_log · bob_app is granted writes that RLS refuses — closed, revoked
 
 `audit_log`'s only policy is `org_audit_read`, FOR SELECT. `bob_app` holds
 INSERT, UPDATE and DELETE on it (§10), and RLS refuses all three. Not changed
@@ -2799,6 +2799,27 @@ tenant's rows. F-43 is why writes are checked more loosely: per command,
 
 **Counts.** Node: 9 new tests in `tests/users-access.test.mjs`, 1 in
 `tests/tenancy.test.mjs`, 4 meta probes. pgTAP: 6 new (15 in all).
+
+
+## F-43 · closed: bob_app reads audit_log and writes nothing
+
+Ruled by Henry on 21 Nov: revoke. Migration `20261121140000` revokes INSERT,
+UPDATE, DELETE and TRUNCATE on `bob.audit_log` from `bob_app`, which keeps
+SELECT. The initial schema meant this from the start: its only policy is
+`org_audit_read`, FOR SELECT, and nobody in the application writes the trail.
+
+- **§10 again.** `audit_log` joins `bob.users` as a named exception in the
+  grants test (`READ_ONLY`, SELECT only).
+- **The guard now checks writes per command too.** With F-43 closed, nothing
+  needs the looser rule: a write granted to `bob_app` with no policy for that
+  command (or ALL) is reported, like a read. New meta probe: an INSERT granted
+  with only a SELECT policy, in `public` and in `bob`.
+- **Seen failing first.** Before the migration, the new probe and pgTAP's
+  "bob_app writes nothing to bob.audit_log" both failed. The green run is CI's:
+  the shared local stack (`bob-v1`) had been removed by the time the migration
+  was written, and no other stack was touched.
+- `authenticated` still holds table-level writes on `audit_log` that RLS
+  refuses. Not changed here.
 
 ---
 

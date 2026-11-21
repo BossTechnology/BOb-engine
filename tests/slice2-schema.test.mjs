@@ -224,6 +224,9 @@ describe('§10 · partitions granted and guarded', () => {
 })
 
 const SIGN_IN = new Set(['bob.users'])
+// F-43: the audit trail is written outside the application (its policy is
+// FOR SELECT only); bob_app reads it and writes nothing.
+const READ_ONLY = new Set(['bob.audit_log'])
 
 describe('§10 · bob_app grants, found rather than listed', () => {
   test('non-projections: SELECT, INSERT, UPDATE, DELETE. Projections: SELECT only', async () => {
@@ -250,7 +253,7 @@ describe('§10 · bob_app grants, found rather than listed', () => {
         // column grants (autobotz keeps its verdict columns for Verify).
         // F-42: bob.users says who may sign in, and only the operator's
         // provisioning writes it. bob_app reads it and stamps last_login_at.
-        const want = projections.has(t.qualified) ? ['SELECT']
+        const want = projections.has(t.qualified) || READ_ONLY.has(t.qualified) ? ['SELECT']
           : SIGN_IN.has(t.qualified) ? ['SELECT', 'UPDATE']
           : keysAlert.has(t.qualified) ? ['SELECT', 'INSERT', 'UPDATE']
           : ['SELECT', 'INSERT', 'UPDATE', 'DELETE']

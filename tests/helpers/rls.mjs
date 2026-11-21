@@ -72,21 +72,20 @@ export async function structuralFindings(client) {
       (p) => p.schemaname === t.table_schema && p.tablename === t.table_name)
 
     if (!DELIBERATE_DENY_ALL.has(t.table_name)) {
-      // A read is checked per command: an UPDATE policy does not let a SELECT
-      // through, and a read that silently comes back empty is how sign-in
-      // broke. A write is refused loudly or touches nothing; any policy that
-      // reaches the role is enough for it here.
+      // Per command: an UPDATE policy does not let a SELECT through, and a
+      // SELECT policy does not let an INSERT through. A read that silently
+      // came back empty is how sign-in broke; a write refused every time is
+      // how audit_log carried grants nobody could use (F-43).
       for (const g of granted.filter((g) => g.qualified === t.qualified)) {
-        const reached = own.some((p) =>
-          (g.privilege !== 'SELECT' || p.cmd === 'ALL' || p.cmd === 'SELECT') &&
+        const reached = own.some((p) => (p.cmd === 'ALL' || p.cmd === g.privilege) &&
           (p.roles || []).map(String).some((r) => r === 'public' || r === g.role))
         if (!reached) {
           findings.push({
             table: t.table_name,
             rule: 'ID-10',
-            finding: `${g.role} is granted ${g.privilege} but no policy reaches it for ` +
-              `${g.privilege === 'SELECT' ? 'SELECT' : 'any command'}, so it silently gets ` +
-              'nothing. Add a tenant-scoped policy for it, or revoke the grant',
+            finding: `${g.role} is granted ${g.privilege} but no ${g.privilege} policy ` +
+              'reaches it, so RLS refuses or empties it every time. Add a tenant-scoped ' +
+              'policy for it, or revoke the grant',
           })
         }
       }
