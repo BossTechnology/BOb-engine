@@ -2554,8 +2554,10 @@ What was built:
   through the table.
 - Written into `docs/contracts/projection-contract.md` marked
   **[PROPOSED, F-41]**, with the replaced text struck through. The version
-  stays 0.5.3 until it is accepted. Not yet sent to Federico on Relevo task
-  6.
+  stays 0.5.3 until it is accepted. Sent to Federico on Relevo task 6 on
+  21 Nov, by Henry's order, with the question on the window CHECK; the turn
+  is his. It went up twice by mistake (13:31 and 13:32, identical), and a
+  short note there says to read the first.
 
 ### How the guards find the table
 
