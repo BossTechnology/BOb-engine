@@ -3,7 +3,7 @@
 > Actualizar al cerrar cada sesión. Es lo primero que lee la siguiente.
 
 ## Tarea actual
-- Slice 3 («The absent-not-zero state»): grill hecho con Henry el 20 nov (G1–G15) y spec escrita en `docs/slice-3-absent-not-zero.md`, en la rama `slice-3-absent-not-zero-spec`, sin código. Seis estados de celda con motivos, vivacidad por tráfico o sonda, cero escrito al sellar, cobertura en los totales y el mecanismo en la base (`bob.v_cell_state`). Siete enmiendas propuestas para 0.6 (F-28 a F-34), registradas en amendments y sin firmar. El aviso a Federico está en borrador, sin publicar.
+- Slice 3 («The absent-not-zero state»): grill hecho con Henry el 20 nov (G1–G15) y spec escrita en `docs/slice-3-absent-not-zero.md`, en la rama `slice-3-absent-not-zero-spec`, sin código. Seis estados de celda con motivos, vivacidad por tráfico o sonda, cero escrito al sellar, cobertura en los totales y el mecanismo en la base (`bob.v_cell_state`). Siete enmiendas propuestas para 0.6 (F-28 a F-34), registradas en amendments y sin firmar. El aviso de 0.6 a Federico se publicó en la tarea 6 el 20 nov, con la pregunta de las «nueve reglas» y los «siete consumidores».
 - Slice 2 terminado y en `main`: PR #20 (`9fbd367`) y PR #21 (`c4ebf1d`), contrato 0.5.3. El aviso de 0.5.3 a Federico se publicó en la tarea 6 de Relevo el 19 nov, y el turno es de Federico (3.7).
 - BZZ-3 de Relevo, P5 («the whole application layer»), decisión D62 de BzzzBX, sin firmar: insumos en `docs/p5-application-layer.md`. El 19 nov se pusieron al día después del Slice 2, con F-26 como Q6 y las siete objeciones del abogado del diablo en el §8. Henry respondió la 1 (BOb v1 corre dentro de la caja), la 2 (base compartida, `bob` se recupera solo) la 3 (una organización por caja; la RLS es defensa en profundidad) la 4 (una ventana por slice en lab-02, model-01 y Febor; la 4A cuando una segunda caja lleve BOb), la 5 (el ensayo de lab-02 va antes de firmar), la 6 (la credencial de migración en su propio fichero, `bob/migrador.env`) y la 7 (cerrada con esta puesta al día). Q6 (F-26): la reconciliación la corre el contenedor de BOb con el único `org_id` de la caja. Antes de firmar falta el ensayo en lab-02 (rama `docs/p5-d62-after-slice-2`). Federico respondió Q1–Q3 (tres roles de Handoff §4.3; `organizations`/`org_id` en vez de `tenants`/`app_entities`; Q3 en su forma del 15 nov: desarrollo en Supabase local, lab-02 para integración y ensayo, el proyecto hospedado vuelve a la demo). Henry respondió en BZZ-19 el 18 nov: el alimentador de referencia tiene `bob_feeder` primero; número D62 (D60 se firmó ese día para otra cosa).
 - Tarea 6 de Relevo («The projection read contract»): contrato de proyección **0.5.1 firmado** por Henry en la tarea 6 el 2026-11-18 (marca «Decisión firmada») y fusionado en `main` (PR #17, `5e2966d`). Las correcciones que encontró el Slice 2 están en 0.5.2 (F-23, F-24 con §8.7) y 0.5.3 (F-25), aceptadas por Henry; 0.5.2 y 0.5.3 ya se avisaron a Federico. Turno de Federico para la pregunta de H3.
@@ -39,7 +39,7 @@
   - CHASS1S (repo `CHS`): 137 de producción. jszip tiene doble licencia (MIT o GPL), duck declara solo «BSD» y Chromium se descarga en tiempo de ejecución.
 
 ## Pendiente
-- Slice 3: que Federico acepte F-28 a F-34 (0.6). El borrador del aviso está en las notas compartidas de la sesión, como el de 0.5.3; lo publica Henry en la tarea 6. Después, el PR de implementación: catálogo, `v_cell_state`, `bob_cell_rollup`, `v_ai_cell_state`, los ceros del alimentador, el fixture ampliado y el texto de 0.6 en el contrato.
+- Slice 3: que Federico acepte F-28 a F-34 (0.6) y diga cuáles son las «nueve reglas» y los «siete consumidores». El aviso ya está publicado en la tarea 6. Después, el PR de implementación: catálogo, `v_cell_state`, `bob_cell_rollup`, `v_ai_cell_state`, los ceros del alimentador, el fixture ampliado y el texto de 0.6 en el contrato.
 - Abiertos del Slice 3 (spec §10): ceros por actor en el drill-down (se decide con el Slice 7), materializar `v_cell_state` según el `EXPLAIN`, y F-34 (resolución de referencias AREP).
 - Bob-New PR #29 (matriz mínima): su «no configurado» no lee los marcadores de D-14. La matriz definitiva lee `v_cell_state` y no reimplementa las reglas.
 - P5 (D62): Q6 y las siete objeciones del §8 están respondidas. Antes de firmar falta solo el ensayo en lab-02. El ensayo en lab-02 (migración amañada, las nueve sin envolver, `db push` y restaurar `bob` solo) va antes de la firma.
@@ -57,7 +57,7 @@
 - Nada.
 
 ## Siguiente paso
-- Henry revisa el PR de la spec del Slice 3 y publica en la tarea 6 el aviso de 0.6 a Federico (F-28 a F-34). El aviso lleva además la pregunta de cuáles son las «nueve reglas» y los «siete consumidores» del mapa de alcance (tarea 7), que el documento no lista.
+- Henry revisa el PR #27 (spec del Slice 3). Turno de Federico en la tarea 6 para F-28 a F-34 y las dos preguntas del mapa de alcance.
 - Henry revisa el PR #24 (guards de P5). El ensayo de lab-02 revisa si hay `pg_net` o `http` y, con eso, F-27 se cierra con (b) o con (c).
 - P5: Henry revisa y fusiona el PR #22, corre (o autoriza) el ensayo en lab-02 y, si confirma el §6.2, firma D62.
 - La tarea 3.7 de BzzzBX implementa contra el contrato 0.5.3, con `member_refs_seen` como cuarto entregable (turno de Federico).
