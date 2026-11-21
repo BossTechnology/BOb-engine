@@ -3151,8 +3151,13 @@ shell's collation, while the inventory comes in the database's. On lab-02
 was right (105 lines either way), but `--deshacer` reads the same comparison
 to decide what to drop. Both sides are now sorted bytewise before `comm`.
 
-Not run on the box: the Bzzz side. lab-02's Bzzz is at `bceaa4e`, without
-bzzz#365, so its `backup.sh` does not write `bob.sql.gz` yet.
+The Bzzz side: lab-02 runs Bzzz `main` at `ec8a17c`, without bzzz#365. The
+new `backup.sh` was run once without installing it, from `main` at `945859b`:
+it exits 0 and its manifest says `postgres:bob tablas=33 filas=0
+publicaciones=4 archivo=bob.sql.gz`, the 33 tables matching what is live. The
+nightly backup is still the installed one. Deploying Bzzz `main` there is
+separate: its plan brings up `compose/l7-bob.yml`, which needs a bob-web
+image lab-02 does not have.
 
 ---
 
