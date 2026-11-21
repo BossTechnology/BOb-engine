@@ -30,6 +30,21 @@ implementation, not four (§8).
   feeder's output on the two-tenant fixture.
 - The behavioural rules FR-11, FR-23, FR-32, FR-35 and UI-03. Their source
   document is internal, so they are cited here by ID only.
+- The Relevo task 7 scope map, `BOb_v1_Remaining_Work_2026-11-10.docx` (md5
+  `8365ae540c863b2c287db45325edc247`), read after the grill. Its Slice 3
+  section matches this spec in all of these:
+  - the three states;
+  - the "what to do" of the third;
+  - the off-shift dash in the drill-down;
+  - the four consumers;
+  - the done condition.
+
+  Two things in it are not resolved here:
+  - It says the mechanism serves "nine rules now, not four", and does not list
+    them. The done condition still names four.
+  - Its section on the order says seven consumers, against four in its Slice 3
+    section. This spec builds for the four that are named. Any other consumer
+    reads the same view.
 
 The grill's questions are cited as **G1 to G15**. Each one was answered by
 Henry with the recommended option.
