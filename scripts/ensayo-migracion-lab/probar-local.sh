@@ -133,6 +133,7 @@ for s in "amanada-no-falla|el push sale distinto de 0" \
          "vista-invoker|la huella de bob es idéntica" \
          "funcion-invoker|la huella de bob es idéntica" \
          "sin-publicacion|la huella de bob es idéntica" \
+         "sin-dependientes|la huella de bob es idéntica" \
          "sin-reconstruir|las proyecciones reconstruidas son las de antes" \
          "rol-de-mas|box-check: tres roles y no más"; do
   caso "sabotaje ${s%%|*}" 1 "FALLO ${s#*|}" -- env ENSAYO_P5_SABOTAJE="${s%%|*}" "$ENSAYO" --objetivo local --contenedor "$DB" \

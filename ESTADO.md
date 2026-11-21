@@ -3,6 +3,7 @@
 > Actualizar al cerrar cada sesión. Es lo primero que lee la siguiente.
 
 ## Tarea actual
+- F-47 (rama `f47-outbox-drain-restore`, PR abierto): el `DROP SCHEMA bob CASCADE` del procedimiento de P5 se llevaba `public.bob_outbox_drain`, y el PR #40 agrega cinco funciones más en `public` que dependen de `bob`. Henry resolvió arreglar el procedimiento: `scripts/bob-dependientes.sh` las guarda antes y las repone después, y el kit lo ensaya. `service_role` sin EXECUTE sobre el drenaje (`20261121190000`). Después: Henry corre el kit en lab-02 con el SHA de `main` que incluya este PR.
 - F-43 cerrado (PR #35 y PR #37 en `main`). F-44 cerrado en la rama `revoke-truncate` (PR abierto): ningún rol de la aplicación tiene TRUNCATE en una tabla con `org_id`, y los privilegios por defecto de `public` ya no lo reparten.
 - F-43 cerrado (PR #35, fusionado: `76bd3a9`): `bob_app` solo lee `audit_log`. El guard de tenancy revisa también las escrituras por comando.
 - Quién entra a la caja (PR #34, fusionado (`e392c44`)): `bob_app` lee `bob.users` de su org y sella `last_login_at`; se quita el trigger `on_auth_user_created`; altas con `scripts/provision-user.mjs`, en seco por defecto; `box-check` avisa si no hay usuario activo. Resuelto por Henry el 21 nov. F-42 (excepción de §10) y F-43 cerrado en la línea de arriba.
@@ -78,6 +79,7 @@
 - Nada.
 
 ## Siguiente paso
+- F-47: fusionar el PR y, con eso, correr el ensayo en lab-02 (`--dry-run`, luego `--ejecutar`) desde ese commit. lab-02 necesita la CLI de Supabase 2.120.0.
 - Slice 6 cerrado: PR #26 y PR #31 en `main`. Queda abierto para P5 si el outbox necesita un estado `claimed` (el stub marca `drained` antes del intento). Bob-New tiene que seguir el cambio de columnas de `response_rules` y llamar a Verify antes de la primera intención.
 - P5 Q6, opción (a), construida y fusionada (PR #33, `f8c8474`). `bob.member_refs_seen` con RLS por `org_id`, INSERT solo para `bob_feeder`, SELECT y DELETE para `bob_app`; `stageMemberRefs` en el alimentador de referencia; `reconciliation/ghosts.mjs` lee la tabla como `bob_app` y borra lo que consumió, con la ventana de H3 y el barrido de 395 días. Enmienda del contrato §7.2 y §7.3a propuesta como F-41 y avisada a Federico en la tarea 6 el 21 nov (cambia quién llama a `member_refs_seen`, entregable de 3.7); falta su respuesta, y con ella si el CHECK de la ventana se queda. D62 sigue sin firmar.
 - Slice 3: esperar la respuesta de Federico en la tarea 6 (0.6 y las dos preguntas del mapa de alcance). Con 0.6 aceptado, el PR de implementación.

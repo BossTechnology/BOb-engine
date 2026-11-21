@@ -17,7 +17,7 @@
 --     a DROP SCHEMA bob CASCADE can take one with it;
 --   - default privileges, publication membership, sequences and comments;
 --   - triggers on tables outside `bob` that call a function of the chain
---     (on_auth_user_created on auth.users).
+--     (on_auth_user_created on auth.users, until 20261121130000 dropped it).
 -- No row values. Row counts are taken separately and never printed here.
 
 WITH bob_rel AS (

@@ -3061,6 +3061,58 @@ and, after the migration, three sabotages: TRUNCATE back on `users` for
 `authenticated`, TRUNCATE on `actors` to PUBLIC, and the `public` default back.
 pgTAP 18 of 18 on the shared local stack; the suite's clean run is CI's.
 
+
+## F-47 · restoring `bob` alone dropped what depends on it outside `bob` — closed in the procedure
+
+Found running the P5 lab-02 rehearsal kit locally on `main` (`a5bfc7f`) on
+21 Nov: 2 of its 36 checks failed. `DROP SCHEMA bob CASCADE` also drops every
+object outside `bob` that depends on a `bob` object, and `pg_dump -n bob` does
+not carry it back. On `main` that was `public.bob_outbox_drain(integer)`
+(Slice 6), which `RETURNS SETOF bob.outbound_queue`: after the restore it was
+gone, and the fingerprint of `public` differed. The procedure's line
+"BOb's functions in `public` survive it, because they reference `bob` by name
+and not by type" stopped being true with Slice 6. PR #40 (Slice 3) adds five
+more, written with `BEGIN ATOMIC` so that `pg_depend` sees them on purpose.
+
+Ruled by Henry on 21 Nov: fix the procedure, not the functions («En el
+procedimiento»). Done:
+
+- `scripts/bob-dependientes.sh`, used by the procedure (§4.3) and by the kit.
+  Before the drop it finds the dependents in `pg_depend`, transitively from
+  every relation, type and function in `bob`, discovered, not listed, and
+  saves their definitions from the box itself: `pg_dump --schema-only` of
+  their schemas, filtered with `pg_restore -L` to each object's CREATE, owner,
+  grants and comments. After `bob.sql.gz` it puts them back in one
+  transaction. Recreated as the superuser, a function also picked up the
+  default privileges of `public` (EXECUTE for `anon`, `authenticated` and
+  `service_role`), which pg_dump's grants do not undo, since they only state
+  the difference from the built-in default; seen on the first run. So the
+  file resets each object's ACL to that default before the dumped grants. It knows functions and views; anything else (`otro|…`: a
+  trigger, a policy, a default) stops it, to be decided by hand.
+- The kit saves them before the drop, checks that the CASCADE takes outside
+  `bob` exactly what was saved, puts them back, and the fingerprint must be
+  identical. A new sabotage, `sin-dependientes`, skips the put-back and sees
+  the fingerprint check fail.
+- The procedure's §4.2, §4.3 and §4.5 no longer describe the
+  `on_auth_user_created` trigger, which 20261121130000 dropped: `bob.users` is
+  written only by `scripts/provision-user.mjs`.
+- While reading the fingerprint: `service_role` held EXECUTE on
+  `bob_outbox_drain`, from Supabase's default privileges in `public`.
+  `service_role` bypasses RLS, so it could drain every organization's queue.
+  Migration `20261121190000` revokes it, and a discovered guard in
+  `tests/slice6-registries-outbox.test.mjs` says that of the roles that are
+  not superusers and do not own it, only `bob_app` can call it.
+
+Measured on the local bench (same digests as lab-02, CLI 2.120.0):
+- the kit, 40 checks, all as expected; the fingerprint of `public` identical
+  after the restore, `bob_outbox_drain` with `{postgres, bob_app}` only;
+- the bench, 21 cases, all matching, among them the new `sin-dependientes`
+  sabotage, which fails the fingerprint check;
+- PR40_PENDIENTE
+
+Limit: Postgres lists at most 100 objects in the CASCADE's notice. The kit's
+count check would fail past that, loudly, not silently.
+
 ---
 
 *Boss.Technology · BOb v1 · Internal only*
