@@ -64,6 +64,37 @@ describe('ID-10 · every read and write is constrained to a single organisation'
     assert.deepEqual(leaks, [], `cross-tenant rows visible:\n  ${leaks.join('\n  ')}`)
   })
 
+  // The same, as the role bob-web runs as in the box: bob_app under one
+  // tenant's claim. Discovered tables, so a table added later is covered.
+  test('as bob_app, no table carrying org_id returns another tenant\'s rows', async () => {
+    const tables = await tenantTables(db)
+    const leaks = []
+    await db.query('GRANT bob_app TO current_user')
+    try {
+      await db.query('BEGIN')
+      await db.query('SELECT set_config($1, $2, true)',
+        ['request.jwt.claims', JSON.stringify({ org_id: TENANT_A })])
+      await db.query('SET LOCAL ROLE bob_app')
+      for (const t of tables) {
+        await db.query('SAVEPOINT t')
+        try {
+          const { rows } = await db.query(
+            `SELECT count(*)::int AS n FROM ${t.qualified} WHERE org_id <> $1`, [TENANT_A])
+          if (rows[0].n > 0) leaks.push(`${t.table_name}: ${rows[0].n} rows`)
+          await db.query('RELEASE SAVEPOINT t')
+        } catch (e) {
+          // Not granted to bob_app at all: nothing to leak.
+          if (e.code !== '42501') throw e
+          await db.query('ROLLBACK TO SAVEPOINT t')
+        }
+      }
+    } finally {
+      await db.query('ROLLBACK')
+      await db.query('REVOKE bob_app FROM current_user')
+    }
+    assert.deepEqual(leaks, [], `cross-tenant rows visible to bob_app:\n  ${leaks.join('\n  ')}`)
+  })
+
   // The case that gets missed. A count that leaks a magnitude has leaked, and
   // the rule names aggregates explicitly for that reason. Every discovered
   // table, not a list of four: Slice 2's projections are exactly the

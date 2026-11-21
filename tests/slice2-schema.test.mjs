@@ -223,6 +223,8 @@ describe('§10 · partitions granted and guarded', () => {
   })
 })
 
+const SIGN_IN = new Set(['bob.users'])
+
 describe('§10 · bob_app grants, found rather than listed', () => {
   test('non-projections: SELECT, INSERT, UPDATE, DELETE. Projections: SELECT only', async () => {
     await inTx(async () => {
@@ -246,7 +248,10 @@ describe('§10 · bob_app grants, found rather than listed', () => {
         // action to alert), so bob_app does not delete from it. Found by key,
         // as in slice6-registries-outbox.test.mjs. INSERT and UPDATE may be
         // column grants (autobotz keeps its verdict columns for Verify).
+        // F-42: bob.users says who may sign in, and only the operator's
+        // provisioning writes it. bob_app reads it and stamps last_login_at.
         const want = projections.has(t.qualified) ? ['SELECT']
+          : SIGN_IN.has(t.qualified) ? ['SELECT', 'UPDATE']
           : keysAlert.has(t.qualified) ? ['SELECT', 'INSERT', 'UPDATE']
           : ['SELECT', 'INSERT', 'UPDATE', 'DELETE']
         const got = ['SELECT', 'INSERT', 'UPDATE', 'DELETE'].filter((p) => held.has(p))

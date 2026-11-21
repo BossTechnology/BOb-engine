@@ -2731,6 +2731,75 @@ and get `ok` before the first intention, and again after any edit to the binding
 
 **Counts.** 230 → 232: 229 pass and 3 are `todo`. pgTAP: 9.
 
+
+## Who may sign in to a box · bob.users for bob_app
+
+bob-web in a box answers 403 to a GoTrue account with no row in `bob.users`, or
+with `active = false` (Henry, 21 Nov: "no row, 403"; Bob-New PR #30). Until now
+`bob_app` held table grants on `bob.users` and no policy reached it (P-1 of that
+PR), so every read came back empty and nobody could have signed in.
+
+Henry's rulings, 21 Nov:
+
+- **bob_app reads its organization's users and stamps `last_login_at`.** Nothing
+  else: no insert, no delete, no change to role, `active`, email, name or
+  organization. Migration `20261121130000`, policies `app_reads_org_users` and
+  `app_stamps_org_login`, both by the claim's `org_id`.
+- **The signup trigger goes.** `on_auth_user_created` copied `org_id`, `role` and
+  `full_name` from a new account's `raw_user_meta_data`, which the person signing
+  up writes. Anyone who could sign up could pick an organization and `admin`, and
+  "no row, 403" would never fire. Dropped with its function. Existing accounts
+  and rows are untouched.
+- **Provisioning is a script the operator runs**, `scripts/provision-user.mjs`,
+  with the migration owner's credential (`bob/migrador.env`), never the service
+  role. It finds the GoTrue account by email, which must already exist; puts its
+  id into the organization whose slug is the tenant, as `admin`, `analyst` or
+  `viewer`; is dry unless given `--ejecutar`; and can `--desactivar`. It
+  refuses, and writes nothing, for an unknown account or tenant, a row in
+  another organization, or another role.
+- **The box check warns** (does not fail) when the organization has no active
+  user: a box just migrated has none until someone is provisioned.
+
+### F-42 · §10 · bob_app's grants on bob.users — contract change
+
+§10 gives `bob_app` SELECT, INSERT, UPDATE and DELETE on every non-projection
+tenant table. `bob.users` is now the exception: SELECT, and UPDATE of
+`last_login_at` only, because who may sign in is the operator's to write. The
+§10 grants test names it (`SIGN_IN` in `tests/slice2-schema.test.mjs`).
+
+### F-43 · bob.audit_log · bob_app is granted writes that RLS refuses — finding
+
+`audit_log`'s only policy is `org_audit_read`, FOR SELECT. `bob_app` holds
+INSERT, UPDATE and DELETE on it (§10), and RLS refuses all three. Not changed
+here. To rule on: revoke the writes (an audit log nobody in the app writes or
+edits), or add an INSERT policy for `bob_app` (the app appends, never edits).
+
+### The guard that would have caught it
+
+`structuralFindings` now also reports a tenant table that `bob_app` is granted
+and that no policy reaches: for SELECT, per command (an UPDATE policy does not
+let a read through, and an empty read is how sign-in broke); for writes, any
+policy reaching the role. Discovered from the catalog, not listed. A `bob_app`
+policy must constrain `org_id` like a public-facing one. A new test reads every
+discovered tenant table as `bob_app` under one tenant's claim and finds no other
+tenant's rows. F-43 is why writes are checked more loosely: per command,
+`audit_log` would be red today.
+
+### Verified by sabotage
+
+| Sabotage | Seen red |
+|---|---|
+| Drop `app_reads_org_users` | the users read test; the structural guard (only after it checked SELECT per command: the UPDATE policy had hidden the gap) |
+| `app_reads_org_users` `USING (true)` | the structural guard; the cross-tenant read as `bob_app` |
+| Grant `bob_app` INSERT and UPDATE (role) | the "cannot create or change" test |
+| Put the signup trigger back | both signing-up tests |
+| Silence the box warning | the box warning test |
+| Commit on a dry run | the dry-run test |
+| A table granted to `bob_app` with only an `authenticated` policy; a `bob_app` policy `USING (true)` | the two new meta probes, in `public` and in `bob` |
+
+**Counts.** Node: 9 new tests in `tests/users-access.test.mjs`, 1 in
+`tests/tenancy.test.mjs`, 4 meta probes. pgTAP: 6 new (15 in all).
+
 ---
 
 *Boss.Technology · BOb v1 · Internal only*

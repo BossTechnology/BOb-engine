@@ -177,3 +177,18 @@ export async function oneOrganizationFindings(client, boxTenant) {
   }
   return findings
 }
+
+// Who can sign in. bob-web answers 403 to an account with no row in bob.users or
+// with active = false, so an organization with no active user is a box nobody
+// can enter. A warning, not a failure: a box that was just migrated has no users
+// until the operator runs scripts/provision-user.mjs.
+export async function activeUserFindings(client, boxTenant) {
+  if (!boxTenant) return ['the box tenant (bzzz.tenant) was not given']
+  const { rows: [r] } = await client.query(`
+    SELECT count(*) FILTER (WHERE u.active)::int AS active, count(u.id)::int AS total
+      FROM bob.organizations o LEFT JOIN bob.users u ON u.org_id = o.id
+     WHERE o.slug = $1`, [boxTenant])
+  if (r.active > 0) return []
+  return [`bob.users has no active user for ${boxTenant} (${r.total} rows): nobody can ` +
+    'sign in, bob-web answers 403. Provision one with scripts/provision-user.mjs']
+}
