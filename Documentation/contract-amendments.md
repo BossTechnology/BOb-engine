@@ -3319,9 +3319,9 @@ Both scan tracked files only, so they stayed green until the commit.
 
 ### Counts
 
-After merging `main` (with #35, #37 and #39), on a fresh `supabase db
-reset --no-seed` of a stack of its own: `pnpm test` 350 tests, 347 pass, 0
-fail, 3 `todo` (after the move to `bob` and the restore guard). pgTAP over `supabase/tests/database`: 18 of 18. The shared stack was
+After merging `main` (with #35, #37, #39 and #41), on a fresh `supabase db
+reset --no-seed` of a stack of its own: `pnpm test` 354 tests, 351 pass, 0
+fail, 3 `todo` (with the move to `bob`, the restore guard and `MEASURED`). pgTAP over `supabase/tests/database`: 18 of 18. The shared stack was
 not touched.
 
 ---
