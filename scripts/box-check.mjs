@@ -10,7 +10,9 @@
 //     (P5 §8, objection 3);
 //   - three roles and no more (P5 §6.3);
 //   - no egress from the database (P5 §6.3), and which egress extensions are
-//     installed, so an empty result is not mistaken for a check that ran.
+//     installed, so an empty result is not mistaken for a check that ran;
+//   - a warning, which does not fail the check, when the organization has no
+//     active user in bob.users: nobody could sign in (bob-web answers 403).
 // And it warns, without failing, when a tenant has no feeder staging run in
 // bob.member_refs_runs newer than --staging-max-age-hours (default 24; P5 Q6
 // (a)). A box just migrated has not run the feeder yet.
@@ -26,7 +28,7 @@
 import pg from 'pg'
 import {
   oneOrganizationFindings, threeRolesFindings, egressFindings, egressInstalled,
-  stagingRunWarnings,
+  stagingRunWarnings, activeUserFindings,
 } from './box-checks.mjs'
 
 function arg(name) {
@@ -58,12 +60,15 @@ try {
     for (const f of findings) console.log(`      ${f}`)
     failed ||= findings.length > 0
   }
+  const warnings = await activeUserFindings(client, tenant)
+  console.log(`${warnings.length ? 'WARN' : 'ok  '}  someone can sign in`)
+  for (const w of warnings) console.log(`      ${w}`)
   const installed = await egressInstalled(client)
   console.log(`      egress extensions installed: ${installed.length
     ? installed.map((e) => `${e.extname} (${e.schema})`).join(', ') : 'none'}`)
-  const warnings = await stagingRunWarnings(client, { maxAgeHours })
-  console.log(`${warnings.length ? 'warn' : 'ok  '}  feeder staging run within ${maxAgeHours} h`)
-  for (const w of warnings) console.log(`      ${w}`)
+  const stagingWarnings = await stagingRunWarnings(client, { maxAgeHours })
+  console.log(`${stagingWarnings.length ? 'WARN' : 'ok  '}  feeder staging run within ${maxAgeHours} h`)
+  for (const w of stagingWarnings) console.log(`      ${w}`)
 } finally {
   await client.query('ROLLBACK').catch(() => {})
   await client.end()

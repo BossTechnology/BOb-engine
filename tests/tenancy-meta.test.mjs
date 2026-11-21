@@ -86,6 +86,40 @@ describe('ID-12 · the tenancy suite detects what it claims to detect', () => {
       })
     })
 
+    // bob-web runs as bob_app. A table granted to it with every policy aimed
+    // at another role answers it with nothing, silently: in the box, bob.users
+    // read empty and nobody could sign in.
+    test(`a table granted to bob_app that no policy reaches is reported (in ${s})`, async () => {
+      await probe(s, `
+        CREATE TABLE $S.meta_probe_app_unreached (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          org_id UUID NOT NULL);
+        ALTER TABLE $S.meta_probe_app_unreached ENABLE ROW LEVEL SECURITY;
+        CREATE POLICY "members_only" ON $S.meta_probe_app_unreached
+          FOR SELECT TO authenticated USING (org_id = (auth.jwt() ->> 'org_id')::uuid);
+        GRANT SELECT ON $S.meta_probe_app_unreached TO bob_app;`, async () => {
+        const findings = await structuralFindings(db)
+        const hit = findings.find((f) => f.table === 'meta_probe_app_unreached')
+        assert.ok(hit, 'a table bob_app is granted and no policy reaches went unreported')
+        assert.match(hit.finding, /bob_app/)
+      })
+    })
+
+    test(`a bob_app policy that does not constrain org_id is reported (in ${s})`, async () => {
+      await probe(s, `
+        CREATE TABLE $S.meta_probe_app_open (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          org_id UUID NOT NULL);
+        ALTER TABLE $S.meta_probe_app_open ENABLE ROW LEVEL SECURITY;
+        CREATE POLICY "app_wide_open" ON $S.meta_probe_app_open
+          FOR SELECT TO bob_app USING (true);`, async () => {
+        const findings = await structuralFindings(db)
+        const hit = findings.find((f) => f.table === 'meta_probe_app_open')
+        assert.ok(hit, 'a policy reachable by bob_app that ignores org_id went unreported')
+        assert.match(hit.finding, /does not constrain org_id/)
+      })
+    })
+
     // A partition does not inherit its parent's RLS. Read directly, it
     // returns every tenant's rows, however tight the parent's policy is.
     test(`a partition without RLS is reported, even under a guarded parent (in ${s})`, async () => {

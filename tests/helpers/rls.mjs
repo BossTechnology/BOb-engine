@@ -17,7 +17,15 @@ export const DELIBERATE_DENY_ALL = new Set(['baselines'])
 // USING (true) policies so that token issuance can read users and
 // organizations; that is legitimate and is not a tenancy hole, because the role
 // is not reachable from the API.
-const PUBLIC_FACING = new Set(['public', 'anon', 'authenticated'])
+// bob_app is in the set too: in a box, bob-web runs as bob_app under the box's
+// claim, so a bob_app policy that ignores org_id is the same hole.
+const PUBLIC_FACING = new Set(['public', 'anon', 'authenticated', 'bob_app'])
+
+// The roles the application runs as. A tenant table one of them is granted, and
+// that no policy reaches, answers it with nothing and says nothing: bob.users
+// read empty to bob_app, so nobody could sign in to a box. Deny-all tables are
+// exempt, because answering nothing is what they are for.
+const APP_ROLES = ['bob_app']
 
 export async function structuralFindings(client) {
   const findings = []
@@ -28,6 +36,16 @@ export async function structuralFindings(client) {
   const { rows: policies } = await client.query(`
     SELECT schemaname, tablename, policyname, roles::text[] AS roles, cmd, qual, with_check
       FROM pg_policies`)
+
+  const { rows: granted } = await client.query(`
+    SELECT r.rolname AS role, format('%I.%I', n.nspname, c.relname) AS qualified,
+           p.priv AS privilege
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+      CROSS JOIN (SELECT unnest($1::text[]) AS rolname) r
+      CROSS JOIN (VALUES ('SELECT'), ('INSERT'), ('UPDATE'), ('DELETE')) p(priv)
+     WHERE c.relkind IN ('r', 'p')
+       AND CASE WHEN p.priv = 'DELETE' THEN has_table_privilege(r.rolname, c.oid, p.priv)
+                ELSE has_any_column_privilege(r.rolname, c.oid, p.priv) END`, [APP_ROLES])
 
   for (const t of tables) {
     if (!t.rls_enabled) {
@@ -52,6 +70,27 @@ export async function structuralFindings(client) {
 
     const own = policies.filter(
       (p) => p.schemaname === t.table_schema && p.tablename === t.table_name)
+
+    if (!DELIBERATE_DENY_ALL.has(t.table_name)) {
+      // A read is checked per command: an UPDATE policy does not let a SELECT
+      // through, and a read that silently comes back empty is how sign-in
+      // broke. A write is refused loudly or touches nothing; any policy that
+      // reaches the role is enough for it here.
+      for (const g of granted.filter((g) => g.qualified === t.qualified)) {
+        const reached = own.some((p) =>
+          (g.privilege !== 'SELECT' || p.cmd === 'ALL' || p.cmd === 'SELECT') &&
+          (p.roles || []).map(String).some((r) => r === 'public' || r === g.role))
+        if (!reached) {
+          findings.push({
+            table: t.table_name,
+            rule: 'ID-10',
+            finding: `${g.role} is granted ${g.privilege} but no policy reaches it for ` +
+              `${g.privilege === 'SELECT' ? 'SELECT' : 'any command'}, so it silently gets ` +
+              'nothing. Add a tenant-scoped policy for it, or revoke the grant',
+          })
+        }
+      }
+    }
     for (const p of own) {
       const roles = (p.roles || []).map(String)
       if (!roles.some((r) => PUBLIC_FACING.has(r))) continue

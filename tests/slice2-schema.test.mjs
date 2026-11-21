@@ -223,6 +223,8 @@ describe('§10 · partitions granted and guarded', () => {
   })
 })
 
+const SIGN_IN = new Set(['bob.users'])
+
 describe('§10 · bob_app grants, found rather than listed', () => {
   // P5 Q6 (a): a feeder staging table, found by its grants, is the third
   // kind. bob_app reads what the feeder staged and deletes what it consumed.
@@ -252,8 +254,11 @@ describe('§10 · bob_app grants, found rather than listed', () => {
         // column grants (autobotz keeps its verdict columns for Verify).
         // P5 Q6 (a): a feeder staging table, found by its grants, is read and
         // consumed: SELECT and DELETE.
+        // F-42: bob.users says who may sign in, and only the operator's
+        // provisioning writes it. bob_app reads it and stamps last_login_at.
         const want = projections.has(t.qualified) ? ['SELECT']
           : staging.has(t.qualified) ? ['SELECT', 'DELETE']
+          : SIGN_IN.has(t.qualified) ? ['SELECT', 'UPDATE']
           : keysAlert.has(t.qualified) ? ['SELECT', 'INSERT', 'UPDATE']
           : ['SELECT', 'INSERT', 'UPDATE', 'DELETE']
         const got = ['SELECT', 'INSERT', 'UPDATE', 'DELETE'].filter((p) => held.has(p))

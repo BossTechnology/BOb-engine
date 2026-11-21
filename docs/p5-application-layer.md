@@ -214,7 +214,7 @@ Each entry and its source:
     The matrix gains one row when (a) is built: the new table, INSERT for
     `bob_feeder`, SELECT and DELETE for `bob_app`.
   - *Built (branch `p5-q6a-staged-member-refs`, F-41):* the row is
-    `member_refs_seen`, in migration `20261121120000`. Its grants come from
+    `member_refs_seen`, in migration `20261121140000`. Its grants come from
     one helper, `bob_grant_feeder_staging()`. The suite finds a staging table
     by its grants (the feeder can insert into it and cannot read it), not by
     name, and holds each one to exactly this row. An INSERT grant on `actors`

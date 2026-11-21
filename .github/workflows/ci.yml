@@ -128,6 +128,10 @@ jobs:
         env:
           SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
         run: node --test --test-concurrency=1 tests/slice6-registries-outbox.test.mjs
+      - name: Who may sign in · bob_app reads its organization's users, signing up makes no row, provisioning, the box warning
+        env:
+          SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+        run: node --test --test-concurrency=1 tests/users-access.test.mjs
       # The path is named: the bare command also runs supabase/tests/fixtures/*.sql,
       # which are fixtures, not pgTAP, and fails on them.
       - name: pgTAP · supabase test db over supabase/tests/database
