@@ -3,6 +3,7 @@
 Una línea por cambio entregado, en lenguaje de usuario.
 
 ## Sin publicar
+- Slice 3: cada celda de las gráficas, la matriz y BObee dice si es un cero observado, no observado, pendiente, no configurado o no aplica, con los motivos de por qué y qué declarar; los totales de varios canales dicen cuántos canales cubren. El alimentador escribe el cero solo cuando el canal estaba vivo y la métrica declarada. Contrato 0.6 sin aceptar todavía.
 - El registro de auditoría tampoco se puede escribir con la sesión de un usuario: solo se lee.
 - El registro de auditoría ya no se puede escribir desde la aplicación: `bob_app` solo lo lee.
 - P5 Q6, opción (a), construida: el alimentador deja en `bob.member_refs_seen` los miembros que ve en el almacén de verdad, con permiso solo para insertar y bajo el tenant de cada fila, y BOb crea los fantasmas desde esa tabla y borra lo que consumió. El alimentador sigue sin leer más que sus dos vistas y sin crear actores. Enmienda del contrato §7.2 y §7.3a propuesta (F-41). D62 sigue sin firmar.
