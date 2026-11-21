@@ -14,6 +14,11 @@
 // Durations, channel health and RUM need instrumentation the fixture does not
 // model; the reference feeder writes none of their rows rather than invent
 // zeros it did not observe (§5).
+//
+// And one more write, P5 Q6 (a) (Henry, 2026-11-21): stageMemberRefs asks the
+// truth store for member_refs_seen (§7.3a) and stages the refs in
+// bob.member_refs_seen, where bob_app's ghost reconciliation consumes them. The
+// feeder holds INSERT there and nothing else: it never creates an actor (Q13).
 
 import {
   MEMBER_REF, kindOf, LABEL_STATES, LABEL_FAILURES, CLOSE_METRIC,
@@ -377,4 +382,77 @@ export async function runFeeder(db, truth, {
     }
   }
   return { unmappedEvents: counts.routeA, unresolvedAgentRefs: counts.routeB, watermark, written }
+}
+
+// ── P5 Q6 (a) · the member refs it sees, staged for bob_app ────────────────
+// For each channel BOb maps, ask the truth store for the member refs seen in
+// [from, to) (§7.3a, paged), leave out the refs v_feeder_actor_map already
+// maps, and stage the rest in bob.member_refs_seen: one tenant per
+// transaction, under that tenant's claim (F-22). Replaying a window stages
+// nothing twice (the key is channel, ref and window).
+//
+// In a customer box it runs with `boxTenant`, and stages for that tenant's
+// channels alone (P5 objection 3). Returns, per org_id, how many refs it staged
+// and how many it left out as already mapped.
+const STAGE_PAGE = 500
+
+export async function stageMemberRefs(db, truth, {
+  from, to, orgIds = null, boxTenant = null,
+} = {}) {
+  if (!(new Date(to) > new Date(from))) throw new Error('stageMemberRefs needs from < to')
+  const maps = await readMaps(db)
+  const byOrg = new Map()
+  for (const ch of maps.channelByKey.values()) {
+    if (!ch.source_key) continue
+    if (boxTenant !== null && ch.tenant_slug !== boxTenant) continue
+    if (orgIds && !orgIds.includes(ch.org_id)) continue
+    if (!byOrg.has(ch.org_id)) byOrg.set(ch.org_id, [])
+    byOrg.get(ch.org_id).push(ch)
+  }
+
+  const out = {}
+  for (const [orgId, channels] of byOrg) {
+    const rows = []
+    let mapped = 0
+    for (const ch of channels) {
+      const frame = { tenant_slug: ch.tenant_slug, source_keys: [ch.source_key], from, to }
+      let after = null
+      do {
+        const page = await truth.memberRefsSeen(frame, { limit: STAGE_PAGE, after })
+        for (const r of page.rows) {
+          if (maps.actorRows.has(`${orgId}\u0000${r.external_ref}`)) { mapped++; continue }
+          rows.push({ channel_id: ch.channel_id, ref: r.external_ref,
+            first_seen: iso(r.first_seen), last_seen: iso(r.last_seen) })
+        }
+        after = page.next
+      } while (after !== null)
+    }
+    out[orgId] = { staged: await writeStaged(db, orgId, rows, { from, to }), mapped }
+  }
+  return out
+}
+
+async function writeStaged(db, orgId, rows, { from, to }) {
+  if (!rows.length) return 0
+  await db.query('BEGIN')
+  try {
+    await db.query('SELECT set_config($1, $2, true)',
+      ['request.jwt.claims', JSON.stringify({ org_id: orgId })])
+    // INSERT alone: the feeder holds nothing else on this table, so it cannot
+    // read back what it staged. DO NOTHING asks for no read either.
+    const { rowCount } = await db.query(
+      `INSERT INTO bob.member_refs_seen
+         (org_id, channel_id, ref, first_seen, last_seen, window_from, window_to)
+       SELECT $1, u.channel_id, u.ref, u.first_seen, u.last_seen, $6, $7
+         FROM unnest($2::uuid[], $3::text[], $4::timestamptz[], $5::timestamptz[])
+              AS u(channel_id, ref, first_seen, last_seen)
+       ON CONFLICT DO NOTHING`,
+      [orgId, rows.map((r) => r.channel_id), rows.map((r) => r.ref),
+        rows.map((r) => r.first_seen), rows.map((r) => r.last_seen), iso(from), iso(to)])
+    await db.query('COMMIT')
+    return rowCount
+  } catch (e) {
+    await db.query('ROLLBACK')
+    throw e
+  }
 }

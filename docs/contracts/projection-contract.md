@@ -4,6 +4,18 @@
 0.5.3 add corrections that building Slice 2 found and Henry accepted. BzzzBX
 route-plan task 3.7 implements against this version.
 
+**Proposed after 0.5.3, not a version yet** (P5 Q6 (a), Henry, 2026-11-21;
+F-41). Marked **[PROPOSED, F-41]** where it lands, in §7.2, §7.3a, §7.4 and
+§10. It takes a version number when it is accepted:
+- **§7.2, §7.3a.** The reconciliation's window no longer reads the truth
+  store. The feeder container calls `member_refs_seen(frame)` and stages what
+  it returns in a new table, `bob.member_refs_seen`. `bob_app` reads the
+  window from that table, creates the ghosts, and deletes what it consumed.
+  The feeder still never creates an actor (Q13).
+- **For 3.7.** `member_refs_seen` is the same fourth deliverable, with the
+  same frame and output. Its caller changes: the feeder, with its read-only
+  ClickHouse role, instead of the BOb application.
+
 **What changed from 0.5.2** (Slice 2's second pull request, accepted by Henry
 as option (a)). One place where the contract could not be built as written:
 - **F-25 · §7.4, §9.1.** §4.1 writes `label_missing` only on a channel that
@@ -1005,35 +1017,58 @@ a ninth projection. It never applied to route B.
 | `user` | Normal: someone contacted the business who is not a registered customer. The majority case | It is a **ghost** and gets an actor at rung `ghost`, created by the reconciliation below |
 
 **The ghost reconciliation does its own discovery** (12 Nov, O4).
-- It runs **as `bob_app`**, on a schedule, over a window: it asks the truth
+- ~~It runs **as `bob_app`**, on a schedule, over a window: it asks the truth
   store which member refs (`m:…`) were seen in the window, and creates a ghost
-  for each one that resolves to no actor in `actor_external_refs`.
+  for each one that resolves to no actor in `actor_external_refs`.~~
+  **[PROPOSED, F-41]** It runs in two halves (P5 Q6 (a), Henry, 2026-11-21).
+  - **The feeder** asks the truth store which member refs (`m:…`) were seen,
+    through `member_refs_seen` (§7.3a), and stages them in
+    `bob.member_refs_seen`: one row per channel, ref and window it asked
+    about, with `first_seen` and `last_seen`. It writes one tenant per
+    transaction under that tenant's claim (§2), and may leave out the refs
+    `v_feeder_actor_map` already maps. It holds INSERT on that table and
+    nothing else, so it cannot read back what it staged.
+  - **`bob_app`**, on a schedule, over a window, reads the staged rows seen
+    in the window, creates a ghost for each ref that resolves to no actor in
+    `actor_external_refs`, and deletes the rows it consumed, in the same
+    transaction. A run that fails leaves them staged.
 - "Resolves to no actor" is decided on BOb's side. BzzzBX never knows a BOb
   actor (§1), so the truth store returns refs seen and BOb subtracts the refs
   it knows.
 - The question goes through a named interface, `member_refs_seen(frame)`
   (13 Nov, O6; §7.3a), so BOb still never knows which truth store it runs
   against.
-- **No new table. No change to the feeder's grants. No dependence on Slice 8's
-  bus.** With the bus as the source there would be no ghosts for most of v1,
+- ~~**No new table. No change to the feeder's grants.**~~ **[PROPOSED,
+  F-41]** One new table, `bob.member_refs_seen`, and one new grant: INSERT for
+  `bob_feeder` on that table alone. Row-level security by `org_id` as on
+  every tenant table. `bob_app` holds SELECT and DELETE on it, and no other
+  role holds anything. **No dependence on Slice 8's bus.** With the bus as the source there would be no ghosts for most of v1,
   which guts the member drill-down ghosts were ruled to serve.
 - ~~The window starts where the last run ended, bounded by retention (C-14).~~
   Replaced by H3: "where the last run ended" needs a stored cursor, which the
   line above rules out, and a window starting exactly at the previous end
   misses a member ref that arrives late (voice is ~10 minutes behind, §4.1).
 - **The window trails and overlaps** **[PROPOSED, H3]**. Each run asks for
-  `[now − (interval + L), now]`, where `interval` is the schedule and `L` the
+  `[now − (interval + L), now]`, **[PROPOSED, F-41]** reading it from
+  `bob.member_refs_seen` (a staged row is in the window when its
+  `last_seen` is at or after the start and its `first_seen` at or before the
+  end), where `interval` is the schedule and `L` the
   largest declared `lag_seconds` among the tenant's channels. Ghost creation is
   idempotent on `(org_id, ref)`, so the overlap costs a repeated question and
   nothing else. No cursor is stored.
 - **A slower sweep covers what the trailing window cannot**: a run missed for
   longer than its window, a channel whose lag was raised, a tenant's first
   run. It asks over the whole retention window (C-14) on a slower schedule.
+  **[PROPOSED, F-41]** It reads the staged rows over that window, and deletes
+  the staged rows last seen before it without creating a ghost. The feeder
+  stages the sweep's window on the same slower schedule.
   Its schedule, and whether `member_refs_seen` over thirteen months is cheap
   enough on the ClickHouse side, is for 3.7 to say on Relevo task 6.
 
 What stays from 0.4:
-- **The feeder still never creates an actor.** It stays read-only on `actors`.
+- **The feeder still never creates an actor.** It stays ~~read-only on~~
+  **[PROPOSED, F-41]** without any grant on `actors` (it reads the map through
+  its view).
   A guard asserts that the reconciliation can never produce a non-`user` actor
   (§10).
 - **Ghost creation is a linkage event.** It triggers D-12's bounded rebuild
@@ -1110,6 +1145,13 @@ contract, the application still never knows which truth store it runs against.
 New in 0.5, for O4; ruled its own interface on 13 Nov (O6), **a fourth
 deliverable of 3.7**:
 
+**[PROPOSED, F-41] Who calls it.** The feeder, in its container, with its
+read-only ClickHouse role (P5 §5.2 keeps the BOb application off
+`bzzz-data`). It stages the output in `bob.member_refs_seen` for the
+reconciliation of §7.2 (P5 Q6 (a), Henry, 2026-11-21). The frame, the output
+and the paging below do not change. The window the reconciliation reads is
+now that table's, not the truth store's.
+
 - **`frame`**: `tenant_slug`, `source_key`(s), and a window `[from, to)`, as in
   §7.3.
 - **Output**: one row per distinct member ref seen in the frame:
@@ -1122,7 +1164,8 @@ Why not `affected_members` with the filter left out (Federico, 13 Nov):
 - **The deciding reason is what `affected_members` is for.** It sits on the
   reveal path: it answers "who was affected" for a person looking at a panel,
   under A-11/A-12 and the ID-04 audit trail. The reconciliation is an
-  unattended scheduled job running as `bob_app`. Those should not be the same
+  unattended scheduled job ~~running as `bob_app`~~ **[PROPOSED, F-41]**
+  whose question the feeder asks. Those should not be the same
   door. A narrow interface that returns refs and nothing else exposes less,
   which is what a job that runs unwatched should have.
 - Reusing it would couple the two: a later change to `affected_members` for
@@ -1137,6 +1180,8 @@ The cost is the fourth deliverable on 3.7, and nothing else.
 ### 7.4 What the feeder reads from BOb
 
 Exactly two views. Anything more is a finding about this contract.
+**[PROPOSED, F-41]** Unchanged by §7.2's staging table: the feeder writes it
+and cannot read it.
 
 - **`v_feeder_channel_map`** (exists): `channel_id`, `org_id`, `tenant_slug`,
   `source_key`, `lag_seconds`, `adapter_kind`. It gains `idle_bound_seconds`
@@ -1428,7 +1473,8 @@ Each one is seen failing on purpose before it is trusted, and recorded in
 | **Lag not declared** | every channel with `lag_seconds IS NULL` | The fixture's undeclared channel (`roster.sql:36`) gets rows written and none sealed, and Slice 2's report counts it (O1) |
 | Closing is ORGA | `proj_sentiment` | A `meca` row with `closing_count > 0` is refused |
 | Rung pairs with type | `proj_actor_metrics` | A `user` row with `'not_applicable'`, a non-`user` row with any other rung, and an `actor_type` that differs from the actor's are each refused |
-| Ghost path | the reconciliation of §7.2 | Given agent, ASA and member refs that resolve to nothing, it creates actors for member refs only, all at rung `ghost`, and never a non-`user` actor. It finds them through `member_refs_seen` (§7.3a), with the feeder's counts at zero for member refs |
+| Ghost path | the reconciliation of §7.2 | Given agent, ASA and member refs that resolve to nothing, it creates actors for member refs only, all at rung `ghost`, and never a non-`user` actor. It finds them through `member_refs_seen` (§7.3a), with the feeder's counts at zero for member refs. **[PROPOSED, F-41]** Through the rows the feeder staged in `bob.member_refs_seen`, which it deletes as it consumes them; a row past retention is deleted by the sweep with no ghost |
+| **Staged refs** **[PROPOSED, F-41]** | every table `bob_feeder` can insert into and cannot read | Holds exactly: INSERT for `bob_feeder`, SELECT and DELETE for `bob_app`, nothing for any other role, on the table or any column. As `bob_feeder`, SELECT, UPDATE, DELETE and TRUNCATE are refused, and a row under another tenant's claim, or naming another tenant's channel, is refused. An INSERT grant on `actors` to the feeder is reported (Q13) |
 | No namespace literal | every tracked file (`git ls-files`, as the naming test does) | No code path builds a ref with a literal namespace; namespaces come from `channels.source_key` or the deployment record (Q14) |
 | Unmapped is counted, by route | the reference feeder over the fixture | Both returned counts are zero. Then three injections, one at a time: an unmappable event moves only the route A count; an agent ref with no actor moves only the route B count; a member ref with no actor moves neither (Q12, O4) |
 | `affected_members` count equality | 3.7's endpoint over a frame | Member interaction rows plus anonymous interactions equal the cell's interaction count for the same frame (Q15, O5). The distinct-member figure the panel shows is not part of the equality |

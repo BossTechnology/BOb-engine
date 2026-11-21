@@ -186,12 +186,14 @@ migration owner is the only role that owns objects or bypasses RLS.
 | `actor_external_refs`, `actor_ref_history` (Slice 2) | As built: SELECT, INSERT, UPDATE, DELETE. `actor_ref_history` is append-only by trigger, not by grant (see below) | none | none | As built: SELECT, INSERT, UPDATE, DELETE, under RLS (A-05b's choice) | none |
 | `channel_capabilities` (Slice 2, 0.5.3) | SELECT, INSERT, UPDATE, DELETE | none (reads the column on its view) | none | SELECT, INSERT, UPDATE, DELETE, under RLS | none |
 | `v_channel_declaration_gaps` (Slice 2) | SELECT | none | none | SELECT | none |
+| `member_refs_seen` (Q6 (a), F-41) | SELECT, DELETE (the ghost reconciliation consumes what was staged) | INSERT only, under the tenant's claim | none | none | none |
 | `v_feeder_channel_map` (with `capabilities`, 0.5.3) | none | SELECT | none | none | none |
 | `v_feeder_actor_map` (Slice 2) | none | SELECT | none | none | none |
 | `v_ai_*` views (none exist yet) | none | none | SELECT | none | none |
 | `v_roster` | SELECT | none | none | none | none |
 | Partition function (contract §3) | none | EXECUTE | none | none | none |
 | `bob_grant_projection()` | none | none | none | none | none |
+| `bob_grant_feeder_staging()` (Q6 (a)) | none | none | none | none | none |
 | The truth store (ClickHouse) | only through `affected_members` and the evidence packages, never directly | read-only ClickHouse role (task 3.6) | its own ClickHouse access, per task 5.3 | none | none |
 
 Each entry and its source:
@@ -210,6 +212,13 @@ Each entry and its source:
     container, and chose option (a) of Q6. This ruling stands as written.
     The matrix gains one row when (a) is built: the new table, INSERT for
     `bob_feeder`, SELECT and DELETE for `bob_app`.
+  - *Built (branch `p5-q6a-staged-member-refs`, F-41):* the row is
+    `member_refs_seen`, in migration `20261121120000`. Its grants come from
+    one helper, `bob_grant_feeder_staging()`. The suite finds a staging table
+    by its grants (the feeder can insert into it and cannot read it), not by
+    name, and holds each one to exactly this row. An INSERT grant on `actors`
+    to the feeder would make `actors` look like a staging table, and that
+    guard refuses it (Q13). The feeder still reads exactly its two views.
 - **The partition function** **[DECIDED]** (contract §3; 0.2 Q7, ruled 10 Nov):
   `SECURITY DEFINER`, owned by the migration owner, EXECUTE granted to
   `bob_feeder` alone.
@@ -676,6 +685,14 @@ how it is built (Q6 below). The decision is still unsigned.
        else" would have to change. Not recommended.
    - Under (a), that guard stands as built: an INSERT grant gives no read.
 
+   **Built** (branch `p5-q6a-staged-member-refs`, F-41, not merged, not
+   applied to any box): `bob.member_refs_seen` with RLS by `org_id`, INSERT
+   for `bob_feeder`, SELECT and DELETE for `bob_app`; the reference feeder's
+   `stageMemberRefs`; and `reconciliation/ghosts.mjs` reading the table, still
+   as `bob_app`, with the trailing window of H3 and the 395-day sweep. The
+   contract amendment to §7.2 and §7.3a is proposed with it. D62 is still
+   unsigned.
+
 **What stands between these inputs and the signature.**
 
 - **Before signing:**
@@ -686,6 +703,8 @@ how it is built (Q6 below). The decision is still unsigned.
     moved the reconciliation to the feeder. Given the same day: (a). Building
     it (the table, its grant, the migration and the contract amendment of
     §7.2 and §7.3a) comes after, and goes through §6.2 like any migration.
+    Built on branch `p5-q6a-staged-member-refs` (F-41); the migration reaches
+    a box only through §6.2, lab-02 first.
 - **Before signing as well** (Henry, 2026-11-19, §8 objection 5): the
   failed-migration rehearsal on lab-02, including a restore of `bob` alone,
   and the written procedure (§6.2).

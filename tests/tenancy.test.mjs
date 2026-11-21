@@ -11,6 +11,7 @@ import {
 } from './helpers/db.mjs'
 import {
   structuralFindings, projectionGrantFindings, aggregateLeakFindings,
+  feederStagingTables, tenantTablesUnreadableByApi,
 } from './helpers/rls.mjs'
 
 let db
@@ -48,8 +49,21 @@ describe('ID-10 · every read and write is constrained to a single organisation'
     )
   })
 
+  // A table `authenticated` cannot read at all cannot leak to it, and reading
+  // it as `authenticated` would only raise. The checks below leave such tables
+  // out, so this one pins the set: the feeder staging tables (P5 Q6 (a)), found
+  // by their grants, and nothing else. A table that loses its grant by accident
+  // shows up here rather than vanishing from the leak checks.
+  test('the tables the API cannot read are the feeder staging tables, and only those', async () => {
+    const hidden = (await tenantTablesUnreadableByApi(db)).map((t) => t.qualified)
+    const staging = (await feederStagingTables(db)).map((t) => t.qualified)
+    assert.ok(staging.length > 0, 'no staging table found, so the exclusion is untested')
+    assert.deepEqual(hidden, staging)
+  })
+
   test('no table carrying org_id returns another tenant\'s rows', async () => {
-    const tables = await tenantTables(db)
+    const hidden = new Set((await tenantTablesUnreadableByApi(db)).map((t) => t.qualified))
+    const tables = (await tenantTables(db)).filter((t) => !hidden.has(t.qualified))
     const leaks = []
 
     await asTenant(db, TENANT_A, async () => {
