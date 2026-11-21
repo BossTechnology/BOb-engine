@@ -8,7 +8,18 @@ Términos del proyecto y su significado exacto. Úsalos en código, commits, doc
 |---|---|---|
 | Sellado (*sealed*) | Bucket completo: no llegan más hechos. No significa inmutable; la atribución se revisa por reconstrucción (D-12). | `docs/contracts/projection-contract.md` §4 |
 | Unfounded claims | Nombre visible de la métrica `hallucinations`; aplica a los cuatro `actor_type`. | Contrato §6.1 |
-| No configurado | Tercer estado junto a «no observado» y «observado, cero»: el canal no declara la capacidad (D-14). | Contrato §5 |
+| Celda | Lo que pinta un consumidor, al grano `(org_id, channel_id, métrica, actor_type, bucket_start)`. Tiene un estado y una lista de motivos. La resuelve `bob.v_cell_state`, una sola implementación para gráficas, matriz, sentimiento y BObee. | Spec Slice 3 §2, §7 |
+| Estado de la celda | Uno de seis, evaluados en orden: `not_applicable`, `not_configured`, `pending`, `not_observed`, `observed`, y `off_shift` solo en el drill-down por actor. Los valores del esquema van en inglés y los nombres en español son los de abajo. | Spec Slice 3 §2 |
+| No aplica (`not_applicable`) | El actor no puede producir esa métrica por definición (Resueltos, Desambiguación y Derivaciones para el cliente; las métricas degeneradas fuera de `user`). Celda vacía, sin acción. | Spec Slice 3 §4 |
+| No configurado (`not_configured`) | Falta una declaración y nada *puede* llegar: `telemetry_started_at`, `source_key` (D-14), el mix, una capacidad, el idle bound, el ground truth o la definición. Sus motivos dicen qué declarar. | Contrato §5; D-14; Spec Slice 3 §3 |
+| Pendiente (`pending`) | Sin fila, y el bucket todavía no se puede saber: sin sellar o lag no declarado. | Spec Slice 3 §3 |
+| No observado (`not_observed`) | Configurado y sellado, sin fila y sin vivacidad. Se pinta con el guion (D-14). | Contrato §5; Spec Slice 3 §3 |
+| Observado (`observed`) | Hay una cifra, y el cero es una cifra. Un cero siempre lleva motivo (UI-03). | Contrato §5; Spec Slice 3 §3 |
+| Fuera de turno (`off_shift`) | Celda por actor del drill-down cuyo actor no está en turno. Comparte el guion con «no observado», y se distingue por estado y motivo. | Contrato §5; Spec Slice 3 §2 |
+| Provisional | Marca sobre «observado»: la fila existe pero su bucket no ha sellado (O1). No es un estado. | Spec Slice 3 §2 |
+| Motivo (`reasons`) | Lista ordenada de por qué una celda está en su estado, y qué hacer. Primero va lo que el cliente arregla en BOb. Los nombres van en `snake_case` inglés, como los de FR-23. | Spec Slice 3 §2 |
+| Vivacidad (`liveness_source`) | Evidencia de que el canal estaba vivo en un bucket: `traffic` (hubo una interacción) o `probe` (`health_uptime`). Sin ninguna de las dos no hay cero observado. | Spec Slice 3 §5 (F-28) |
+| Cobertura (`coverage`) | En un total de varios canales, «n de m canales», con cada canal excluido y su estado. | Spec Slice 3 §6 (F-30) |
 | `affected_members` | Consulta a la fuente de verdad, nombrada en el contrato: miembros como filas, lo anónimo como conteo de interacciones. | Contrato §7.3 |
 | `abandoned_in_queue` | Abandono antes de que alguien atendiera; problema de personal, no de conversación. Siempre `user`. | Contrato §6.1 |
 | P5 | La capa de aplicación de BzzzBX (Runbook v1 §7): esquema de proyección, los tres roles con sus grants y el mecanismo de migraciones. Decisión de BzzzBX, sin número hasta firmarse. | `docs/p5-application-layer.md` |

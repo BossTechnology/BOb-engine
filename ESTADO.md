@@ -4,6 +4,7 @@
 
 ## Tarea actual
 - Slice 6 («Registries and the outbox»), rama `slice-6-registries-outbox`, PR abierto y sin fusionar. Se adelantó a los slices 4 y 5 porque no tenía decisiones abiertas. RS-30 a RS-35 pasan; la ejecución de punta a punta queda como `todo` hasta que exista. Siete elecciones del build esperan a Henry (amendments, «Slice 6 · Registries and the outbox, built»).
+- Slice 3 («The absent-not-zero state»): grill hecho con Henry el 20 nov (G1–G15) y spec escrita en `docs/slice-3-absent-not-zero.md` y fusionada en `main` (PR #27), sin código. Seis estados de celda con motivos, vivacidad por tráfico o sonda, cero escrito al sellar, cobertura en los totales y el mecanismo en la base (`bob.v_cell_state`). Siete enmiendas propuestas para 0.6 (F-28 a F-34), registradas en amendments y sin firmar. El aviso de 0.6 a Federico se publicó en la tarea 6 el 20 nov, con la pregunta de las «nueve reglas» y los «siete consumidores».
 - Slice 2 terminado y en `main`: PR #20 (`9fbd367`) y PR #21 (`c4ebf1d`), contrato 0.5.3. El aviso de 0.5.3 a Federico se publicó en la tarea 6 de Relevo el 19 nov, y el turno es de Federico (3.7).
 - BZZ-3 de Relevo, P5 («the whole application layer»), decisión D62 de BzzzBX, sin firmar: insumos en `docs/p5-application-layer.md`. El 19 nov se pusieron al día después del Slice 2, con F-26 como Q6 y las siete objeciones del abogado del diablo en el §8. Henry respondió la 1 (BOb v1 corre dentro de la caja), la 2 (base compartida, `bob` se recupera solo) la 3 (una organización por caja; la RLS es defensa en profundidad) la 4 (una ventana por slice en lab-02, model-01 y Febor; la 4A cuando una segunda caja lleve BOb), la 5 (el ensayo de lab-02 va antes de firmar), la 6 (la credencial de migración en su propio fichero, `bob/migrador.env`) y la 7 (cerrada con esta puesta al día). Q6 (F-26): la reconciliación la corre el contenedor de BOb con el único `org_id` de la caja. Antes de firmar falta el ensayo en lab-02 (rama `docs/p5-d62-after-slice-2`). Federico respondió Q1–Q3 (tres roles de Handoff §4.3; `organizations`/`org_id` en vez de `tenants`/`app_entities`; Q3 en su forma del 15 nov: desarrollo en Supabase local, lab-02 para integración y ensayo, el proyecto hospedado vuelve a la demo). Henry respondió en BZZ-19 el 18 nov: el alimentador de referencia tiene `bob_feeder` primero; número D62 (D60 se firmó ese día para otra cosa).
 - Tarea 6 de Relevo («The projection read contract»): contrato de proyección **0.5.1 firmado** por Henry en la tarea 6 el 2026-11-18 (marca «Decisión firmada») y fusionado en `main` (PR #17, `5e2966d`). Las correcciones que encontró el Slice 2 están en 0.5.2 (F-23, F-24 con §8.7) y 0.5.3 (F-25), aceptadas por Henry; 0.5.2 y 0.5.3 ya se avisaron a Federico. Turno de Federico para la pregunta de H3.
@@ -20,6 +21,13 @@
   - D-31 cerrado. Un guard nuevo comprueba que BOb no guarde credenciales. Cada guard nuevo se vio fallar (once sabotajes), y el de credenciales estaba mal en su primera corrida;
   - revisión independiente aplicada: el outbox no se borra, solo `bob_app` lo actualiza, solo Verify escribe el veredicto (con el reloj de la base y nunca en el futuro), `clock_timestamp()` en el outbox y locks contra las carreras, con tests concurrentes. Diez sabotajes más, todos en rojo. Cuatro preguntas para Henry en amendments;
   - suite: 230 tests, 227 pasan y 3 son `todo`. pgTAP en `supabase/tests/database` (9). `supabase test db` sin ruta falla también en `main`, porque corre los fixtures.
+- Spec del Slice 3 (rama `slice-3-absent-not-zero-spec`): estados, orden de resolución, regla de cada fila de la matriz, tests de aceptación de FR-32, UI-03, PR-10 y SR-2 contra una sola implementación, el fixture ampliado y la lista de enmiendas F-28 a F-34. `CONTEXT.md` gana el vocabulario de la celda. Nada construido; el contrato sigue en 0.5.3.
+- Kit del ensayo de lab-02 para P5 (rama `claude/gallant-tu-a8b569`), sin correr en ninguna caja:
+  - `scripts/ensayo-migracion-lab.sh` (`--dry-run`, `--ejecutar`, `--deshacer`) y `docs/p5-failed-migration-procedure.md`;
+  - probado de punta a punta contra una copia local de la pila de identidad de lab-02 (mismos digests), con cada comprobación vista fallar por sabotaje;
+  - medido: con el CLI 2.120.0 una migración que falla no deja nada, envuelta o no. Hallazgos F-35 (`GRANT … TO current_user` tumba el servidor en la imagen de la caja), F-36 (`pg_dump -n bob` pierde la pertenencia a publicaciones) y F-37 (CI en Postgres 15, la caja en 17.6);
+  - el kit corre `scripts/box-check.mjs` y anota si lab-02 tiene `pg_net` o `http` (F-27);
+  - en Bzzz, PR aparte: `backup.sh` saca `bob.sql.gz` sin datos de `proj_*`, verificado contra lo vivo.
 - Guards de P5 (rama `p5-role-guards`): los tres que faltaban del §6.3 (tres roles y no más, `bob_ai_ro` solo vistas, sin salida a red) y los dos de la objeción 3:
   - `scripts/box-check.mjs`, el chequeo de solo lectura que corre la caja después de migrar: una organización y su `slug` igual a `bzzz.tenant`, y además los dos guards de roles;
   - `boxTenant` en el alimentador, que manda a la ruta A los eventos de otro tenant y no los escribe.
@@ -46,6 +54,9 @@
   - CHASS1S (repo `CHS`): 137 de producción. jszip tiene doble licencia (MIT o GPL), duck declara solo «BSD» y Chromium se descarga en tiempo de ejecución.
 
 ## Pendiente
+- Slice 3: que Federico acepte F-28 a F-34 (0.6) y diga cuáles son las «nueve reglas» y los «siete consumidores». El aviso ya está publicado en la tarea 6. Después, el PR de implementación: catálogo, `v_cell_state`, `bob_cell_rollup`, `v_ai_cell_state`, los ceros del alimentador, el fixture ampliado y el texto de 0.6 en el contrato.
+- Abiertos del Slice 3 (spec §10): ceros por actor en el drill-down (se decide con el Slice 7), materializar `v_cell_state` según el `EXPLAIN`, y F-34 (resolución de referencias AREP).
+- Bob-New PR #29 (matriz mínima): su «no configurado» no lee los marcadores de D-14. La matriz definitiva lee `v_cell_state` y no reimplementa las reglas.
 - P5 (D62): Q6 y las siete objeciones del §8 están respondidas. Antes de firmar falta solo el ensayo en lab-02. El ensayo en lab-02 (migración amañada, las nueve sin envolver, `db push` y restaurar `bob` solo) va antes de la firma.
 - F-27: Henry eligió (a) el 20 nov. El guard revisa el EXECUTE efectivo sobre lo instalado, y el caso instalado queda en CI como `todo`. Cerrarlo con (b) o con (c) depende de si lab-02 ya tiene `pg_net`. **El kit del ensayo de lab-02 tiene que revisarlo** con `scripts/box-check.mjs`.
 - Hallazgo para Bzzz (objeción 6): GoTrue está en `bzzz-edge` y recibe `supabase.env` entero, con la contraseña del superusuario de Postgres. Va a una decisión de Bzzz, no a P5.
@@ -62,6 +73,8 @@
 
 ## Siguiente paso
 - Henry revisa el PR del Slice 6 y las siete elecciones del build (sobre todo la 1, los webhooks movidos, y la 4, la severidad del alerta de verificación). Bob-New tiene que seguir el cambio de columnas de `response_rules`.
+- Slice 3: spec fusionada (PR #27). Turno de Federico en la tarea 6 para F-28 a F-34 y las dos preguntas del mapa de alcance.
+- Henry revisa los dos PRs del kit (BOb-engine y Bzzz), y con ellos fusionados corre en lab-02 `--dry-run` y luego `--ejecutar`. La evidencia va a `evidence/ENSAYO/` de Bzzz. Con eso: F-27 se cierra con (b) o (c), y D62 se puede firmar.
 - Henry revisa el PR #24 (guards de P5). El ensayo de lab-02 revisa si hay `pg_net` o `http` y, con eso, F-27 se cierra con (b) o con (c).
 - P5: Henry revisa y fusiona el PR #22, corre (o autoriza) el ensayo en lab-02 y, si confirma el §6.2, firma D62.
 - La tarea 3.7 de BzzzBX implementa contra el contrato 0.5.3, con `member_refs_seen` como cuarto entregable (turno de Federico).
@@ -93,3 +106,5 @@
 - 2026-11-20: los guards de P5 que faltaban: tres del §6.3 y dos de la objeción 3, más el chequeo de caja en `scripts/`. De 167 a 186 tests. F-27 (pg_net/http a PUBLIC): Henry eligió (a); el cierre espera a lab-02.
 - 2026-11-21: Slice 6 construido test primero sobre el stack local `bob-v1` (puertos 583xx, sin commitear; poca memoria en Docker). De 186 a 221 tests, once sabotajes vistos en rojo. D-31 cerrado; la ejecución de punta a punta queda como `todo`.
 - 2026-11-21: revisión del PR #26 aplicada en las mismas tres migraciones (no se aplicaron en ningún lado compartido). De 221 a 230 tests; cuatro dudas quedan como preguntas para Henry.
+- 2026-11-20: grill del Slice 3 con Henry (G1–G15, todas con la opción recomendada) y spec en `docs/slice-3-absent-not-zero.md`. F-28 a F-34 propuestos para 0.6, sin firmar. D-14 se aplica tal cual: el guion sirve para «no observado» y para «fuera de turno».
+- 2026-11-20: kit del ensayo de lab-02 (script, procedimiento y banco local) y, en Bzzz, el respaldo aparte de `bob`. F-35, F-36 y F-37 registrados. Nada corrido en ninguna caja.
