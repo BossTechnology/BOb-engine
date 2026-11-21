@@ -3118,11 +3118,13 @@ Measured on the local bench (same digests as lab-02, CLI 2.120.0):
   the function cannot be created before `bob`'s tables do. It is the only
   object in `bob` that depends on a function outside it.
 
-Open, for Henry, before PR #40 merges: break that cycle. Either PR #40 keeps
-the view and its function on one side (both in `bob`, or both in `public`
-and saved by the script), or the procedure creates a stub of the function
-before `bob.sql.gz` and replaces it after, keeping its OID. Until then, the
-rehearsal on lab-02 is run from a `main` without PR #40.
+Ruled by Henry on 21 Nov: both in `bob`, in PR #40. The cycle runs through
+`public.bob_cell_state` too (`bob_ai_cell_state` calls it), so every Slice 3
+function that reads `bob` moves into `bob`, and the dump carries them. Pure
+helpers that read nothing in `bob` may stay in `public`. PR #40 adds a
+discovered guard: no object in `bob` depends on an object outside `bob` that
+depends on `bob`. Until PR #40 lands that way, the rehearsal on lab-02 is
+run from a `main` without it.
 
 Limit: Postgres lists at most 100 objects in the CASCADE's notice. The kit's
 count check would fail past that, loudly, not silently.
