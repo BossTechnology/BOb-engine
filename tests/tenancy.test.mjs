@@ -257,3 +257,72 @@ describe('PR-4 · BOb never writes a projection table', () => {
     )
   })
 })
+
+// Slice 3 spec §7 and §11, R6. BObee's face is a definer view: the migration
+// owner reads behind it, so RLS does not hold it, and tenancy is the view's own
+// filter on the caller's org_id claim. Every v_ai_* view that carries org_id is
+// found, not listed, and read as bob_ai_ro under each tenant's claim.
+describe('R6 · BObee\'s views never cross a tenant boundary', () => {
+  async function aiViews() {
+    const { rows } = await db.query(`
+      SELECT format('%I.%I', n.nspname, c.relname) AS qualified
+        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE c.relkind IN ('v', 'm') AND c.relname LIKE 'v\\_ai\\_%'
+         AND EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.oid
+                       AND a.attname = 'org_id' AND NOT a.attisdropped)
+       ORDER BY 1`)
+    return rows.map((r) => r.qualified)
+  }
+
+  async function asAiRo(orgId, fn) {
+    await db.query('BEGIN')
+    try {
+      await db.query('GRANT bob_ai_ro TO current_user')
+      if (orgId) {
+        await db.query('SELECT set_config($1, $2, true)',
+          ['request.jwt.claims', JSON.stringify({ org_id: orgId })])
+      }
+      await db.query('SET LOCAL ROLE bob_ai_ro')
+      return await fn()
+    } finally {
+      await db.query('ROLLBACK')
+    }
+  }
+
+  test('discovery finds v_ai_cell_state', async () => {
+    assert.ok((await aiViews()).includes('bob.v_ai_cell_state'))
+  })
+
+  test('one tenant\'s claim sees only its own rows, and sees some', async () => {
+    for (const view of await aiViews()) {
+      for (const [mine, other] of [[TENANT_A, TENANT_B], [TENANT_B, TENANT_A]]) {
+        const orgs = await asAiRo(mine, async () =>
+          (await db.query(`SELECT org_id::text AS org_id, count(*)::int AS n FROM ${view} GROUP BY 1`)).rows)
+        assert.deepEqual(orgs.map((r) => r.org_id), [mine], `${view} under ${mine} returns ${JSON.stringify(orgs)}`)
+        assert.ok(orgs[0].n > 0, `${view} under ${mine} returns nothing, so it proves nothing`)
+        assert.ok(!orgs.some((r) => r.org_id === other))
+      }
+    }
+  })
+
+  test('with no claim, nothing', async () => {
+    for (const view of await aiViews()) {
+      const rows = await asAiRo(null, async () => (await db.query(`SELECT 1 FROM ${view}`)).rows)
+      assert.equal(rows.length, 0, view)
+    }
+  })
+
+  test('the view exposes no display_name, and nothing else reads it', async () => {
+    const { rows: cols } = await db.query(`SELECT a.attname FROM pg_attribute a
+      WHERE a.attrelid = 'bob.v_ai_cell_state'::regclass AND a.attnum > 0 AND NOT a.attisdropped`)
+    assert.ok(!cols.some((c) => /display|name|email/.test(c.attname)), JSON.stringify(cols))
+    // Reading it takes SELECT on the view and EXECUTE on its definer function.
+    // Supabase's read-all roles hold the first everywhere, never the second.
+    const { rows } = await db.query(`SELECT r.rolname FROM pg_roles r
+      WHERE has_table_privilege(r.oid, 'bob.v_ai_cell_state', 'SELECT')
+        AND has_function_privilege(r.oid, 'public.bob_ai_cell_state()', 'EXECUTE')
+        AND NOT r.rolsuper AND r.rolname NOT LIKE 'pg\\_%' AND r.rolname <> 'postgres'
+      ORDER BY 1`)
+    assert.deepEqual(rows.map((r) => r.rolname), ['bob_ai_ro'])
+  })
+})

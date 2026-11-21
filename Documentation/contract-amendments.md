@@ -3061,6 +3061,141 @@ and, after the migration, three sabotages: TRUNCATE back on `users` for
 `authenticated`, TRUNCATE on `actors` to PUBLIC, and the `public` default back.
 pgTAP 18 of 18 on the shared local stack; the suite's clean run is CI's.
 
+## Slice 3 · The absent-not-zero state, built
+
+Built from `docs/slice-3-absent-not-zero.md` with F-28 (corrected), F-29 to
+F-34, F-38 and F-39. **The contract stays at 0.5.3**: Federico has not
+accepted 0.6, so its text is not written into the contract here. It goes in
+when he accepts, and anything he changes comes back as a migration.
+
+Two migrations, append-only:
+
+- `20261121180000_slice3_catalog_and_feeder_map.sql`: the three capabilities
+  (F-29, thirteen in all), `bob.cell_catalog` (one row per metric: source,
+  actor grain, applicable actor types, required capabilities, precondition,
+  degenerate, undefined-by), and `actor_types` on `v_feeder_channel_map`
+  (F-38), still granted to `bob_feeder` only.
+- `20261121180100_slice3_cell_state.sql`: `public.bob_cell_state(org,
+  channels[], from, to)`, `bob_cell_rollup` with coverage (F-30),
+  `bob_available_state` (FR-23's reasons translated, `no_channels_selected` to
+  `not_applicable`), `bob_actor_cell_state` (the per-actor drill-down with
+  `off_shift`), and BObee's `bob.v_ai_cell_state`. Every one is `LANGUAGE sql`
+  with a `BEGIN ATOMIC` body, so `pg_depend` records what it reads. The cell
+  functions are invoker and run under RLS. BObee's view is a definer view over a
+  definer function that filters on the caller's `org_id` claim (R6), granted to
+  `bob_ai_ro` only.
+
+The reference feeder writes the observed zero at seal (F-28): only with
+liveness (traffic, or an uptime probe), only on a declared capability, never
+for a preconditioned metric (`ZERO_PRECONDITIONS`: `hallucinations`,
+`abandoned`), and only for the actor types the channel declares present (F-38),
+`user` only for the degenerate metrics. It now also writes `proj_durations`
+(response time, interaction duration; OTel exponential histogram at scale 4)
+and `proj_channel_health` from probes, which lifts two of the limits recorded
+for Slice 2.
+
+### F-45 · Website MECA is `pending`, not `not_observed` — spec vs R3, finding
+
+Spec §8.2 expects the website's MECA cell to be `not_observed`. The fixture's
+website has `lag_seconds` NULL, and R3 (decided after the spec's table was
+written) makes a no-row cell with an undeclared lag `pending` with
+`lag_not_declared`: the bucket can never be known sealed. The test asserts
+`pending`, and the chat channel (which declares a lag and meca_rum, and gets no
+RUM row) carries `not_observed` instead, so the state still appears. To
+correct in the spec's table; no contract change.
+
+### F-46 · `bob_app` could not read its own organization — finding, fixed
+
+`bob.organizations` had no policy reaching `bob_app`, so an invoker function
+reading `telemetry_started_at` as `bob_app` got no row and every cell came back
+empty. The tenancy guard did not see it: it discovers tenant tables by
+`org_id`, and `organizations` is keyed by `id`. The second migration adds
+`bob_app_reads_own_org` (FOR SELECT TO bob_app, `id` equal to the claim).
+Extending the discovery to tables keyed by their own `id` is left open.
+
+### Build choices, for Henry to confirm
+
+- A zero row's `session_count` is the metric's own denominator (closes in the
+  bucket), not "the bucket's interactions".
+- When a bucket has neither traffic nor a probe row, `liveness_source` falls
+  back to `traffic` on an observed row (the row itself is the activity).
+- The tenant's watermark for R3 is the greatest `source_watermark` across its
+  projections.
+- Channel-grain metrics carry `actor_type` NULL.
+- UI-03 is asserted over every cell except `not_applicable`, which §3 gives no
+  reasons.
+- `no_ground_truth` is unconditional: there is no table for D-29's knowledge
+  note yet, so `hallucinations` is `not_configured` everywhere.
+- In the per-actor cells, `off_shift` comes before `pending` for a no-row cell,
+  judged at `bucket_start`.
+- `value` is the additive figure: the count, or `n` for durations.
+- `bob_available_state` covers `user`, `asa` and `human`, the actors
+  `bob_availability` already returns.
+- Probe rows write `health_latency` and `health_errors` as 0.
+- The claim BObee filters on is the one `bob_ai_ro`'s connection sets itself,
+  the same shape as F-21.
+
+### Performance
+
+`EXPLAIN ANALYZE` on the fixture, tenant A, five channels:
+
+| Frame | Cells | Time |
+|---|---|---|
+| 1 hour | 3,240 | 13 ms |
+| 15 hours | 48,600 | 149 ms |
+| 18 days | 1,399,680 | 3.4 s |
+
+The first cut took 2.1 s for 15 hours. The planner inlined the per-channel
+declaration CTE and ran the capability anti-join once per cell (32,400
+loops); `declared AS MATERIALIZED` judges it once per channel, metric and
+actor. Materializing `bob_cell_state` itself (spec §10) is not needed at this
+size.
+
+### Verified by sabotage
+
+Each guard was seen failing, then restored and seen passing.
+
+| # | Sabotage | Turned red |
+|---|---|---|
+| S1 | The sentinel re-implemented instead of calling `bob_source_key_unset()` | SR-2 `pg_depend` |
+| S2 | Declared-absent moved after `pending` | FR-11, G8, the fuzz property |
+| S3 | The mix reaches the degenerate metrics | The degenerate-metric test |
+| S4 | `pending` ignores the current lag | R3, the fuzz property |
+| S5 | The rollup sums every cell | FR-32 rollup, the sum test |
+| S6 | BObee's function drops the claim filter | Tenancy R6 |
+| S7 | The rollup with a plpgsql body | `pg_depend`, `BEGIN ATOMIC` discovery |
+| S8 | The catalog loses `handled` | Catalog completeness |
+| S9 | The feeder ignores `ZERO_PRECONDITIONS` | Preconditioned metrics, liveness and capability |
+| S10 | Zeros without liveness | PR-10, the liveness test |
+| S11 | A zero on an undeclared capability | The liveness and capability test |
+| S12 | Actor types fixed per metric | The F-38 tests |
+| S13 | Applicability ignored | The never-`user` test (F-33) |
+| S14 | `ZERO_PRECONDITIONS` loses `abandoned` | Catalog equality, the abandoned test |
+
+The fuzz test draws 160 seeded cases (lags, marks, mixes, capabilities) and
+compares `bob_cell_state` with a JavaScript oracle of §3's order.
+
+### Two Slice 2 guards caught the new files once they were tracked
+
+Both scan tracked files only, so they stayed green until the commit.
+
+- **The namespace-literal guard** read `'capability_not_declared:' || cap`
+  and `'no_definition:' || …` as refs with a literal namespace. These are §3's
+  reason codes, not refs. The guard now names the two reason prefixes it skips
+  (`REASON_PREFIXES`), so a new one turns it red until someone looks. A new
+  probe checks that a real namespace on the same line is still found.
+- **The capability-from-type guard** split the fuzz test on `;` and found a
+  channel insert naming `channel_type` beside a capability insert. The
+  capability there is drawn at random. The insert now ends its statement, with
+  a note saying so. The guard is unchanged.
+
+### Counts
+
+After merging `main` (with #35, #37 and #39), on a fresh `supabase db
+reset --no-seed` of a stack of its own: `pnpm test` 347 tests, 344 pass, 0
+fail, 3 `todo`. pgTAP over `supabase/tests/database`: 18 of 18. The shared stack was
+not touched.
+
 ---
 
 *Boss.Technology · BOb v1 · Internal only*

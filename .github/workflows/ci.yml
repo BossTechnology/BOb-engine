@@ -112,6 +112,10 @@ jobs:
         env:
           SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
         run: node --test --test-concurrency=1 tests/slice2-feeder.test.mjs
+      - name: Slice 3 · the absent-not-zero cell, FR-32, UI-03, PR-10, SR-2, against one implementation; the feeder's zeros
+        env:
+          SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+        run: node --test --test-concurrency=1 tests/slice3-cell-state.test.mjs
       - name: P5 §6.3 · three roles, bob_ai_ro reads views only, no egress; the box check of objection 3
         env:
           SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres

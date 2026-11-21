@@ -15,6 +15,44 @@ export const LABEL_FAILURES = new Set(['abstained', 'classifier_down'])
 // §6.1: what a close means. v1 reads `resolved` as closed without escalation.
 export const CLOSE_METRIC = { resolved: 'resolved', escalated: 'escalations' }
 
+// ── F-28, F-38 · the observed zero, written at seal (Slice 3 spec §5) ───────
+// For each metric the feeder can write a zero for: the projection, the
+// capability that must be declared, and the actor types that can produce it.
+// The feeder reads two views and cannot see bob.cell_catalog, so it carries
+// this copy; tests/slice3-cell-state.test.mjs compares it with the catalog,
+// both ways. The label failures are not here: §4.1 writes their zeros, and
+// F-28 does not touch them.
+//
+// `capability: null` means the metric has no capability of its own, only a
+// precondition (abandoned, §9.2). `degenerate` metrics belong to the
+// conversation: `user` only, whatever the mix says (F-38).
+const ALL = ['user', 'asa', 'human', 'arep']
+export const ZERO_RULES = {
+  resolved:             { table: 'proj_metric_counts', capability: 'resolution',     actors: ['asa', 'human', 'arep'] },
+  abandoned:            { table: 'proj_metric_counts', capability: null,             actors: ALL },
+  disambiguation:       { table: 'proj_metric_counts', capability: 'disambiguation', actors: ['asa', 'human', 'arep'] },
+  escalations:          { table: 'proj_metric_counts', capability: 'escalation',     actors: ['asa', 'human', 'arep'] },
+  hallucinations:       { table: 'proj_metric_counts', capability: 'hallucination',  actors: ALL },
+  abandoned_in_queue:   { table: 'proj_metric_counts', capability: 'queue',          actors: ['user'], degenerate: true },
+  response_time:        { table: 'proj_durations',     capability: 'response_time',  actors: ALL },
+  interaction_duration: { table: 'proj_durations',     capability: 'resolution',     actors: ['user'], degenerate: true },
+}
+
+// F-28, corrected · the closed list of metrics whose measurement has a
+// precondition beyond the capability. A metric that gains one joins it in the
+// same change; the guard compares it with the catalog's `precondition`.
+//   ground_truth   hallucinations: no zero, ever. The feeder cannot see whether
+//                  a ground truth exists (D-29) through its two views.
+//   idle_bound     abandoned: no row while idle_bound_seconds is NULL (§9.2).
+export const ZERO_PRECONDITIONS = {
+  hallucinations: 'ground_truth',
+  abandoned: 'idle_bound',
+}
+
+// The kinds of event that are an interaction's activity: a bucket that has one
+// has traffic (F-28's first source of liveness).
+export const TRAFFIC_KINDS = new Set(['customer_turn', 'business_turn', 'close'])
+
 export function kindOf(e) {
   switch (e.event_name) {
     case 'turn':
@@ -23,6 +61,9 @@ export function kindOf(e) {
     case 'conversation_close': return 'close'
     case 'detection': return 'detection'
     case 'delivery_attempt': return 'delivery'
+    // §6.4, §5: an uptime probe emitting on a timer, the second source of
+    // liveness (F-28). attributes: uptime_seconds, observed_seconds.
+    case 'uptime_probe': return 'probe'
     default: return 'other'
   }
 }

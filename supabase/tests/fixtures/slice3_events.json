@@ -1,0 +1,12 @@
+{
+  "_note": "Business events added to feeder_events.json for the Slice 3 suite. Invented. Pairs with slice3_world.sql. The watermark is later than the Slice 2 one, so WhatsApp seals through 14:55 and the chat channel through 14:55. WhatsApp's 03:00 bucket has an uptime probe and no traffic (observed 0 by probe); its 14:40 bucket has neither (not observed). The chat channel has traffic at 14:30 and declares hallucination and no idle bound: no hallucinations and no abandoned row is ever written for it. The app channel has traffic and no mix row: no zero row is written for it.",
+  "watermark": "2026-11-18T15:00:00Z",
+  "events": [
+    { "event_time": "2026-11-18T03:01:00Z", "bzzz.tenant": "tenant-a", "source_key": "tenant-a.whatsapp", "correlation_id": "probe-a", "event_name": "uptime_probe", "attributes": { "uptime_seconds": 300, "observed_seconds": 300 } },
+
+    { "event_time": "2026-11-18T14:31:00Z", "bzzz.tenant": "tenant-a", "source_key": "tenant-a.chat", "correlation_id": "c7", "event_name": "turn", "attributes": { "side": "customer", "turn_id": "t10", "miembro.id": "m:a001" } },
+    { "event_time": "2026-11-18T14:31:40Z", "bzzz.tenant": "tenant-a", "source_key": "tenant-a.chat", "correlation_id": "c7", "event_name": "turn", "attributes": { "side": "business", "actor.ref": "botplatform:chat-01", "actor.type": "asa" } },
+
+    { "event_time": "2026-11-18T14:33:00Z", "bzzz.tenant": "tenant-a", "source_key": "tenant-a.app", "correlation_id": "c8", "event_name": "turn", "attributes": { "side": "customer", "turn_id": "t11", "miembro.id": "m:a001" } }
+  ]
+}
