@@ -7,6 +7,8 @@
 //
 // The feeder runs as bob_feeder and the reconciliation as bob_app, each on its
 // own connection, against the in-memory truth store and its event fixture.
+// Since P5 Q6 (a) the feeder also stages the member refs it sees in
+// bob.member_refs_seen, and the reconciliation reads them from there.
 // Unlike the schema suite these runs commit: the feeder owns its transactions
 // (one per tenant, F-22). Every describe starts from a freshly loaded world.
 
@@ -19,8 +21,10 @@ import {
   REPO_ROOT, TENANT_A, TENANT_B,
 } from './helpers/db.mjs'
 import { MemoryTruthStore } from '../feeder/memory-truth-store.mjs'
-import { runFeeder, EventTimeConflict } from '../feeder/reference-feeder.mjs'
-import { reconcileGhosts, linkMemberRef } from '../reconciliation/ghosts.mjs'
+import { runFeeder, stageMemberRefs, EventTimeConflict } from '../feeder/reference-feeder.mjs'
+import {
+  reconcileGhosts, sweepGhosts, linkMemberRef, RETENTION_DAYS,
+} from '../reconciliation/ghosts.mjs'
 
 const FIXTURE = JSON.parse(readFileSync(
   resolve(REPO_ROOT, 'supabase/tests/fixtures/feeder_events.json'), 'utf8'))
@@ -329,8 +333,10 @@ describe('§4 · lag not declared', () => {
 })
 
 // ── §7.2, §7.3a · the ghost path ────────────────────────────────────────────
-// The reconciliation sees the truth store through member_refs_seen and nothing
-// else: anything else it touched would throw.
+// P5 Q6 (a), F-41: the feeder sees the truth store through member_refs_seen
+// and nothing else (anything else it touched would throw), and stages what it
+// saw. The reconciliation, as bob_app, reads no truth store at all: it reads
+// bob.member_refs_seen and deletes what it consumed.
 function onlyMemberRefsSeen(store) {
   let calls = 0
   return {
@@ -339,9 +345,25 @@ function onlyMemberRefsSeen(store) {
   }
 }
 
+// The feeder's staging window reaches an hour before the fixture, so the
+// reconciliation's own window is what decides what it consumes.
+const STAGE_FROM = '2026-11-18T13:00:00Z'
+const stage = (store, window = { from: STAGE_FROM, to: TO }) =>
+  stageMemberRefs(feeder, onlyMemberRefsSeen(store), window)
+const reconcileA = () =>
+  reconcileGhosts(app, { orgId: TENANT_A }, { now: NOW, intervalSeconds: 1800 })
+
 const actorCounts = async () => (await db.query(
   `SELECT actor_type, identity_rung, count(*)::int AS n FROM bob.actors
     WHERE org_id = $1 GROUP BY 1, 2 ORDER BY 1, 2`, [TENANT_A])).rows
+
+const runRows = async () => Object.fromEntries((await db.query(
+  `SELECT org_id::text, count(*)::int AS n FROM bob.member_refs_runs
+    WHERE org_id = ANY($1::uuid[]) GROUP BY 1`, [TENANTS])).rows.map((r) => [r.org_id, r.n]))
+
+const stagedRefs = async (orgId = TENANT_A) => (await db.query(
+  'SELECT DISTINCT ref FROM bob.member_refs_seen WHERE org_id = $1 ORDER BY 1', [orgId]))
+  .rows.map((r) => r.ref)
 
 describe('§7.2 · the ghost path', () => {
   before(freshWorld)
@@ -355,11 +377,13 @@ describe('§7.2 · the ghost path', () => {
     ])
     const before = await actorCounts()
     const seen = onlyMemberRefsSeen(store)
-    const r = await reconcileGhosts(app, seen, { orgId: TENANT_A, tenantSlug: 'tenant-a' },
-      { now: NOW, intervalSeconds: 1800 })
-
+    await stageMemberRefs(feeder, seen, { from: STAGE_FROM, to: TO })
     assert.ok(seen.calls > 0)
+    assert.deepEqual(await stagedRefs(), ['m:a002', 'm:a003'])
+    const r = await reconcileA()
+
     assert.deepEqual(r.created.map((c) => c.ref).sort(), ['m:a002', 'm:a003'])
+    assert.deepEqual(await stagedRefs(), [], 'what it consumed is still staged')
     const after = await actorCounts()
     const added = after.map((a) => {
       const b = before.find((x) => x.actor_type === a.actor_type && x.identity_rung === a.identity_rung)
@@ -375,20 +399,98 @@ describe('§7.2 · the ghost path', () => {
     ])
   })
 
-  test('the window trails by interval plus the largest declared lag (H3)', async () => {
-    // A ref seen 40 minutes before now: inside 30 min + voice's 15, outside 30 alone.
-    const store = truth([event('2026-11-18T13:50:00Z', 'tenant-a.voice', 'c8', 'turn',
-      { side: 'customer', turn_id: 't80', 'miembro.id': 'm:a050' })])
-    const r = await reconcileGhosts(app, onlyMemberRefsSeen(store),
-      { orgId: TENANT_A, tenantSlug: 'tenant-a' }, { now: NOW, intervalSeconds: 1800 })
-    assert.equal(r.window.from.toISOString(), '2026-11-18T13:45:00.000Z')
-    assert.deepEqual(r.created.map((c) => c.ref), ['m:a050'])
+  test('the feeder leaves out the refs it already maps', async () => {
+    const out = await stage(truth())
+    assert.deepEqual(out[TENANT_A], { staged: 0, mapped: 4 })   // a001 twice, a002, a003
+    assert.deepEqual(out[TENANT_B], { staged: 0, mapped: 1 })
+    assert.deepEqual(await stagedRefs(), [])
   })
 
-  test('a second run creates nothing', async () => {
-    const r = await reconcileGhosts(app, onlyMemberRefsSeen(truth()),
-      { orgId: TENANT_A, tenantSlug: 'tenant-a' }, { now: NOW, intervalSeconds: 1800 })
+  test('the window trails by interval plus the largest declared lag (H3)', async () => {
+    // Seen 40 minutes before now: inside 30 min + voice's 15. Seen 60 minutes
+    // before: outside it, so it stays staged for the sweep.
+    const store = truth([
+      event('2026-11-18T13:50:00Z', 'tenant-a.voice', 'c8', 'turn',
+        { side: 'customer', turn_id: 't80', 'miembro.id': 'm:a050' }),
+      event('2026-11-18T13:30:00Z', 'tenant-a.voice', 'c9', 'turn',
+        { side: 'customer', turn_id: 't90', 'miembro.id': 'm:a051' }),
+    ])
+    await stage(store)
+    const r = await reconcileA()
+    assert.equal(r.window.from.toISOString(), '2026-11-18T13:45:00.000Z')
+    assert.deepEqual(r.created.map((c) => c.ref), ['m:a050'])
+    assert.deepEqual(await stagedRefs(), ['m:a051'])
+  })
+
+  test('the sweep takes what the window left, and drops what is past retention (C-14)', async () => {
+    const old = new Date(new Date(NOW).getTime() - (RETENTION_DAYS + 5) * 86_400_000)
+    const day = new Date(Math.floor(old.getTime() / 86_400_000) * 86_400_000)
+    await stage(truth([event(new Date(day.getTime() + 3_600_000).toISOString(), 'tenant-a.voice',
+      'c10', 'turn', { side: 'customer', turn_id: 't100', 'miembro.id': 'm:a052' })]),
+    { from: day.toISOString(), to: new Date(day.getTime() + 86_400_000).toISOString() })
+    assert.deepEqual(await stagedRefs(), ['m:a051', 'm:a052'])
+
+    const r = await sweepGhosts(app, { orgId: TENANT_A }, { now: NOW })
+    assert.deepEqual(r.created.map((c) => c.ref), ['m:a051'])
+    assert.equal(r.expired, 1)
+    assert.deepEqual(await stagedRefs(), [])
+    const { rows } = await db.query(
+      'SELECT count(*)::int AS n FROM bob.actor_external_refs WHERE org_id = $1 AND ref = $2',
+      [TENANT_A, 'm:a052'])
+    assert.equal(rows[0].n, 0, 'a ghost was made for a ref past retention')
+  })
+
+  // The feeder leaves out what it maps, so a staged known ref has to be put
+  // there by hand: the reconciliation's own subtraction is what is tested.
+  test('a staged ref BOb already knows creates nothing, and is consumed', async () => {
+    await db.query(`INSERT INTO bob.member_refs_seen
+        (org_id, channel_id, ref, first_seen, last_seen, window_from, window_to)
+      VALUES ($1, $2, 'm:a002', '2026-11-18 14:11+00', '2026-11-18 14:11+00',
+              '2026-11-18 14:00+00', '2026-11-18 14:30+00')`, [TENANT_A, WHATSAPP_A])
+    const before = await actorCounts()
+    const r = await reconcileA()
     assert.deepEqual(r.created, [])
+    assert.deepEqual(await actorCounts(), before)
+    assert.deepEqual(await stagedRefs(), [])
+  })
+
+  // Contract §7.2 as amended (review of PR #33): the feeder stages the
+  // trailing window at least as often as bob_app reconciles. A row staged
+  // late, behind bob_app's window, is not lost: the frequent run leaves it,
+  // and the sweep makes the ghost.
+  test('a ref staged late, behind the trailing window, waits for the sweep', async () => {
+    await stage(truth([event('2026-11-18T13:20:00Z', 'tenant-a.voice', 'c11', 'turn',
+      { side: 'customer', turn_id: 't110', 'miembro.id': 'm:a053' })]),
+    { from: '2026-11-18T13:00:00Z', to: '2026-11-18T13:40:00Z' })
+    assert.deepEqual(await stagedRefs(), ['m:a053'])
+    const frequent = await reconcileA()
+    assert.deepEqual(frequent.created.map((c) => c.ref), [])
+    assert.deepEqual(await stagedRefs(), ['m:a053'], 'the frequent run consumed a row behind its window')
+    const swept = await sweepGhosts(app, { orgId: TENANT_A }, { now: NOW })
+    assert.deepEqual(swept.created.map((c) => c.ref), ['m:a053'])
+    assert.deepEqual(await stagedRefs(), [])
+  })
+
+  // The sweep's window is 13 months. The feeder writes in batches, each in
+  // its own transaction under the claim, and the counts it returns are the
+  // same as one write (review of PR #33).
+  test('more refs than one batch are written in several transactions, counted once', async () => {
+    const refs = ['m:a060', 'm:a061', 'm:a062', 'm:a063', 'm:a064']
+    const store = truth(refs.map((ref, i) => event(`2026-11-18T14:2${i}:00Z`, 'tenant-a.voice',
+      `c6${i}`, 'turn', { side: 'customer', turn_id: `t6${i}`, 'miembro.id': ref })))
+    let inserts = 0
+    const counting = { query: (...a) => {
+      if (/INSERT INTO bob\.member_refs_seen/.test(String(a[0]))) inserts++
+      return feeder.query(...a)
+    } }
+    const runsBefore = await runRows()
+    const out = await stageMemberRefs(counting, onlyMemberRefsSeen(store),
+      { from: STAGE_FROM, to: TO, orgIds: [TENANT_A], batchSize: 2 })
+    assert.deepEqual(out[TENANT_A], { staged: 5, mapped: 4 })
+    assert.equal(inserts, 3)
+    assert.deepEqual(await stagedRefs(), refs)
+    assert.equal((await runRows())[TENANT_A] - (runsBefore[TENANT_A] ?? 0), 1)
+    await db.query('DELETE FROM bob.member_refs_seen WHERE org_id = $1', [TENANT_A])
   })
 
   test('the rebuild it triggers projects the ghosts at rung ghost', async () => {
@@ -408,8 +510,8 @@ describe('§8.5 · rebuild with linkage', () => {
 
   before(async () => {
     await freshWorld()
-    await reconcileGhosts(app, onlyMemberRefsSeen(truth()),
-      { orgId: TENANT_A, tenantSlug: 'tenant-a' }, { now: NOW, intervalSeconds: 1800 })
+    await stage(truth())
+    await reconcileA()
     await runFeeder(feeder, truth(), { from: FROM, to: TO })
     identified = (await db.query(
       `INSERT INTO bob.actors (org_id, actor_type, display_id, display_name, identity_rung)
@@ -492,6 +594,70 @@ describe('F-22 · the feeder writes each tenant under its own claim', () => {
     assert.deepEqual([...seen].sort(), [TENANT_A, TENANT_B])
   })
 
+  // P5 Q6 (a): the staged refs too. Tenant B's only fixture member is mapped,
+  // so one unmapped B member is added and both tenants stage.
+  test('every staged ref is written under the claim of its tenant, and nothing is read back', async () => {
+    let claim = null
+    const seen = new Set()
+    const watched = {
+      query(sql, params) {
+        if (/set_config/.test(sql) && params?.[0] === 'request.jwt.claims') {
+          claim = JSON.parse(params[1]).org_id
+        }
+        if (/^(COMMIT|ROLLBACK)/.test(sql)) claim = null
+        if (/member_refs_(seen|runs)/.test(sql)) {
+          assert.match(sql, /^\s*INSERT INTO bob\.member_refs_(seen|runs)/, 'the feeder did more than insert')
+          assert.equal(params[0], claim, sql)
+          seen.add(claim)
+        }
+        return feeder.query(sql, params)
+      },
+    }
+    const out = await stageMemberRefs(watched, truth([event('2026-11-18T14:12:00Z', 'tenant-b.chat',
+      'b9', 'turn', { side: 'customer', turn_id: 'tb9', 'miembro.id': 'm:b050' }, 'tenant-b')]),
+    { from: FROM, to: TO })
+    assert.deepEqual([...seen].sort(), [TENANT_A, TENANT_B])
+    assert.equal(out[TENANT_B].staged, 1)
+    const { rows } = await db.query(
+      `SELECT count(*)::int AS n FROM bob.member_refs_seen s JOIN bob.channels c
+          ON c.id = s.channel_id WHERE s.org_id <> c.org_id`)
+    assert.equal(rows[0].n, 0)
+  })
+
+  test('each tenant leaves one run row per staging run, even with nothing to stage', async () => {
+    const before = await runRows()
+    await stageMemberRefs(feeder, truth(), { from: '2026-11-18T10:00:00Z', to: '2026-11-18T10:05:00Z' })
+    const after = await runRows()
+    assert.equal(after[TENANT_A] - (before[TENANT_A] ?? 0), 1)
+    assert.equal(after[TENANT_B] - (before[TENANT_B] ?? 0), 1)
+  })
+
+  // One tenant's failure does not stop another's (review of PR #33). Tenant
+  // B's truth store answers with a first_seen before the window, which the
+  // table refuses.
+  test('a tenant whose staging fails is reported, and the other tenant still stages', async () => {
+    const store = truth([event('2026-11-18T14:12:00Z', 'tenant-b.chat', 'b9', 'turn',
+      { side: 'customer', turn_id: 'tb9', 'miembro.id': 'm:b051' }, 'tenant-b')])
+    const skewed = {
+      memberRefsSeen(frame, page) {
+        const out = store.memberRefsSeen(frame, page)
+        if (frame.tenant_slug !== 'tenant-b') return out
+        return { ...out, rows: out.rows.map((r) => ({ ...r, first_seen: new Date('2026-11-17T00:00:00Z') })) }
+      },
+    }
+    await db.query('DELETE FROM bob.member_refs_seen WHERE org_id = ANY($1::uuid[])', [TENANTS])
+    const out = await stageMemberRefs(feeder, skewed, { from: FROM, to: TO })
+    assert.match(out[TENANT_B].error ?? '', /check constraint/)
+    assert.equal(out[TENANT_A].staged, 2)
+    assert.deepEqual(await stagedRefs(TENANT_A), ['m:a002', 'm:a003'])
+    assert.deepEqual(await stagedRefs(TENANT_B), [])
+  })
+
+  test('replaying a staging window stages nothing twice', async () => {
+    const again = await stageMemberRefs(feeder, truth(), { from: FROM, to: TO })
+    assert.equal(again[TENANT_A].staged, 0)
+  })
+
   test('every row the feeder wrote belongs to its channel tenant', async () => {
     for (const p of (await projections()).filter((x) => x.bucketed)) {
       const { rows } = await db.query(
@@ -553,5 +719,24 @@ describe('P5 objection 3 · the feeder sends a foreign tenant to route A', () =>
     assert.equal(r.unmappedEvents, FIXTURE.events.filter(inWindow).length)
     assert.deepEqual(r.written, {})
     assert.equal(await rowsFor(TENANT_A) + await rowsFor(TENANT_B), 0)
+  })
+})
+
+// P5 Q6 (a): the staged refs follow the box tenant too.
+describe('P5 objection 3 · the feeder stages the box tenant\'s member refs only', () => {
+  before(freshWorld)
+  const extraB = [event('2026-11-18T14:12:00Z', 'tenant-b.chat', 'b9', 'turn',
+    { side: 'customer', turn_id: 'tb9', 'miembro.id': 'm:b050' }, 'tenant-b')]
+
+  test('boxed to tenant A, nothing of tenant B is staged', async () => {
+    const out = await stageMemberRefs(feeder, truth(extraB), { from: FROM, to: TO, boxTenant: 'tenant-a' })
+    assert.deepEqual(Object.keys(out), [TENANT_A])
+    assert.deepEqual(await stagedRefs(TENANT_B), [])
+    assert.deepEqual(await stagedRefs(TENANT_A), ['m:a002', 'm:a003'])
+  })
+
+  test('without a box tenant, the same window stages tenant B (the guard is not vacuous)', async () => {
+    await stageMemberRefs(feeder, truth(extraB), { from: FROM, to: TO })
+    assert.deepEqual(await stagedRefs(TENANT_B), ['m:b050'])
   })
 })

@@ -13,6 +13,9 @@
 //     installed, so an empty result is not mistaken for a check that ran;
 //   - a warning, which does not fail the check, when the organization has no
 //     active user in bob.users: nobody could sign in (bob-web answers 403).
+// And it warns, without failing, when a tenant has no feeder staging run in
+// bob.member_refs_runs newer than --staging-max-age-hours (default 24; P5 Q6
+// (a)). A box just migrated has not run the feeder yet.
 //
 // It writes nothing, sets no role and loads no fixture. It exits 0 when every
 // check is green and 1 otherwise. It never prints the connection string.
@@ -25,7 +28,7 @@
 import pg from 'pg'
 import {
   oneOrganizationFindings, threeRolesFindings, egressFindings, egressInstalled,
-  activeUserFindings,
+  stagingRunWarnings, activeUserFindings,
 } from './box-checks.mjs'
 
 function arg(name) {
@@ -35,6 +38,7 @@ function arg(name) {
 
 const url = process.env.BOX_DB_URL
 const tenant = arg('--tenant') ?? process.env.BOX_TENANT
+const maxAgeHours = Number(arg('--staging-max-age-hours') ?? 24)
 if (!url) {
   console.error('BOX_DB_URL is not set')
   process.exit(2)
@@ -62,6 +66,9 @@ try {
   const installed = await egressInstalled(client)
   console.log(`      egress extensions installed: ${installed.length
     ? installed.map((e) => `${e.extname} (${e.schema})`).join(', ') : 'none'}`)
+  const stagingWarnings = await stagingRunWarnings(client, { maxAgeHours })
+  console.log(`${stagingWarnings.length ? 'WARN' : 'ok  '}  feeder staging run within ${maxAgeHours} h`)
+  for (const w of stagingWarnings) console.log(`      ${w}`)
 } finally {
   await client.query('ROLLBACK').catch(() => {})
   await client.end()

@@ -3,6 +3,8 @@
 Una línea por cambio entregado, en lenguaje de usuario.
 
 ## Sin publicar
+- P5 Q6, opción (a), construida: el alimentador deja en `bob.member_refs_seen` los miembros que ve en el almacén de verdad, con permiso solo para insertar y bajo el tenant de cada fila, y BOb crea los fantasmas desde esa tabla y borra lo que consumió. El alimentador sigue sin leer más que sus dos vistas y sin crear actores. Enmienda del contrato §7.2 y §7.3a propuesta (F-41). D62 sigue sin firmar.
+- P5 Q6 (a), revisión del PR #33: las tablas de staging se encuentran por cualquier escritura del alimentador sin lectura, y cualquier rol desconocido en sus ACL es un hallazgo; los refs solo `m:` y hasta 256 caracteres; `bob.member_refs_runs` con una fila por tenant y corrida, y aviso en `box-check` si es vieja; el alimentador escribe por lotes y aísla el error de cada tenant; el contrato §7.2 dice que el alimentador deja la ventana corta al menos tan seguido como `bob_app` reconcilia.
 - Quién entra a la caja: bob-web puede leer los usuarios de su organización; registrarse en GoTrue ya no crea un usuario de BOb, y el operador da de alta a cada persona con `scripts/provision-user.mjs`. El chequeo de la caja avisa si nadie puede entrar.
 - Slice 6: el outbox ya no acepta intenciones para un binding de AutoBotz sin verificar, con la verificación fallida o vencida; hay que verificarlo otra vez después de editarlo.
 - Insumos de P5 (D62): la reconciliación de fantasmas pasa al contenedor del alimentador, que ya lee ClickHouse, por decisión de Henry del 21 nov. El alimentador deja los miembros que ve en una tabla de BOb, y BOb crea los fantasmas desde ella, así que el alimentador sigue sin crear actores. D62 sigue sin firmar.
