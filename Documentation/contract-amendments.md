@@ -389,7 +389,7 @@ repository — was not tracked.
 
 ---
 
-### D-31 · What does `mutative = true` cause BOb to do? — OPEN
+### D-31 · What does `mutative = true` cause BOb to do? — CLOSED in Slice 6 (see the end of this file)
 
 BR-3 says BOb refuses to register a binding without a ruling. It does not say
 what BOb does with the ruling once it has it.
@@ -2180,6 +2180,118 @@ go red, because nothing is installed there. That is F-27, and the `todo`
 covers it until F-27 closes by (b) or (c).
 
 **Counts.** 167 → 186: 184 pass and 2 are `todo`.
+
+---
+
+## Slice 6 · Registries and the outbox, built
+
+Three migrations, `20261121100000` to `20261121100200`, and
+`tests/slice6-registries-outbox.test.mjs`. RS-30 to RS-35 are cited by ID only:
+the Behavioural Rules document is internal and this repository is public.
+
+### D-31 · Closed — what BOb writes, and when it refuses to write
+
+Settled in the scope map and built here. BOb never executes and never holds a
+customer credential; it writes an intention to `bob.outbound_queue` and
+something else transmits it.
+- **Limits at write time.** `rate_limit_per_hour` (rolling hour),
+  `invocation_cap_daily` (rolling 24 hours) and `concurrency_limit` (written and
+  not yet drained) are checked when the intention is inserted, under a lock on
+  the binding. With ten an hour, the eleventh is refused. The intention's time
+  is the database's, so it cannot be backdated out of the window.
+- **Approval.** A binding with `requires_approval` gets its intention written
+  `awaiting_approval`. Nothing drains that state and nothing leaves it.
+  Approving one is not in v1.
+- **A limit before attaching.** An Action response cannot attach a mutative
+  binding that declares neither `rate_limit_per_hour` nor
+  `invocation_cap_daily`, and an attached binding cannot lose its limit.
+  `concurrency_limit` does not count: it bounds how many run at once, not how
+  many there are.
+- **The causing alert.** `alert_log_id` is NOT NULL and keyed by organization.
+
+### Choices the build made — for Henry
+
+1. **Moved webhooks are ruled on the refusing side.** BR-3 never asked these
+   entries whether they change the world. They move `mutative = true`,
+   `requires_approval = true`, with the reason in `verify_msg`. The migration
+   rules on nothing in the other direction. Nothing moves on the chain as it
+   starts.
+2. **The move stops and names rows** for a webhook entry without exactly one
+   address, for an Alert or Alarm response that sends to a webhook, and for an
+   Action response that does not name exactly one webhook of its own
+   organization.
+3. **Exempt attachments.** A moved webhook attached before migration 2 has no
+   limit. It is exempt from the attach rule, the same way the BR-3 constraint
+   exempted rows that came before it, and migration 3 refuses an intention for
+   it anyway. The query that lists them is in migration 2.
+4. **A failed verification is a `warning`** in `alert_log` (`alert_type
+   'verification_failed'`, `autobotz_id` set). RS-25 asks that an execution
+   failure be as prominent as a threshold breach; this is a verification
+   failure, and the severity is open.
+5. **The freshness window is 30 days**, one function
+   (`bob_autobotz_freshness_window()`), taken from the original migration's
+   comment.
+6. **The stub drain runs as `bob_app`**, under the box's single claim. Which
+   role the real transmitter holds is a P5 question, not a fourth role.
+7. **`proj_deliveries.outbound_id` still has no foreign key.** The outcome
+   joins the outbox by value, and the read-back test joins it.
+
+### ID-11 completes (F-05)
+
+`threshold_configs`, `anomaly_rules` and `text_rules` gain `scope_kind`
+(default `company`) and `scope_ref`. The tenancy test discovers every table
+with `scope_kind`, has a floor of four, requires each to be a tenant table, and
+needs tenant B to own a company-scoped row in each. The two-tenant fixture gains
+one row per tenant in the three tables.
+
+### Not testable until execution exists
+
+The outbox drains to a stub (`outbox/stub-drainer.mjs`), the stub reports a
+`delivery_attempt` event, and the reference feeder writes it to
+`proj_deliveries`, read back as `bob_app`. That a drained intention reaches a
+real provider and its outcome returns is a `todo` in the suite, stated rather
+than claimed. Execution must not be switched on before the emission slice.
+
+### Consumer impact
+
+`response_rules.webhook_url`, `webhook_method` and `webhook_payload` are
+dropped, and `notification_channels` refuses `type = 'webhook'`. Any client
+that wrote those columns or that type needs to follow (the F-11 lesson). Bob-New
+is outside this repository and was not changed.
+
+### `supabase test db`
+
+The bare command fails on `main` too: it runs `supabase/tests/fixtures/*.sql`
+as pgTAP and finds no plan. pgTAP now lives in `supabase/tests/database/`, and
+CI runs `supabase test db supabase/tests/database`.
+
+### Verified by sabotage
+
+Each change was applied to the database, or to a copy of the code, then the
+suite was run and the change undone.
+
+| Sabotage | Red |
+|---|---|
+| The rate check removed from admission | the eleventh is refused; no backdating |
+| Approval ignored on admission | written awaiting approval; the read-back |
+| The drain takes `awaiting_approval`, transition guard off | the same, and "moves once" |
+| The RS-32 trigger off | four RS-32 cases |
+| The RS-33 trigger off | both RS-33 cases, and RS-35 (the failure changes no table) |
+| Stale never derived | RS-30 (both), RS-31 |
+| The attach-limit trigger off | attached only with a limit |
+| The picker not security-invoker | RS-34 (shows another tenant) |
+| The outbox without RLS | ID-10 structural (discovered, no new code) |
+| Scope discovery pinned to `public` | ID-11 discovery floor |
+| The move forgets inline webhooks | the replayed move |
+| A column `api_token` | the credential guard (a test of its own) |
+
+**One guard was wrong on its first run.** The credential pattern took `token`
+anywhere and reported `bobee_conversations.token_count`. Now it matches `token`
+only at the end of a name. And the cross-tenant attach probe was
+refused by the limit rule before the tenant key could refuse it. It now gives
+tenant B's binding a limit first, so only the key is left to refuse.
+
+**Counts.** 186 → 221: 218 pass and 3 are `todo`. pgTAP: 9.
 
 ---
 

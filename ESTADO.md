@@ -3,6 +3,7 @@
 > Actualizar al cerrar cada sesión. Es lo primero que lee la siguiente.
 
 ## Tarea actual
+- Slice 6 («Registries and the outbox»), rama `slice-6-registries-outbox`, PR abierto y sin fusionar. Se adelantó a los slices 4 y 5 porque no tenía decisiones abiertas. RS-30 a RS-35 pasan; la ejecución de punta a punta queda como `todo` hasta que exista. Siete elecciones del build esperan a Henry (amendments, «Slice 6 · Registries and the outbox, built»).
 - Slice 2 terminado y en `main`: PR #20 (`9fbd367`) y PR #21 (`c4ebf1d`), contrato 0.5.3. El aviso de 0.5.3 a Federico se publicó en la tarea 6 de Relevo el 19 nov, y el turno es de Federico (3.7).
 - BZZ-3 de Relevo, P5 («the whole application layer»), decisión D62 de BzzzBX, sin firmar: insumos en `docs/p5-application-layer.md`. El 19 nov se pusieron al día después del Slice 2, con F-26 como Q6 y las siete objeciones del abogado del diablo en el §8. Henry respondió la 1 (BOb v1 corre dentro de la caja), la 2 (base compartida, `bob` se recupera solo) la 3 (una organización por caja; la RLS es defensa en profundidad) la 4 (una ventana por slice en lab-02, model-01 y Febor; la 4A cuando una segunda caja lleve BOb), la 5 (el ensayo de lab-02 va antes de firmar), la 6 (la credencial de migración en su propio fichero, `bob/migrador.env`) y la 7 (cerrada con esta puesta al día). Q6 (F-26): la reconciliación la corre el contenedor de BOb con el único `org_id` de la caja. Antes de firmar falta el ensayo en lab-02 (rama `docs/p5-d62-after-slice-2`). Federico respondió Q1–Q3 (tres roles de Handoff §4.3; `organizations`/`org_id` en vez de `tenants`/`app_entities`; Q3 en su forma del 15 nov: desarrollo en Supabase local, lab-02 para integración y ensayo, el proyecto hospedado vuelve a la demo). Henry respondió en BZZ-19 el 18 nov: el alimentador de referencia tiene `bob_feeder` primero; número D62 (D60 se firmó ese día para otra cosa).
 - Tarea 6 de Relevo («The projection read contract»): contrato de proyección **0.5.1 firmado** por Henry en la tarea 6 el 2026-11-18 (marca «Decisión firmada») y fusionado en `main` (PR #17, `5e2966d`). Las correcciones que encontró el Slice 2 están en 0.5.2 (F-23, F-24 con §8.7) y 0.5.3 (F-25), aceptadas por Henry; 0.5.2 y 0.5.3 ya se avisaron a Federico. Turno de Federico para la pregunta de H3.
@@ -11,6 +12,13 @@
 - Tarea de Relevo «Licence scan on BOb, CHASS1S and Momentum dependency trees»: respuesta publicada el 5 nov con la distribución de licencias de producción y de desarrollo; turno de Federico.
 
 ## Hecho
+- Slice 6 (rama `slice-6-registries-outbox`), tres migraciones:
+  - los webhooks pasan de `notification_channels` a `autobotz` y cada respuesta Action apunta a su binding, en una transacción (los movidos quedan `mutative` y con `requires_approval`, sin decidir por nadie);
+  - verificación según RS-30 a RS-35: cuatro estados, vencida calculada a 30 días, invalidación al editar, un alerta por cada verificación fallida, `v_action_binding_picker`, y una verificación que no escribe ninguna intención;
+  - `bob.outbound_queue`: los límites se aplican al escribir, lo que requiere aprobación nada lo drena, un binding que cambia el mundo no se adjunta sin límite y cada intención lleva su alerta. El stub (`outbox/stub-drainer.mjs`) drena y el resultado vuelve por `proj_deliveries`;
+  - ID-11 completo: `scope_kind` en umbrales, reglas de anomalía y de texto, y el test los descubre;
+  - D-31 cerrado. Un guard nuevo comprueba que BOb no guarde credenciales. Cada guard nuevo se vio fallar (once sabotajes), y el de credenciales estaba mal en su primera corrida;
+  - suite: 221 tests, 218 pasan y 3 son `todo`. pgTAP en `supabase/tests/database` (9). `supabase test db` sin ruta falla también en `main`, porque corre los fixtures.
 - Guards de P5 (rama `p5-role-guards`): los tres que faltaban del §6.3 (tres roles y no más, `bob_ai_ro` solo vistas, sin salida a red) y los dos de la objeción 3:
   - `scripts/box-check.mjs`, el chequeo de solo lectura que corre la caja después de migrar: una organización y su `slug` igual a `bzzz.tenant`, y además los dos guards de roles;
   - `boxTenant` en el alimentador, que manda a la ruta A los eventos de otro tenant y no los escribe.
@@ -52,6 +60,7 @@
 - Nada.
 
 ## Siguiente paso
+- Henry revisa el PR del Slice 6 y las siete elecciones del build (sobre todo la 1, los webhooks movidos, y la 4, la severidad del alerta de verificación). Bob-New tiene que seguir el cambio de columnas de `response_rules`.
 - Henry revisa el PR #24 (guards de P5). El ensayo de lab-02 revisa si hay `pg_net` o `http` y, con eso, F-27 se cierra con (b) o con (c).
 - P5: Henry revisa y fusiona el PR #22, corre (o autoriza) el ensayo en lab-02 y, si confirma el §6.2, firma D62.
 - La tarea 3.7 de BzzzBX implementa contra el contrato 0.5.3, con `member_refs_seen` como cuarto entregable (turno de Federico).
@@ -81,3 +90,4 @@
 - 2026-11-19: PR #21 fusionado por orden de Henry (`c4ebf1d`), con CI en verde. Slice 2 cerrado.
 - 2026-11-19: PR #21 fusionado (`c4ebf1d`) y aviso de 0.5.3 publicado en la tarea 6. Abogado del diablo sobre P5 con siete objeciones, y los insumos de P5 puestos al día con F-26 (Q6). Henry respondió las siete objeciones y Q6. Nada firmado; falta el ensayo en lab-02.
 - 2026-11-20: los guards de P5 que faltaban: tres del §6.3 y dos de la objeción 3, más el chequeo de caja en `scripts/`. De 167 a 186 tests. F-27 (pg_net/http a PUBLIC): Henry eligió (a); el cierre espera a lab-02.
+- 2026-11-21: Slice 6 construido test primero sobre el stack local `bob-v1` (puertos 583xx, sin commitear; poca memoria en Docker). De 186 a 221 tests, once sabotajes vistos en rojo. D-31 cerrado; la ejecución de punta a punta queda como `todo`.
