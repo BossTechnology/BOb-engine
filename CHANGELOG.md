@@ -3,6 +3,7 @@
 Una línea por cambio entregado, en lenguaje de usuario.
 
 ## Sin publicar
+- Spec del Slice 3, correcciones de la revisión: el alimentador no escribe ceros en métricas que no se pueden medir (alucinaciones sin ground truth, abandonos sin idle bound), y solo los escribe para los actores declarados presentes en el canal (F-38). Cinco preguntas de diseño quedan para Henry.
 - Spec del Slice 3 («absent-not-zero»): cada celda dice si su cifra falta porque nada puede llegar (y qué declarar), porque todavía no se sabe, porque no se observó nada o porque no pasó nada, y el cero observado lo escribe el alimentador. Una sola implementación en la base para gráficas, matriz, sentimiento y BObee. Siete cambios del contrato quedan propuestos para 0.6 (F-28 a F-34), sin firmar.
 - Kit del ensayo de P5 en lab-02: un script que Henry corre en la caja (primero en seco) y que aplica una cadena con dos migraciones amañadas para fallar, restaura `bob` solo y reconstruye las proyecciones, dejando evidencia redactada. Viene con el procedimiento escrito para una migración que falla en una ventana, y se probó de punta a punta contra una copia local de la caja.
 - Guards de P5: solo los tres roles de BOb tienen permisos en `bob`, `bob_ai_ro` no lee ni escribe ninguna tabla, y ningún rol puede llamar a `pg_net` ni a `http`. Hay un chequeo de solo lectura para correr en la caja después de migrar (una organización, con el tenant de la caja). El alimentador, configurado para el tenant de la caja, cuenta los eventos de otro tenant en la ruta A y no los escribe.
