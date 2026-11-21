@@ -3002,6 +3002,36 @@ SELECT. The initial schema meant this from the start: its only policy is
 - `authenticated` still holds table-level writes on `audit_log` that RLS
   refuses. Not changed here.
 
+
+## F-43 · second half: members write nothing to audit_log either
+
+Ruled by Henry on 21 Nov. Migration `20261121160000` revokes INSERT, UPDATE,
+DELETE and TRUNCATE on `bob.audit_log` from `authenticated` (Supabase's default
+grants), which keeps SELECT under `org_audit_read`. pgTAP's
+`audit_log_read_only` gains the case; it failed before the migration and passed
+after, on the shared local stack (18 of 18).
+
+Looking for the same pattern turned up two more and one larger thing, none
+changed here:
+
+- `authenticated` also holds INSERT, UPDATE and DELETE that RLS refuses on
+  `bob.users` (only SELECT policies; F-42 made `bob_app`'s side exact, not this
+  one) and on `bob.baselines` (deny-all on purpose).
+
+### F-44 · `authenticated` holds TRUNCATE on 26 tables in `bob` — finding
+
+TRUNCATE does not go through row-level security. `authenticated` holds it on 26
+tables in `bob`, among them `organizations`, `users`, `actors`, `alert_log` and
+`interactions` (Supabase's default grants, carried by the move to `bob`). It is
+not reachable today: PostgREST never issues TRUNCATE. Anything that ever runs
+SQL as `authenticated` (an invoker function with dynamic SQL, a direct
+connection) could empty every tenant's rows in one statement, which ID-10 calls
+a defect whether or not a path exists yet. `anon` holds it on none.
+
+To rule on: revoke TRUNCATE from `authenticated` on all of `bob` (and the
+default privileges that hand it out), with a discovered guard that no
+application-facing role holds TRUNCATE on a tenant table.
+
 ---
 
 *Boss.Technology · BOb v1 · Internal only*
