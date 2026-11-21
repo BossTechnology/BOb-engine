@@ -2110,7 +2110,7 @@ the answer to objection 3 (P5 §8) proposes. No migration and no contract change
   - A run without `boxTenant` must write tenant B, so the test cannot pass
     against a fixture with nothing to refuse.
 
-### F-27 · `pg_net` and `http` are executable by PUBLIC once installed — (a) decided, closing open
+### F-27 · `pg_net` and `http` are executable by PUBLIC once installed — closed by (c)
 
 P5 §3.2 says `pg_net` and `http` "are not granted to any of the three". Measured
 on the local Supabase, which runs the same image as CI, by installing both in
@@ -3162,3 +3162,28 @@ image lab-02 does not have.
 ---
 
 *Boss.Technology · BOb v1 · Internal only*
+
+## F-27 · closed by (c): no egress extension may be installed
+
+lab-02's rehearsal showed `http` and `pg_net` available and not installed,
+before and after the chain. With that known, Henry closed F-27 by (c) on 21
+Nov, over (b): a revoke from PUBLIC would not cover a later install.
+
+- `egressFindings` (`scripts/box-checks.mjs`) reports each installed egress
+  extension, in any schema, as a finding of its own ("pg_net is installed (in
+  net); no egress extension may be (F-27)"), and still reports every function
+  the three can EXECUTE beside it. The same function runs in CI
+  (`tests/p5-roles.test.mjs`) and in `scripts/box-check.mjs`, so a box with
+  either one installed fails "no egress from the database". The rehearsal kit
+  reads that line, so it fails too.
+- The probe that installs both and rolls back (pg_net in `net`, http in a
+  schema nobody would guess) was a `todo`. It is now the seen-red test: it
+  asserts both installs are reported. The suite's `todo` count drops by one.
+- **Seen red:** with the install findings removed, that probe fails; restored,
+  it passes. On the chain, with nothing installed, the guard is green.
+- **Run.** Own local stack (port 61322, not the shared one), `db reset
+  --no-seed` over `main`'s chain: `pnpm test` 302 tests, 300 pass, 0 fail,
+  2 `todo`; pgTAP 18 of 18.
+- Nothing is uninstalled or revoked by a migration. If a box ever needs one of
+  them (self-hosted Supabase installs `pg_net` for webhooks), that is a new
+  decision, not a guard to relax.
