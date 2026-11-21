@@ -3,7 +3,7 @@
 > Actualizar al cerrar cada sesión. Es lo primero que lee la siguiente.
 
 ## Tarea actual
-- Slice 6 («Registries and the outbox»): PR #26 fusionado en `main` (`d86eb08`) por orden de Henry, con los cuatro checks en verde. Seguimiento en la rama `slice-6-admission-verified`, PR abierto: la admisión al outbox exige una verificación `ok` y fresca, como resolvió Henry el 21 nov. La ejecución de punta a punta sigue como `todo` hasta que exista.
+- Slice 6 («Registries and the outbox»): PR #26 fusionado en `main` (`d86eb08`) por orden de Henry, con los cuatro checks en verde. Seguimiento en el PR #31, fusionado: la admisión al outbox exige una verificación `ok` y fresca, como resolvió Henry el 21 nov. La ejecución de punta a punta sigue como `todo` hasta que exista.
 - Slice 3, correcciones de la revisión del PR #27 (rama `slice-3-spec-f28-fixes`): F-28 ya no escribe ceros en métricas con precondición (`hallucinations`, `abandoned` sin idle bound), F-38 nuevo (`actor_types` en `v_feeder_channel_map`), D-14 dicho como extendido, y R3–R7 decididos por Henry el 21 nov con la opción recomendada (función `bob_cell_state` con marco, cara de BObee definer, F-39, `no_channels_selected` como `not_applicable`). La corrección del aviso de 0.6 se publicó en la tarea 6 el 21 nov.
 - Slice 3 («The absent-not-zero state»): grill hecho con Henry el 20 nov (G1–G15) y spec escrita en `docs/slice-3-absent-not-zero.md` y fusionada en `main` (PR #27), sin código. Seis estados de celda con motivos, vivacidad por tráfico o sonda, cero escrito al sellar, cobertura en los totales y el mecanismo en la base (`bob.v_cell_state`). Siete enmiendas propuestas para 0.6 (F-28 a F-34), registradas en amendments y sin firmar. El aviso de 0.6 a Federico se publicó en la tarea 6 el 20 nov, con la pregunta de las «nueve reglas» y los «siete consumidores».
 - Slice 2 terminado y en `main`: PR #20 (`9fbd367`) y PR #21 (`c4ebf1d`), contrato 0.5.3. El aviso de 0.5.3 a Federico se publicó en la tarea 6 de Relevo el 19 nov, y el turno es de Federico (3.7).
@@ -14,6 +14,7 @@
 - Tarea de Relevo «Licence scan on BOb, CHASS1S and Momentum dependency trees»: respuesta publicada el 5 nov con la distribución de licencias de producción y de desarrollo; turno de Federico.
 
 ## Hecho
+- P5 Q6 reabierta (rama `p5-q6-feeder-runs-reconciliation`): `docs/p5-application-layer.md` registra la respuesta de Henry del 2026-11-21 («El feeder») en el §1, el §3.2, el §4, el §5.2, el §6.2 y el §7, y F-40 con las cuatro opciones de permisos. Henry eligió (a). Sin código ni migraciones.
 - Slice 6 (rama `slice-6-registries-outbox`), tres migraciones:
   - los webhooks pasan de `notification_channels` a `autobotz` y cada respuesta Action apunta a su binding, en una transacción (los movidos quedan `mutative` y con `requires_approval`, sin decidir por nadie);
   - verificación según RS-30 a RS-35: cuatro estados, vencida calculada a 30 días, invalidación al editar, un alerta por cada verificación fallida, `v_action_binding_picker`, y una verificación que no escribe ninguna intención;
@@ -59,11 +60,11 @@
 - Slice 3: que Federico acepte F-28 a F-34 (0.6) y diga cuáles son las «nueve reglas» y los «siete consumidores». El aviso ya está publicado en la tarea 6. Después, el PR de implementación: catálogo, `v_cell_state`, `bob_cell_rollup`, `v_ai_cell_state`, los ceros del alimentador, el fixture ampliado y el texto de 0.6 en el contrato.
 - Abiertos del Slice 3 (spec §10): ceros por actor en el drill-down (se decide con el Slice 7), materializar `v_cell_state` según el `EXPLAIN`, y F-34 (resolución de referencias AREP).
 - Bob-New PR #29 (matriz mínima): su «no configurado» no lee los marcadores de D-14. La matriz definitiva lee `v_cell_state` y no reimplementa las reglas.
-- P5 (D62): Q6 y las siete objeciones del §8 están respondidas. Antes de firmar falta solo el ensayo en lab-02. El ensayo en lab-02 (migración amañada, las nueve sin envolver, `db push` y restaurar `bob` solo) va antes de la firma.
+- P5 (D62): las siete objeciones del §8 están respondidas, y Q6 se reabrió el 2026-11-21 (F-40). Henry eligió (a) en Q6. Antes de firmar falta el ensayo en lab-02. El ensayo en lab-02 (migración amañada, las nueve sin envolver, `db push` y restaurar `bob` solo) va antes de la firma.
 - F-27: Henry eligió (a) el 20 nov. El guard revisa el EXECUTE efectivo sobre lo instalado, y el caso instalado queda en CI como `todo`. Cerrarlo con (b) o con (c) depende de si lab-02 ya tiene `pg_net`. **El kit del ensayo de lab-02 tiene que revisarlo** con `scripts/box-check.mjs`.
 - Hallazgo para Bzzz (objeción 6): GoTrue está en `bzzz-edge` y recibe `supabase.env` entero, con la contraseña del superusuario de Postgres. Va a una decisión de Bzzz, no a P5.
 - Hallazgo en P5 §6.2: `restore.sh` no restaura Postgres. La identidad se restaura a mano, y la respuesta a la objeción 2 lo reemplaza con un respaldo y una recuperación propios de `bob`.
-- F-26 resuelto en P5 Q6: un temporizador en el contenedor de BOb corre la reconciliación como `bob_app`, con el `org_id` y el `slug` de la caja como configuración de aprovisionamiento.
+- P5 Q6 (F-26) reabierta el 2026-11-21: Henry pasó la reconciliación de fantasmas al alimentador («El feeder»), porque pide `member_refs_seen` a ClickHouse y BOb no entra en `bzzz-data`. Tal como está construida escribe `actors` como `bob_app`, y `bob_feeder` no tiene esos permisos (F-40). No se amplió ningún permiso. Henry eligió (a) el mismo día: el alimentador escribe los `member_refs_seen` en una tabla de `bob` y `bob_app` reconcilia desde ella. Falta construirlo. D62 sigue sin firmar.
 - Fuera del Slice 2: dónde se escribe la medición p99 de H2; la igualdad de `affected_members` espera el endpoint de 3.7.
 - Límites del alimentador de referencia, a propósito: no escribe `proj_durations`, `proj_channel_health` ni `proj_rum_signals` (el fixture no trae esa instrumentación), y lee 24 horas de contexto antes de la ventana.
 - P5 (D62): el abogado del diablo ya corrió (19 nov, §8). Antes de la firma (objeción 5): ensayo en lab-02 de una migración amañada para fallar a mitad de cadena, con dump antes, que también restaure `bob` solo, y el procedimiento escrito (primero arreglo hacia delante y, si no alcanza, restaurar `bob` y reconstruir las proyecciones). F-21 y F-22 quedaron cerrados en el Slice 2.
@@ -74,7 +75,8 @@
 - Nada.
 
 ## Siguiente paso
-- Henry revisa el PR de seguimiento del Slice 6 (admisión con verificación). Queda abierto para P5 si el outbox necesita un estado `claimed` (el stub marca `drained` antes del intento). Bob-New tiene que seguir el cambio de columnas de `response_rules` y llamar a Verify antes de la primera intención.
+- Slice 6 cerrado: PR #26 y PR #31 en `main`. Queda abierto para P5 si el outbox necesita un estado `claimed` (el stub marca `drained` antes del intento). Bob-New tiene que seguir el cambio de columnas de `response_rules` y llamar a Verify antes de la primera intención.
+- P5 Q6, opción (a): construirla en su propio PR. La tabla de `member_refs_seen` con RLS, INSERT para `bob_feeder`, la escritura del alimentador, `reconciliation/ghosts.mjs` leyendo la tabla y la enmienda del contrato §7.2 y §7.3a, con cada guard visto fallar.
 - Henry revisa el PR #28 (correcciones del Slice 3). La corrección del aviso de 0.6 (F-28 corregido, F-38, F-39, D-14 extendido) se publicó en la tarea 6 el 21 nov; el turno sigue con Federico.
 - Slice 3: spec fusionada (PR #27). Turno de Federico en la tarea 6 para F-28 a F-34 y las dos preguntas del mapa de alcance.
 - Henry revisa los dos PRs del kit (BOb-engine y Bzzz), y con ellos fusionados corre en lab-02 `--dry-run` y luego `--ejecutar`. La evidencia va a `evidence/ENSAYO/` de Bzzz. Con eso: F-27 se cierra con (b) o (c), y D62 se puede firmar.
