@@ -272,12 +272,14 @@ Each entry and its source:
       closed by a migration that revokes from PUBLIC (b) or by requiring
       neither to be installed (c) waits on whether `pg_net` is on lab-02. The
       lab-02 rehearsal kit checks that.
-    - **Closed with (c)** (Henry, 2026-11-21). On lab-02 both are available and
-      neither is installed, before and after the chain (rehearsal of
-      2026-11-21). The box check now fails if either is installed ("no egress
-      extension installed"), and the `todo` is replaced by tests that install
-      both and roll back. Measured on lab-02 only: on model-01 and Febor it is
-      not known yet, and their first window's box check is what tells.
+    - **Closed by (c)** (Henry, 2026-11-21). lab-02 has both available and
+      neither installed, before and after the chain. The guard of §6.3 now
+      fails if either is installed, in any schema, in CI and in the box check;
+      the installed probe is a test that sees it fail, no longer a `todo`.
+      **Measured on lab-02 only.** On model-01 and Febor it is not known
+      whether either is installed. Their first window's box check tells; a red
+      there is a finding to rule on before going on, not an uninstall in the
+      window.
 
 ### 3.3 How each role meets RLS
 
@@ -568,7 +570,7 @@ the other three were built on 2026-11-20. The third column says where each one s
 | Feeder reads nothing else | As `bob_feeder`, every non-projection table and every view other than the two refuses SELECT | Built (PR #20) |
 | `bob_ai_ro` reads views only | As `bob_ai_ro`, UPDATE is refused, and any base table refuses SELECT (route-plan test, IR-1) | Built (2026-11-20). There are no `v_ai_*` views yet, so the guard asserts `bob_ai_ro` reads exactly the `v_ai_*` views, which today is none |
 | History is append-only | As `bob_app`, UPDATE and DELETE on `actor_ref_history` are refused | Built, by trigger (§3.2) |
-| No egress from the database | None of the three holds EXECUTE on any function of the `pg_net` or `http` extensions, wherever they are installed | Built over what is installed (2026-11-20), and green because neither is installed. **[FINDING] F-27:** installing either one gives PUBLIC EXECUTE, so all three can call them. Henry chose (a) on 2026-11-20: effective EXECUTE in CI and in the box check. **Closed with (c)** on 2026-11-21: neither may be installed, and the box check fails if one is. Measured on lab-02 only (neither installed); model-01 and Febor not yet known |
+| No egress from the database | None of the three holds EXECUTE on any function of the `pg_net` or `http` extensions, wherever they are installed | Built over what is installed (2026-11-20), and green because neither is installed. **[FINDING] F-27:** installing either one gives PUBLIC EXECUTE, so all three can call them. Henry chose (a) on 2026-11-20, then closed it by (c) on 2026-11-21, after lab-02 showed neither installed: the guard also fails if either extension is installed, in any schema, in CI and in the box check |
 
 ---
 

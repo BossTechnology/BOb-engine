@@ -26,7 +26,7 @@
 #      reference feeder;
 #   5. auth.users counted at every step: `auth` is never touched by BOb;
 #   6. scripts/box-check.mjs, read-only, and whether `pg_net` or `http` is on
-#      the box (F-27, closed with (c): neither may be installed).
+#      the box (F-27 closes with (b) or (c) on that answer).
 #
 # WHAT IT LEAVES. The box with the real chain applied at the checkout's commit,
 # and no synthetic data. To take BOb off the box again: --deshacer <run dir>.
@@ -303,8 +303,7 @@ preflight() {
   CUENTAS0="$(auth_cuentas)"; AUTH0="$(auth_huella)"
   ev "- auth.users: $CUENTAS0 cuenta(s); huella de auth \`${AUTH0:0:12}…\`"
   ev "- ¿hay esquema bob? \`$(q "SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'bob')")\` · versiones aplicadas: \`$(versiones_aplicadas)\`"
-  # F-27, closed with (c): neither pg_net nor http may be installed. Recorded
-  # here, before the chain, and checked by box-check at the end.
+  # F-27: whether the box has pg_net or http decides how F-27 closes, (b) or (c).
   # Evidence only: either answer is a finding, neither is a failure.
   ev "- F-27 · extensiones de salida en la caja: \`$(extensiones_salida)\`"
 }
@@ -535,8 +534,6 @@ ejecutar)
     "$(grep -qE '^ok +three roles, no more$' "$EV" && echo sí || echo no)"
   comprobar "box-check: sin salida a red desde la base, sobre lo instalado" "sí" \
     "$(grep -qE '^ok +no egress from the database$' "$EV" && echo sí || echo no)"
-  comprobar "box-check: ninguna extensión de salida instalada (F-27, opción c)" "sí" \
-    "$(grep -qE '^ok +no egress extension installed$' "$EV" && echo sí || echo no)"
   ev "- F-27 · extensiones de salida tras la cadena: \`$(extensiones_salida)\`"
   inventario > "$RUN/inventario-despues.txt"
   ev "- lo que la cadena añadió fuera de bob y supabase_migrations:"

@@ -9,7 +9,6 @@
 //   - one organization per box, and its slug is the box's bzzz.tenant
 //     (P5 §8, objection 3);
 //   - three roles and no more (P5 §6.3);
-//   - no egress extension installed (F-27, closed with (c));
 //   - no egress from the database (P5 §6.3), and which egress extensions are
 //     installed, so an empty result is not mistaken for a check that ran;
 //   - a warning, which does not fail the check, when the organization has no
@@ -28,7 +27,7 @@
 
 import pg from 'pg'
 import {
-  oneOrganizationFindings, threeRolesFindings, egressFindings, egressInstalled, egressInstalledFindings,
+  oneOrganizationFindings, threeRolesFindings, egressFindings, egressInstalled,
   stagingRunWarnings, activeUserFindings,
 } from './box-checks.mjs'
 
@@ -54,7 +53,6 @@ try {
     ['one organization, slug = bzzz.tenant', () => oneOrganizationFindings(client, tenant)],
     ['three roles, no more', () => threeRolesFindings(client)],
     ['no egress from the database', () => egressFindings(client)],
-    ['no egress extension installed', () => egressInstalledFindings(client)],
   ]
   for (const [name, run] of checks) {
     const findings = await run()

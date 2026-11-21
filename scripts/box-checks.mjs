@@ -136,13 +136,23 @@ export async function egressFunctions(client) {
   return rows
 }
 
-// Guard "no egress from the database" (P5 §6.3), over what is installed.
-// Strict on purpose: EXECUTE alone is a finding, with or without USAGE on the
-// schema, because USAGE is one GRANT away.
+// Guard "no egress from the database" (P5 §6.3). F-27, closed by (c) (Henry,
+// 2026-11-21): neither egress extension may be installed, in any schema.
+// Installing either one hands EXECUTE on every function to PUBLIC, so "not
+// granted" never holds once installed; only "not installed" does, and lab-02
+// has both available and neither installed. An install is a finding by
+// itself, and so is a later one, which a revoke (b) would not have covered.
+//
+// The EXECUTE findings stay beside it, so a failing box says who could call
+// what. Strict on purpose: EXECUTE alone is a finding, with or without USAGE
+// on the schema, because USAGE is one GRANT away.
 export async function egressFindings(client) {
-  return (await egressFunctions(client))
+  const installed = (await egressInstalled(client))
+    .map((e) => `${e.extname} is installed (in ${e.schema}); no egress extension may be (F-27)`)
+  const executable = (await egressFunctions(client))
     .filter((f) => f.execute_granted_to.length > 0)
     .map((f) => `${f.fn} (${f.extname}, in ${f.schema}) executable by ${f.execute_granted_to.join(', ')}`)
+  return [...installed, ...executable]
 }
 
 // Which egress extensions are installed, and where. The box check prints it,
@@ -153,16 +163,6 @@ export async function egressInstalled(client) {
       JOIN pg_namespace n ON n.oid = e.extnamespace
      WHERE e.extname = ANY($1) ORDER BY 1`, [EGRESS_EXTENSIONS])
   return rows
-}
-
-// F-27, closed with (c) by Henry on 2026-11-21: neither egress extension may
-// be installed. Installed, both hand EXECUTE on every function to PUBLIC, so
-// the guard above would hold only until someone forgot a REVOKE; refusing the
-// install holds by itself. Measured on lab-02 only (available, not installed);
-// on model-01 and Febor it is not known yet. One finding per installed one.
-export async function egressInstalledFindings(client) {
-  return (await egressInstalled(client)).map((e) =>
-    `${e.extname} is installed (in ${e.schema}): F-27 (c), no egress extension may be installed`)
 }
 
 // Objection 3 of P5 §8, answered: one organization per customer box, and its

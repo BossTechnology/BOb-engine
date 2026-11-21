@@ -15,7 +15,7 @@ import {
 } from './helpers/db.mjs'
 import {
   BOB_ROLES, rolesWithPrivilegeInBob, threeRolesFindings, egressFunctions,
-  egressFindings, egressInstalledFindings, oneOrganizationFindings,
+  egressFindings, oneOrganizationFindings,
 } from '../scripts/box-checks.mjs'
 
 let db
@@ -177,7 +177,7 @@ describe('P5 §6.3 · bob_ai_ro reads views only (IR-1)', () => {
 
 // ── No egress from the database ────────────────────────────────────────────
 describe('P5 §6.3 · no egress from the database', () => {
-  test('none of the three can execute a function of pg_net or http, as installed', async (t) => {
+  test('neither pg_net nor http is installed, and none of the three can execute them', async (t) => {
     const fns = await egressFunctions(db)
     t.diagnostic(`egress functions installed: ${fns.length}`)
     assert.deepEqual(await egressFindings(db), [])
@@ -201,29 +201,19 @@ describe('P5 §6.3 · no egress from the database', () => {
     })
   })
 
-  // F-27. Installing either one hands EXECUTE on every function to PUBLIC, so
-  // all three can call them; pg_net also hands out its queue tables. "Not
-  // granted" (P5 §3.2) does not hold once installed, only "not installed".
-  // Seen here, so the reason for (c) stays measured, not remembered.
-  test('installed, all three could execute them: why F-27 closes with (c)', async () => {
-    await installed(async () => assert.ok((await egressFindings(db)).length > 0))
-  })
-
-  // F-27 closed with (c), Henry, 2026-11-21: neither extension may be
-  // installed. Measured on lab-02 only (both available, neither installed,
-  // before and after the chain); on model-01 and Febor it is not known yet.
-  test('F-27 (c) · neither pg_net nor http is installed', async () => {
-    assert.deepEqual(await egressInstalledFindings(db), [])
-  })
-
-  // The schema in the finding is the extension's own (pg_extension), which for
-  // pg_net is wherever CREATE EXTENSION ran, not `net` where its functions go:
-  // the names and the rule are what is checked.
-  test('F-27 (c) · the guard names each installed one', async () => {
+  // F-27, closed by (c). Installing either one hands EXECUTE on every function
+  // to PUBLIC, so all three can call them; pg_net also hands out its queue
+  // tables. "Not granted" (P5 §3.2) does not hold once installed, only "not
+  // installed", so the guard refuses the install itself, wherever it lands.
+  test('installed anywhere, the guard reports each extension', async () => {
     await installed(async () => {
-      const findings = await egressInstalledFindings(db)
-      assert.deepEqual(findings.map((f) => f.split(' ')[0]), ['http', 'pg_net'])
-      for (const f of findings) assert.match(f, /^\S+ is installed \(in \S+\): F-27 \(c\), no egress extension may be installed$/)
+      const findings = await egressFindings(db)
+      // pg_net's own schema is wherever CREATE EXTENSION ran (its functions go
+      // to `net` regardless), so only http's is pinned.
+      for (const where of ['http is installed (in p5_odd)', 'pg_net is installed (in ']) {
+        assert.ok(findings.some((f) => f.startsWith(where)),
+          `"${where}" went unreported: ${JSON.stringify(findings.slice(0, 3))}`)
+      }
     })
   })
 })

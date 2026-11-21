@@ -2110,7 +2110,7 @@ the answer to objection 3 (P5 §8) proposes. No migration and no contract change
   - A run without `boxTenant` must write tenant B, so the test cannot pass
     against a fixture with nothing to refuse.
 
-### F-27 · `pg_net` and `http` are executable by PUBLIC once installed — (a) decided, closing open
+### F-27 · `pg_net` and `http` are executable by PUBLIC once installed — closed by (c)
 
 P5 §3.2 says `pg_net` and `http` "are not granted to any of the three". Measured
 on the local Supabase, which runs the same image as CI, by installing both in
@@ -3159,30 +3159,35 @@ nightly backup is still the installed one. Deploying Bzzz `main` there is
 separate: its plan brings up `compose/l7-bob.yml`, which needs a bob-web
 image lab-02 does not have.
 
-## F-27 · closed with (c): neither egress extension may be installed
-
-Ruled by Henry on 21 Nov, on the recommendation after the lab-02 rehearsal
-(«sigue bajo tus recomendaciones», relayed). On lab-02 `http` and `pg_net` are
-available and neither is installed, before and after the chain. Option (b), a
-migration revoking from PUBLIC where they are installed, would not cover a
-later install; (c) holds by itself, and lab-02 already meets it.
-
-- `egressInstalledFindings` in `scripts/box-checks.mjs`: one finding per
-  installed egress extension. `scripts/box-check.mjs` runs it as "no egress
-  extension installed", and fails on it.
-- `tests/p5-roles.test.mjs`: the `todo` is gone. On the test database neither
-  is installed; with both installed and rolled back, the guard names both, and
-  all three roles could execute their functions (the reason for (c), kept
-  measured). Seen failing first against a guard that returned nothing.
-- The guard over effective EXECUTE stays, as the second line: if (c) is ever
-  broken, the box check also says who can call what.
-- The lab-02 rehearsal kit checks the new box-check line.
-
-**Measured on lab-02 only.** On model-01 and Febor it is not known whether
-either is installed. Their first window runs the box check, and a red line
-there is a finding to rule on before going on, not something to uninstall in
-the window.
-
 ---
 
 *Boss.Technology · BOb v1 · Internal only*
+
+## F-27 · closed by (c): no egress extension may be installed
+
+lab-02's rehearsal showed `http` and `pg_net` available and not installed,
+before and after the chain. With that known, Henry closed F-27 by (c) on 21
+Nov, over (b): a revoke from PUBLIC would not cover a later install.
+
+- `egressFindings` (`scripts/box-checks.mjs`) reports each installed egress
+  extension, in any schema, as a finding of its own ("pg_net is installed (in
+  net); no egress extension may be (F-27)"), and still reports every function
+  the three can EXECUTE beside it. The same function runs in CI
+  (`tests/p5-roles.test.mjs`) and in `scripts/box-check.mjs`, so a box with
+  either one installed fails "no egress from the database". The rehearsal kit
+  reads that line, so it fails too.
+- The probe that installs both and rolls back (pg_net in `net`, http in a
+  schema nobody would guess) was a `todo`. It is now the seen-red test: it
+  asserts both installs are reported. The suite's `todo` count drops by one.
+- **Seen red:** with the install findings removed, that probe fails; restored,
+  it passes. On the chain, with nothing installed, the guard is green.
+- **Run.** Own local stack (port 61322, not the shared one), `db reset
+  --no-seed` over `main`'s chain: `pnpm test` 302 tests, 300 pass, 0 fail,
+  2 `todo`; pgTAP 18 of 18.
+- Nothing is uninstalled or revoked by a migration. If a box ever needs one of
+  them (self-hosted Supabase installs `pg_net` for webhooks), that is a new
+  decision, not a guard to relax.
+- **Measured on lab-02 only.** On model-01 and Febor it is not known whether
+  either extension is installed. Their first window runs the box check, and a
+  red "no egress from the database" there is a finding to rule on before going
+  on, not something to uninstall in the window.
