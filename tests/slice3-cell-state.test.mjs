@@ -813,7 +813,9 @@ describe('§3 · exactly one state per cell, in order', () => {
       await inTx(async () => {
         await db.query(`INSERT INTO bob.channels (id, org_id, channel_type, display_name, source_key, lag_seconds)
           VALUES ($1, $2, 'chat', 'Fuzz', $3, $4)`,
-        [CH, TENANT_A, x.keyUnset ? `__unset__:${CH}` : 'tenant-a.fuzz', x.lag])
+        [CH, TENANT_A, x.keyUnset ? `__unset__:${CH}` : 'tenant-a.fuzz', x.lag]);
+        // The statement ends above: the capability below is drawn at random,
+        // never derived from channel_type (slice2-schema's capability guard).
         if (x.mix !== 'none') {
           await db.query(`INSERT INTO bob.channel_actor_mix (org_id, channel_id, actor_type, present)
             VALUES ($1, $2, 'human', $3)`, [TENANT_A, CH, x.mix === 'true'])

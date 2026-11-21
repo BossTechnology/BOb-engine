@@ -737,13 +737,20 @@ function trackedCode() {
 const NAMESPACE_LITERAL =
   /(['"`])[a-z][a-z0-9_.-]*:\1\s*(\|\||\+)|`[a-z][a-z0-9_.-]*:\$\{|\bconcat\(\s*'[a-z][a-z0-9_.-]*:'/i
 
+// Slice 3 §3: a cell's reason carries its argument after a colon
+// (`capability_not_declared:queue`, `no_definition:D-15`). That is a reason
+// code, not a ref. Named here by hand, so a new prefix turns this guard red
+// until someone looks at it.
+const REASON_PREFIXES = ['capability_not_declared', 'no_definition']
+const REASON_LITERAL = new RegExp(`(['"\`])(${REASON_PREFIXES.join('|')}):\\1\\s*(\\|\\||\\+)`, 'g')
+
 function namespaceLiteralFindings(files, read) {
   const findings = []
   for (const f of files) {
     if (f === 'tests/slice2-schema.test.mjs') continue   // this guard's own pattern
     read(f).split('\n').forEach((line, i) => {
       if (line.trimStart().startsWith('--') || line.trimStart().startsWith('//')) return
-      if (NAMESPACE_LITERAL.test(line)) findings.push(`${f}:${i + 1}: ${line.trim()}`)
+      if (NAMESPACE_LITERAL.test(line.replace(REASON_LITERAL, ''))) findings.push(`${f}:${i + 1}: ${line.trim()}`)
     })
   }
   return findings
@@ -779,9 +786,11 @@ describe('§10 · nothing typed that must be declared', () => {
       'c.mjs': "const ref = 'asa-platform:' + deployment",
       'd.sql': "SELECT concat('ycloud:', phone)",
       'ok.mjs': 'const ref = `${channel.source_key}:${id}`',
+      'reason.sql': `SELECT 'capability_not_declared:' || cap FROM caps`,
+      'e.sql': `SELECT 'capability_not_declared:' || cap, 'pbx:' || ext FROM caps`,
     }
     const found = namespaceLiteralFindings(Object.keys(probes), (f) => probes[f])
-    assert.deepEqual(found.map((x) => x.split(':')[0]), ['a.sql', 'b.mjs', 'c.mjs', 'd.sql'])
+    assert.deepEqual(found.map((x) => x.split(':')[0]), ['a.sql', 'b.mjs', 'c.mjs', 'd.sql', 'e.sql'])
   })
 
   test('no code path, view, function or seed derives capabilities from channel_type', async () => {
