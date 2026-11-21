@@ -2554,8 +2554,10 @@ What was built:
   through the table.
 - Written into `docs/contracts/projection-contract.md` marked
   **[PROPOSED, F-41]**, with the replaced text struck through. The version
-  stays 0.5.3 until it is accepted. Not yet sent to Federico on Relevo task
-  6.
+  stays 0.5.3 until it is accepted. Sent to Federico on Relevo task 6 on
+  21 Nov, by Henry's order, with the question on the window CHECK; the turn
+  is his. It went up twice by mistake (13:31 and 13:32, identical), and a
+  short note there says to read the first.
 
 ### How the guards find the table
 
@@ -2946,7 +2948,7 @@ tenant table. `bob.users` is now the exception: SELECT, and UPDATE of
 `last_login_at` only, because who may sign in is the operator's to write. The
 §10 grants test names it (`SIGN_IN` in `tests/slice2-schema.test.mjs`).
 
-### F-43 · bob.audit_log · bob_app is granted writes that RLS refuses — finding
+### F-43 · bob.audit_log · bob_app is granted writes that RLS refuses — closed, revoked
 
 `audit_log`'s only policy is `org_audit_read`, FOR SELECT. `bob_app` holds
 INSERT, UPDATE and DELETE on it (§10), and RLS refuses all three. Not changed
@@ -2978,6 +2980,57 @@ tenant's rows. F-43 is why writes are checked more loosely: per command,
 
 **Counts.** Node: 9 new tests in `tests/users-access.test.mjs`, 1 in
 `tests/tenancy.test.mjs`, 4 meta probes. pgTAP: 6 new (15 in all).
+
+
+## F-43 · closed: bob_app reads audit_log and writes nothing
+
+Ruled by Henry on 21 Nov: revoke. Migration `20261121150000` revokes INSERT,
+UPDATE, DELETE and TRUNCATE on `bob.audit_log` from `bob_app`, which keeps
+SELECT. The initial schema meant this from the start: its only policy is
+`org_audit_read`, FOR SELECT, and nobody in the application writes the trail.
+
+- **§10 again.** `audit_log` joins `bob.users` as a named exception in the
+  grants test (`READ_ONLY`, SELECT only).
+- **The guard now checks writes per command too.** With F-43 closed, nothing
+  needs the looser rule: a write granted to `bob_app` with no policy for that
+  command (or ALL) is reported, like a read. New meta probe: an INSERT granted
+  with only a SELECT policy, in `public` and in `bob`.
+- **Seen failing first.** Before the migration, the new probe and pgTAP's
+  "bob_app writes nothing to bob.audit_log" both failed. The green run is CI's:
+  the shared local stack (`bob-v1`) had been removed by the time the migration
+  was written, and no other stack was touched.
+- `authenticated` still holds table-level writes on `audit_log` that RLS
+  refuses. Not changed here.
+
+
+## F-43 · second half: members write nothing to audit_log either
+
+Ruled by Henry on 21 Nov. Migration `20261121160000` revokes INSERT, UPDATE,
+DELETE and TRUNCATE on `bob.audit_log` from `authenticated` (Supabase's default
+grants), which keeps SELECT under `org_audit_read`. pgTAP's
+`audit_log_read_only` gains the case; it failed before the migration and passed
+after, on the shared local stack (18 of 18).
+
+Looking for the same pattern turned up two more and one larger thing, none
+changed here:
+
+- `authenticated` also holds INSERT, UPDATE and DELETE that RLS refuses on
+  `bob.users` (only SELECT policies; F-42 made `bob_app`'s side exact, not this
+  one) and on `bob.baselines` (deny-all on purpose).
+
+### F-44 · `authenticated` holds TRUNCATE on 26 tables in `bob` — finding
+
+TRUNCATE does not go through row-level security. `authenticated` holds it on 26
+tables in `bob`, among them `organizations`, `users`, `actors`, `alert_log` and
+`interactions` (Supabase's default grants, carried by the move to `bob`). It is
+not reachable today: PostgREST never issues TRUNCATE. Anything that ever runs
+SQL as `authenticated` (an invoker function with dynamic SQL, a direct
+connection) could empty every tenant's rows in one statement, which ID-10 calls
+a defect whether or not a path exists yet. `anon` holds it on none.
+
+To rule on: revoke TRUNCATE from `authenticated` on all of `bob` (and the
+default privileges that hand it out), with a discovered guard that no
+application-facing role holds TRUNCATE on a tenant table.
 
 ---
 

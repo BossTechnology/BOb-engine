@@ -105,6 +105,23 @@ describe('ID-12 · the tenancy suite detects what it claims to detect', () => {
       })
     })
 
+    // A write granted with only a read policy: refused by RLS, every time.
+    test(`a write granted to bob_app with only a SELECT policy is reported (in ${s})`, async () => {
+      await probe(s, `
+        CREATE TABLE $S.meta_probe_app_write (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          org_id UUID NOT NULL);
+        ALTER TABLE $S.meta_probe_app_write ENABLE ROW LEVEL SECURITY;
+        CREATE POLICY "read_only" ON $S.meta_probe_app_write
+          FOR SELECT USING (org_id = (auth.jwt() ->> 'org_id')::uuid);
+        GRANT SELECT, INSERT ON $S.meta_probe_app_write TO bob_app;`, async () => {
+        const findings = await structuralFindings(db)
+        const hit = findings.find((f) => f.table === 'meta_probe_app_write')
+        assert.ok(hit, 'an INSERT granted to bob_app that no INSERT policy reaches went unreported')
+        assert.match(hit.finding, /INSERT/)
+      })
+    })
+
     test(`a bob_app policy that does not constrain org_id is reported (in ${s})`, async () => {
       await probe(s, `
         CREATE TABLE $S.meta_probe_app_open (
