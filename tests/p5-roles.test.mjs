@@ -176,7 +176,7 @@ describe('P5 §6.3 · bob_ai_ro reads views only (IR-1)', () => {
 
 // ── No egress from the database ────────────────────────────────────────────
 describe('P5 §6.3 · no egress from the database', () => {
-  test('none of the three can execute a function of pg_net or http, as installed', async (t) => {
+  test('neither pg_net nor http is installed, and none of the three can execute them', async (t) => {
     const fns = await egressFunctions(db)
     t.diagnostic(`egress functions installed: ${fns.length}`)
     assert.deepEqual(await egressFindings(db), [])
@@ -200,11 +200,20 @@ describe('P5 §6.3 · no egress from the database', () => {
     })
   })
 
-  // F-27. Installing either one hands EXECUTE on every function to PUBLIC, so
-  // all three can call them; pg_net also hands out its queue tables. "Not
-  // granted" (P5 §3.2) does not hold once installed, only "not installed".
-  test('installed, none of the three can execute them', { todo: 'F-27, (a) decided; (b) or (c) after lab-02' }, async () => {
-    await installed(async () => assert.deepEqual(await egressFindings(db), []))
+  // F-27, closed by (c). Installing either one hands EXECUTE on every function
+  // to PUBLIC, so all three can call them; pg_net also hands out its queue
+  // tables. "Not granted" (P5 §3.2) does not hold once installed, only "not
+  // installed", so the guard refuses the install itself, wherever it lands.
+  test('installed anywhere, the guard reports each extension', async () => {
+    await installed(async () => {
+      const findings = await egressFindings(db)
+      // pg_net's own schema is wherever CREATE EXTENSION ran (its functions go
+      // to `net` regardless), so only http's is pinned.
+      for (const where of ['http is installed (in p5_odd)', 'pg_net is installed (in ']) {
+        assert.ok(findings.some((f) => f.startsWith(where)),
+          `"${where}" went unreported: ${JSON.stringify(findings.slice(0, 3))}`)
+      }
+    })
   })
 })
 

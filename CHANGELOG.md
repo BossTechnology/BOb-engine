@@ -3,6 +3,7 @@
 Una línea por cambio entregado, en lenguaje de usuario.
 
 ## Sin publicar
+- La base de BOb no puede tener instalada ninguna extensión que salga a la red (`pg_net`, `http`): el chequeo de CI y el de la caja fallan si aparece una, en cualquier esquema (F-27, opción c).
 - El ensayo de P5 corrió en lab-02: 41 comprobaciones, todas como se esperaba, con la cadena aplicada y `auth.users` sin tocar. El kit compara inventarios sin depender del idioma de la caja.
 - Restaurar `bob` solo ya no se lleva las funciones de `public` que dependen de él: el procedimiento y el kit del ensayo las guardan antes de borrar `bob` y las reponen después (`scripts/bob-dependientes.sh`). `service_role` ya no puede drenar el outbox (F-47).
 - Ningún rol con el que corre la aplicación puede vaciar una tabla de un golpe (TRUNCATE), algo que se saltaba la separación entre organizaciones.
