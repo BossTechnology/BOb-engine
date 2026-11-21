@@ -8,7 +8,7 @@ Términos del proyecto y su significado exacto. Úsalos en código, commits, doc
 |---|---|---|
 | Sellado (*sealed*) | Bucket completo: no llegan más hechos. No significa inmutable; la atribución se revisa por reconstrucción (D-12). | `docs/contracts/projection-contract.md` §4 |
 | Unfounded claims | Nombre visible de la métrica `hallucinations`; aplica a los cuatro `actor_type`. | Contrato §6.1 |
-| Celda | Lo que pinta un consumidor, al grano `(org_id, channel_id, métrica, actor_type, bucket_start)`. Tiene un estado y una lista de motivos. La resuelve `bob.v_cell_state`, una sola implementación para gráficas, matriz, sentimiento y BObee. | Spec Slice 3 §2, §7 |
+| Celda | Lo que pinta un consumidor, al grano `(org_id, channel_id, métrica, actor_type, bucket_start)`. Tiene un estado y una lista de motivos. La resuelve `bob_cell_state(org, canales[], desde, hasta)`, una sola implementación para gráficas, matriz, sentimiento y BObee. | Spec Slice 3 §2, §7 |
 | Estado de la celda | Uno de seis, evaluados en orden: `not_applicable`, `not_configured`, `pending`, `not_observed`, `observed`, y `off_shift` solo en el drill-down por actor. Los valores del esquema van en inglés y los nombres en español son los de abajo. | Spec Slice 3 §2 |
 | No aplica (`not_applicable`) | El actor no puede producir esa métrica por definición (Resueltos, Desambiguación y Derivaciones para el cliente; las métricas degeneradas fuera de `user`). Celda vacía, sin acción. | Spec Slice 3 §4 |
 | No configurado (`not_configured`) | Falta una declaración y nada *puede* llegar: `telemetry_started_at`, `source_key` (D-14), el mix, una capacidad, el idle bound, el ground truth o la definición. Sus motivos dicen qué declarar. | Contrato §5; D-14; Spec Slice 3 §3 |

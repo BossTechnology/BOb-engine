@@ -3,8 +3,17 @@
 **Status: SPEC, decided by Henry in the Slice 3 grill (2026-11-20). Nothing is
 built.** The contract stays at 0.5.3. The contract changes this spec needs are
 listed in §9 as **proposed for 0.6**, registered in
-`Documentation/contract-amendments.md` as F-28 to F-34, and go to Federico on
-Relevo task 6 before any of them is written into the contract.
+`Documentation/contract-amendments.md` as F-28 to F-34, F-38 and F-39, and go to
+Federico on Relevo task 6 before any of them is written into the contract.
+
+**Corrected on 2026-11-21** after the review on PR #27, which merged before the
+review was addressed:
+- F-28's write rule excludes the metrics whose measurement has a precondition
+  (§5).
+- F-38 says which actor types receive the zero rows (§5).
+- D-14 is said to be extended, not applied as written (§2, §9).
+- The design gaps that needed a decision are R3 to R7 (§11). Henry decided all
+  five with the recommended option on 21 Nov, and the spec applies them.
 
 **What Slice 3 is** (Build Brief, Slice 3; Relevo task 7 scope map): one shared
 mechanism that tells every consumer, for every cell, whether a figure is
@@ -93,6 +102,11 @@ so `pending` applies only when there is **no row**. The matrix's existing
 asterisk is this flag. A channel whose lag is NULL also carries §4's "lag not
 declared" notice.
 
+**This extends D-14.** D-14 closed three states. This spec keeps them as
+`not_configured`, `not_observed` and `observed`, and adds three:
+`not_applicable`, `pending` and `off_shift`. F-31 carries the extension, so it
+is signed as a change to D-14 and not read as a literal application of it.
+
 **The em dash** (G14) is shared by `not_observed` (D-14) and `off_shift`
 (Relevo task 10, §5's last paragraph). Both rulings stand as written. The two
 are told apart by state and reasons, never by glyph. Every em dash opens its
@@ -172,7 +186,7 @@ of the eight tables and fails if any value is missing from the catalog
 | Figure | Read from | Requires | `not_applicable` for |
 |---|---|---|---|
 | Label failures (`abstained`, `classifier_down`, `label_missing`) | `proj_metric_counts` | `orga_conversation` | `asa`, `human`, `arep` |
-| Interaction duration (FR-22) | `proj_durations`, `interaction_duration` | `resolution` (a close; chosen here, no ruling names it) | `asa`, `human`, `arep` |
+| Interaction duration (FR-22) | `proj_durations`, `interaction_duration` | `resolution`, because it lands at the close (R5, F-39) | `asa`, `human`, `arep` |
 | ORGA | `proj_sentiment`, `orga` | `orga_conversation` | — |
 | MECA (FR-32, FR-35) | `proj_sentiment`, `meca` and `proj_rum_signals` | `meca_rum` | — |
 | Health latency, errors, uptime, disconnects | `proj_channel_health` | `health_latency`, `health_errors`, `health_uptime`, `health_disconnects`, each on its own (§6.4) | — |
@@ -185,7 +199,9 @@ of the eight tables and fails if any value is missing from the catalog
 - **Available** (G9) does not come from the cell view. It returns the same
   `(state, reasons)` shape, translated in the database from the reasons FR-23
   already returns, and `bob_availability_reason()` is unchanged:
-  - `no_channels_selected`, `mix_not_declared` → `not_configured`;
+  - `mix_not_declared` → `not_configured`;
+  - `no_channels_selected` → `not_applicable`, with its own reason. Nothing
+    is undeclared; nothing was selected (R7, which changes G9);
   - `no_channels_carry_actor_type` → `observed` 0;
   - `no_skilled_actors`, `none_on_shift`, `no_live_instances`,
     `no_actors_available` → `observed` 0, each with its reason.
@@ -208,8 +224,10 @@ of the eight tables and fails if any value is missing from the catalog
   (`health_uptime`). The channel was alive and nothing happened. Q9's ruling
   stands for the case it was about: three in the morning.
 
-**The feeder writes the observed zero, at seal.** For every sealed bucket with
-liveness, and every metric whose capability the channel declares, it writes:
+**The feeder writes the observed zero, at seal.** It writes it for every sealed
+bucket with liveness, for every metric whose capability the channel declares,
+**except the metrics whose measurement has a precondition beyond the
+capability** (below), and for the actor types of F-38. It writes:
 - **`proj_metric_counts`:** `event_count = 0`, with `session_count` = the
   bucket's interactions. A probe-only bucket writes `session_count = 0`. This
   is the shape the label-failure zeros already have.
@@ -219,6 +237,51 @@ liveness, and every metric whose capability the channel declares, it writes:
 It writes no zero on a channel that does not declare the capability: that is
 `not_configured` (the F-25 note to 3.7 already says so for the label
 failures). It writes no zero without liveness: that is `not_observed`.
+
+**Metrics with a precondition get no zero from F-28** (corrected 21 Nov). On
+these, liveness and the capability are not enough: the zero would claim a
+measurement that could not run. §5 forbids that zero. Masking it in
+`bob_cell_state` would not be enough, because `bob_app` and `authenticated` read
+the tables directly. So the exclusion lives in the write rule:
+
+| Metric | Precondition | The feeder writes |
+|---|---|---|
+| `hallucinations` | A ground truth exists (D-29) | **No zero, ever, under F-28.** The feeder cannot see whether knowledge notes exist, because §7.4 gives it two views. The zero waits for a contract change that exposes the ground truth to the feeder |
+| `abandoned` | `idle_bound_seconds` is declared | No `abandoned` row at all while the bound is NULL. This is §9.2, unchanged. With the bound declared, the zero is written like any other |
+
+- The label failures (`abstained`, `classifier_down`, `label_missing`) stay
+  under §4.1, which already writes their zeros at seal. F-28 does not touch
+  them.
+- `interaction_duration` needs `resolution` (R5, F-39). With it declared, its
+  zero (`n = 0`) is written like any other.
+- **The list is closed and explicit.** A metric that later gains a precondition
+  joins it in the same change.
+- A guard compares the feeder's exclusion list with the catalog's
+  preconditioned metrics (§4). A metric that is in one and not the other is
+  red.
+
+**Which actor types get the zero rows (F-38).** The key of
+`proj_metric_counts` carries `actor_type`, so a zero is written for one actor
+type at a time. The feeder cannot know which ones today:
+`v_feeder_channel_map` exposes the channel's lag, idle bound and capabilities,
+but not `channel_actor_mix`, and §7.4 limits the feeder to two views.
+
+- **Proposed (F-38):** `v_feeder_channel_map` gains one column, `actor_types
+  TEXT[]`. It holds the channel's `channel_actor_mix` rows with
+  `present = true`, sorted, and is empty when none is declared present. This is
+  F-25's pattern, and the feeder still reads two views.
+- The feeder writes a zero for `(metric, actor_type)` only when the actor type
+  is in `actor_types` **and** the pair is applicable. Applicability is the §4
+  table, the same one that backs F-33 and the degenerate CHECKs.
+  - A declared-absent actor gets no row. Its `observed` 0 comes from the mix
+    (§3, step 5), not from a written zero.
+  - An undeclared mix gets no row either, and is `not_configured`.
+- **Refused: fixing the actors per metric.** That would write zeros for
+  `human` on a channel with no humans and for an actor type whose mix nobody
+  declared. Both are zeros nobody observed.
+- **Degenerate metrics** (`abandoned_in_queue`, the label failures,
+  `interaction_duration`) always write `user` only, whatever the mix says. The
+  CHECK already allows nothing else.
 
 The zero rows go through the upsert, the seal rule and the rebuild like every
 other row, so the rebuild test covers them (§8).
@@ -246,17 +309,24 @@ In the database, as one implementation:
 | Object | Kind | What it does |
 |---|---|---|
 | The catalog (§4) | table in `bob`, configuration | Metric → source, required declarations, applicable actor types |
-| `bob.v_cell_state` | view, RLS by `org_id` | One row per `(org_id, channel_id, metric, actor_type, bucket_start)`: `state`, `reasons TEXT[]`, `value`, `provisional`, `liveness_source`. §3 is resolved here, in SQL |
-| `bob_cell_rollup(org, channels[], frame)` | function in `public`, `search_path = bob, public` (as `bob_availability()`) | §6 |
+| `bob_cell_state(org, channels[], from, to)` | set-returning function, invoker, under RLS; in `public` with `search_path = bob, public` (as `bob_availability()`) | One row per `(org_id, channel_id, metric, actor_type, bucket_start)` **inside the frame**: `state`, `reasons TEXT[]`, `value`, `provisional`, `liveness_source`. §3 is resolved here, in SQL (R4) |
+| `bob_cell_rollup(org, channels[], from, to)` | function beside it | §6, over `bob_cell_state` |
 | Available's translation (§4) | function beside it | FR-23 reasons → `(state, reasons)` |
-| `v_ai_cell_state` | view for `bob_ai_ro` | BObee's face of `v_cell_state`: no `display_name` (IR-1). An unobserved channel arrives as a value, not an absence |
+| `v_ai_cell_state` | definer view, owned by the migration owner, granted to `bob_ai_ro` alone | BObee's face: `bob_cell_state` over a fixed trailing frame (the current day), filtered explicitly on the caller's `org_id` claim, never `display_name` (IR-1). An unobserved channel arrives as a value, not an absence (R6) |
 
 **The application only paints**: state → painting, reason → sentence. No rule
 lives in TypeScript.
 
-**Cost is open, not decided.** The implementation PR runs `EXPLAIN` on the
-fixture for a thirteen-month frame. Whether `v_cell_state` needs materialising
-is decided from that measurement.
+**Why a function and not a view** (R4). To produce cells with no row, the
+mechanism must cross channels × metrics × actor types × buckets. A view would
+do that over thirteen months. A consumer always knows its frame (a chart, a
+matrix window, a drill-down), so the function enumerates only what is asked.
+The implementation PR still runs `EXPLAIN` on the fixture.
+
+**Why BObee's face is a definer view** (R6). An invoker view would need
+`bob_ai_ro` to hold grants on the base tables, which breaks "views only". So
+the definer view does not rely on RLS for tenancy; it filters on the claim
+itself, the shape of F-21.
 
 ## 8 · Acceptance tests
 
@@ -289,7 +359,7 @@ fixture (§8.1). Each guard is seen failing before it counts, as in every slice.
     function (`pg_depend`).
 
 **One implementation, not four:**
-- `v_ai_cell_state` and `bob_cell_rollup` read `v_cell_state`, asserted
+- `v_ai_cell_state` and `bob_cell_rollup` read `bob_cell_state`, asserted
   through `pg_depend`. A second definition of the order would have no
   dependency to show.
 - **Exactly one state per cell, in the §3 order.** A property test over fuzzed
@@ -301,6 +371,16 @@ fixture (§8.1). Each guard is seen failing before it counts, as in every slice.
   0, with `actor_not_present`.
 - **Coverage.** On the fixture, the "All" label-failure total reads 2 of 3
   channels, with Voice `not_configured` (`capability_not_declared:orga_conversation`).
+- **Pending follows the current lag** (R3). Raising a channel's lag turns
+  only the cells inside the new window back to `pending`; every older cell is
+  unchanged. A channel with lag NULL never shows `not_observed`.
+- **BObee's face** (R6).
+  - One tenant's claim sees no cell of the other tenant through
+    `v_ai_cell_state`.
+  - `bob_ai_ro` still reads no table, under the P5 guard.
+  - The view exposes no `display_name`.
+- **No selection** (R7). An empty channel set gives `not_applicable` with
+  `no_channels_selected`.
 - **Provisional.** Website's Resolved (lag NULL) gives `observed` and
   `provisional`, with "lag not declared" on the channel.
 - **Not applicable.**
@@ -315,6 +395,18 @@ fixture (§8.1). Each guard is seen failing before it counts, as in every slice.
     It is seen failing both ways: a zero without liveness, and a zero on an
     undeclared capability.
   - The rebuild test (truncate, re-run, identical render) covers the zero rows.
+  - **No zero for a preconditioned metric** (corrected 21 Nov):
+    - a channel that declares `hallucination`, with traffic, gets no
+      `hallucinations` row;
+    - a channel with traffic and no idle bound gets no `abandoned` row;
+    - both are seen failing by a feeder that ignores the exclusion list.
+  - **Zeros only for declared-present actors** (F-38):
+    - a channel with the mix `asa` present and `human` declared absent gets
+      zero rows for `asa` only;
+    - a channel with no mix row gets none;
+    - `user` rows never appear for Resolved, Disambiguation or Escalations.
+  - The exclusion list in the feeder equals the catalog's preconditioned
+    metrics, compared both ways.
 - **Off shift.** A per-actor cell for an actor not on shift gives `off_shift`,
   apart from an actor on shift with no row (`not_observed`).
 
@@ -352,8 +444,15 @@ write the zeros, 3.7 will not either.
 | F-32 | §5 | A declared-absent actor is `observed` 0 with a reason. FR-11 and UI-03 hold together |
 | F-33 | §6.1 | Resolved, disambiguation and escalations never attribute to `user` |
 | F-34 | §7.2 | AREP ref resolution named as open, outside Slice 3 |
+| F-38 | §7.4, §5 | `v_feeder_channel_map` gains `actor_types TEXT[]` (mix rows with `present = true`). Zeros are written only for those actor types and applicable pairs. Added on 21 Nov, after the review |
+| F-39 | §9.1, §6.3 | `interaction_duration` requires `resolution`: it lands at the close, and `resolution` declares that a close exists. Added on 21 Nov (R5) |
 
-D-14 is applied, not amended. The em dash keeps both of its rulings.
+**F-28 was corrected on 21 Nov.** Metrics whose measurement has a precondition
+(`hallucinations`, and `abandoned` with no idle bound) get no zero (§5).
+
+**D-14 is extended, not applied as written.** Its three states become six (§2).
+F-31 says so, so Federico signs it as a change. The em dash keeps both of its
+rulings.
 
 ## 10 · Open, outside this spec
 
@@ -363,7 +462,81 @@ D-14 is applied, not amended. The em dash keeps both of its rulings.
   per-actor zero from an observed channel bucket plus `bob_shift_is_live()`, or
   the feeder writes it, is decided when Slice 7 is drawn. Either way the
   vocabulary is this one.
-- **Materialising `v_cell_state`** (§7), from the measured cost.
+- **Materialising** `bob_cell_state`, only if the `EXPLAIN` on a real frame
+  asks for it.
 - **D-33** (rendering "rebuilt after it sealed") stays open. A rebuilt cell is
   still `observed`.
 - **F-34**, AREP ref resolution.
+
+## 11 · Questions for Henry, from the review of 21 Nov
+
+The review of PR #27 left four design gaps and one wording point that needed a
+decision. **Henry decided all five on 21 Nov with the recommended option.**
+The rest of the spec applies them. The options are kept here, so the reason
+travels with the choice.
+
+**R3 · `pending` on a cell with no row is derived from today's lag, which §4
+forbids for stored rows.**
+- A cell with no row has no stored `sealed`, so the mechanism computes it from
+  the current `lag_seconds` and watermark.
+- Raising a lag turns the cells inside the new lag window back from
+  `not_observed` to `pending`.
+- A channel with lag NULL can never show `not_observed`.
+- *Options:*
+  - (a) Accept it, and write it down. §4's argument is about **stored history**:
+    a stored flag must not change when the lag does. A cell with no row stores
+    nothing. Raising a lag only reaches the buckets inside the new window,
+    because older buckets are far behind the watermark. And "pending" after a
+    lag raise is the truth: the declaration now says facts may still arrive.
+    The lag NULL case is O1 as ruled.
+  - (b) Store the cut: the feeder writes a per-channel seal mark for each
+    sealed bucket. That is a ninth projection or a new column, and it breaks
+    the count of eight.
+- **Decided: (a).** The spec states the reason, and adds a test that
+  raises a lag and asserts that only the buckets inside the new window change.
+
+**R4 · The cell mechanism as a view (`v_cell_state`) has a cost that comes from the design.**
+- To produce cells with no row, it must cross channels × metrics × actor types
+  × buckets. Over thirteen months of five-minute buckets, that is the design,
+  not a cost to measure later.
+- *Options:*
+  - (a) A set-returning function that takes the frame:
+    `bob_cell_state(org, channels[], from, to)`. It enumerates only the buckets
+    asked for, and `bob_cell_rollup` reads it.
+  - (b) Keep the view and materialise it.
+- **Decided: (a).**
+  - A frame is always known by the consumer: a chart, a matrix window, a
+    drill-down.
+  - The single implementation still holds, and the `pg_depend` test checks
+    that the rollup and BObee's face call the function.
+  - The function runs as invoker, under RLS.
+
+**R5 · "Interaction duration requires `resolution`" is a new rule with no
+amendment.**
+- No ruling names it, and it was not among F-28 to F-34.
+- **Decided:** register it as F-39 and keep `resolution`. An interaction
+  duration lands at the conversation's close (§6.3), and the `resolution`
+  capability is what declares that a close exists.
+  - If you prefer not to tie them, the row would need its own capability, which
+    is a fourteenth one.
+
+**R6 · BObee's face: invoker or definer.**
+- An invoker view under RLS needs `bob_ai_ro` to hold grants on the base tables,
+  which breaks "views only" (IR-1 and the P5 guard: `bob_ai_ro` reads no table).
+- A definer view bypasses RLS. It is the same shape as F-21.
+- **Decided: a definer object owned by the migration owner, granted to
+  `bob_ai_ro` alone.**
+  - It filters explicitly on the caller's `org_id` claim, so tenancy does not
+    depend on RLS.
+  - It never exposes `display_name`.
+  - Guards: the tenancy suite proves that one tenant's claim sees no other
+    tenant's cells, and the P5 guard keeps `bob_ai_ro` off every table.
+  - With R4 (a), BObee's face is a view over the function for a fixed trailing
+    frame (the current day), so BObee still reads a `v_ai_*` view.
+
+**R7 · `no_channels_selected` is not a missing declaration.**
+- G9 maps it to `not_configured`. But nothing is undeclared: the reader
+  selected nothing.
+- **Decided:** keep `no_channels_selected` as its own reason and map it
+  to `not_applicable`. There is nothing to evaluate, and nothing to declare.
+  It changes G9.
