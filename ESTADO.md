@@ -3,6 +3,7 @@
 > Actualizar al cerrar cada sesión. Es lo primero que lee la siguiente.
 
 ## Tarea actual
+- F-43, segunda mitad (rama `audit-log-authenticated-read-only`, PR abierto): `authenticated` tampoco escribe en `audit_log`. Hallazgo F-44: `authenticated` tiene TRUNCATE en 26 tablas de `bob`, y TRUNCATE no pasa por RLS. Espera decisión de Henry.
 - F-43 cerrado (PR #35, fusionado: `76bd3a9`): `bob_app` solo lee `audit_log`. El guard de tenancy revisa también las escrituras por comando.
 - Quién entra a la caja (PR #34, fusionado (`e392c44`)): `bob_app` lee `bob.users` de su org y sella `last_login_at`; se quita el trigger `on_auth_user_created`; altas con `scripts/provision-user.mjs`, en seco por defecto; `box-check` avisa si no hay usuario activo. Resuelto por Henry el 21 nov. F-42 (excepción de §10) y F-43 cerrado en la línea de arriba.
 - Slice 6 («Registries and the outbox»): PR #26 fusionado en `main` (`d86eb08`) por orden de Henry, con los cuatro checks en verde. Seguimiento en el PR #31, fusionado: la admisión al outbox exige una verificación `ok` y fresca, como resolvió Henry el 21 nov. La ejecución de punta a punta sigue como `todo` hasta que exista.
@@ -118,3 +119,4 @@
 - 2026-11-21: `bob.users` para `bob_app` (P-1 de Bob-New #30) y fuera el trigger de alta por registro, que dejaba elegir org y rol. Probado en el stack compartido `bob-v1` (puerto 54322) sin resetearlo; la migración se aplicó a mano allí. Las fallas de `member_refs_seen` son de otra rama.
 - 2026-11-21: F-43 por orden de Henry, revocadas las escrituras de `bob_app` en `audit_log`. El rojo se vio en local; el verde, en CI, porque el stack `bob-v1` ya no existía.
 - 2026-11-21: «Siguiente paso» al día con lo fusionado (#22, #24, #25, #33, #35); no cambió nada pendiente.
+- 2026-11-21: F-43 completo (también `authenticated`). F-44 registrado: TRUNCATE para `authenticated` en 26 tablas de `bob`.
