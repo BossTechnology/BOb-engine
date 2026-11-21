@@ -2445,6 +2445,25 @@ All five were decided with the recommended option:
 - **R7:** `no_channels_selected` becomes `not_applicable`, with its own
   reason. This changes G9.
 
+### Second read of the spec, 21 Nov
+
+Four mistakes in the spec itself, corrected. No contract change, and nothing
+for 3.7.
+- **A declared-absent actor would have rendered as `not_observed`.** It has no
+  row, and none is written (F-38). The no-row steps came before it, so they
+  took it. It is now step 3, before `pending` and `not_observed`. FR-11 is
+  tested in sealed and unsealed buckets.
+- **`mix_not_declared` would have hidden the label failures.** Those rows are
+  written for `user` whatever the mix says (§4.1). The reason no longer
+  reaches the degenerate metrics: the customer is present in every
+  conversation.
+- **`pg_depend` does not see inside a plpgsql function.** With R4 the
+  mechanism is a function, so the single-implementation tests would have had
+  nothing to read. The functions use SQL-standard bodies (`BEGIN ATOMIC`,
+  Postgres 14 and later), and a guard checks it.
+- **Two leftovers from the view:** the rollup's signature, and UI-03's
+  "the whole view".
+
 ### The 0.6 notice already posted
 
 The notice on Relevo task 6 (20 Nov) carries F-28 as first written and says
