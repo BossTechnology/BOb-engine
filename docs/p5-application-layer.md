@@ -486,6 +486,18 @@ window, not before the signature**, two things exist.
      - Today no automated path restores Postgres in the box. What replaces
        this line is §8, objection 2, as answered.
 
+*2026-11-20, built, not yet run on lab-02.* Item 1 is
+`scripts/ensayo-migracion-lab.sh`, and item 2 is
+`docs/p5-failed-migration-procedure.md`. Both were run end to end against a
+local copy of lab-02's identity stack. What they measured is in
+`Documentation/contract-amendments.md` ("P5 · The lab-02 rehearsal kit"):
+- with CLI 2.120.0 a failing file leaves nothing behind, wrapped or not;
+- F-35: `GRANT … TO current_user` terminates the server on the box's image;
+- F-36: `pg_dump -n bob` loses the publication membership;
+- F-37: CI runs Postgres 15 and the box runs 17.6.
+
+The lab-02 run is still owed. D62 waits on it.
+
 ### 6.3 Guards the roles add — **[PROPOSED]**
 
 These are in addition to contract §10. Each one is seen failing first. P5

@@ -60,7 +60,7 @@ export async function loadFixture(client) {
 // organisations cascades through every foreign key to them; the sweep after it
 // reaches the tables that carry org_id with no such key, which the cascade
 // cannot see. A table added later is cleared without anyone extending a list.
-async function clearTenants(client) {
+export async function clearTenants(client) {
   const tenants = [TENANT_A, TENANT_B]
   // Projections hold foreign keys to channels and actors with no cascade
   // (contract §6), so their rows go first, from every partitioned table that
