@@ -43,12 +43,13 @@ export async function drainToStub(db, { orgId, tenantSlug, sourceKey, limit = 10
     event_time: new Date(q.drained_at).toISOString(),
     'bzzz.tenant': tenantSlug,
     source_key: sourceKey,
-    // Inherited where the intention carries one; otherwise the stub's own key
-    // for its own attempt. BOb mints none (C-11).
-    correlation_id: q.correlation_id ?? `stub:${q.id}`,
+    // Inherited where the intention carries one; otherwise the intention's own
+    // id, with no namespace written into it (slice2-schema guards that shape).
+    // BOb mints none (C-11).
+    correlation_id: q.correlation_id ?? q.id,
     event_name: 'delivery_attempt',
     attributes: {
-      attempt_id: `stub:${q.id}:1`,
+      attempt_id: `${q.id}-1`,
       outbound_id: q.id,
       kind: 'autobotz',
       provider: STUB_PROVIDER,

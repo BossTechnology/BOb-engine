@@ -2291,6 +2291,11 @@ only at the end of a name. And the cross-tenant attach probe was
 refused by the limit rule before the tenant key could refuse it. It now gives
 tenant B's binding a limit first, so only the key is left to refuse.
 
+**Caught in CI by an existing guard.** The stub built its ids as
+`` `stub:${id}` ``, which slice2-schema's namespace-literal guard refuses.
+Locally the guard ran before the stub was tracked, so it never saw the file. The
+stub now uses the intention's id with no namespace.
+
 **Counts.** 186 → 221: 218 pass and 3 are `todo`. pgTAP: 9.
 
 ---
