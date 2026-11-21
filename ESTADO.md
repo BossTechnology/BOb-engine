@@ -3,7 +3,7 @@
 > Actualizar al cerrar cada sesión. Es lo primero que lee la siguiente.
 
 ## Tarea actual
-- F-43 cerrado (rama `audit-log-read-only`, PR abierto): `bob_app` solo lee `audit_log`. El guard de tenancy revisa también las escrituras por comando.
+- F-43 cerrado (PR #35, fusionado: `76bd3a9`): `bob_app` solo lee `audit_log`. El guard de tenancy revisa también las escrituras por comando.
 - Quién entra a la caja (PR #34, fusionado (`e392c44`)): `bob_app` lee `bob.users` de su org y sella `last_login_at`; se quita el trigger `on_auth_user_created`; altas con `scripts/provision-user.mjs`, en seco por defecto; `box-check` avisa si no hay usuario activo. Resuelto por Henry el 21 nov. F-42 (excepción de §10) y F-43 cerrado en la línea de arriba.
 - Slice 6 («Registries and the outbox»): PR #26 fusionado en `main` (`d86eb08`) por orden de Henry, con los cuatro checks en verde. Seguimiento en el PR #31, fusionado: la admisión al outbox exige una verificación `ok` y fresca, como resolvió Henry el 21 nov. La ejecución de punta a punta sigue como `todo` hasta que exista.
 - Slice 3 («The absent-not-zero state»): spec cerrada y en `main`, sin código: `docs/slice-3-absent-not-zero.md`. Grill con Henry el 20 nov (G1–G15, PR #27), correcciones de la revisión el 21 nov (PR #28: F-28 sin ceros en métricas con precondición, F-38 `actor_types`, D-14 extendido, R3–R7 decididos con la opción recomendada, F-39) y segunda lectura (PR #30, `9b900a1`: el actor declarado ausente antes de los estados sin fila, la mezcla no oculta las métricas degeneradas, cuerpos `BEGIN ATOMIC` para `pg_depend`). El mecanismo es la función `bob_cell_state(org, canales[], desde, hasta)` más `bob_cell_rollup` y la vista definer `v_ai_cell_state`. Enmiendas F-28 a F-34, F-38 y F-39 propuestas para 0.6, sin firmar. Aviso a Federico publicado en la tarea 6 el 20 nov y su corrección el 21 nov; turno de Federico.
@@ -80,9 +80,7 @@
 - Slice 6 cerrado: PR #26 y PR #31 en `main`. Queda abierto para P5 si el outbox necesita un estado `claimed` (el stub marca `drained` antes del intento). Bob-New tiene que seguir el cambio de columnas de `response_rules` y llamar a Verify antes de la primera intención.
 - P5 Q6, opción (a), construida y fusionada (PR #33, `f8c8474`). `bob.member_refs_seen` con RLS por `org_id`, INSERT solo para `bob_feeder`, SELECT y DELETE para `bob_app`; `stageMemberRefs` en el alimentador de referencia; `reconciliation/ghosts.mjs` lee la tabla como `bob_app` y borra lo que consumió, con la ventana de H3 y el barrido de 395 días. Enmienda del contrato §7.2 y §7.3a propuesta como F-41 y avisada a Federico en la tarea 6 el 21 nov (cambia quién llama a `member_refs_seen`, entregable de 3.7); falta su respuesta, y con ella si el CHECK de la ventana se queda. D62 sigue sin firmar.
 - Slice 3: esperar la respuesta de Federico en la tarea 6 (0.6 y las dos preguntas del mapa de alcance). Con 0.6 aceptado, el PR de implementación.
-- Henry revisa los dos PRs del kit (BOb-engine y Bzzz), y con ellos fusionados corre en lab-02 `--dry-run` y luego `--ejecutar`. La evidencia va a `evidence/ENSAYO/` de Bzzz. Con eso: F-27 se cierra con (b) o (c), y D62 se puede firmar.
-- Henry revisa el PR #24 (guards de P5). El ensayo de lab-02 revisa si hay `pg_net` o `http` y, con eso, F-27 se cierra con (b) o con (c).
-- P5: Henry revisa y fusiona el PR #22, corre (o autoriza) el ensayo en lab-02 y, si confirma el §6.2, firma D62.
+- P5 (D62): el kit del ensayo (#25), los guards de P5 (#24) y los insumos (#22) están en `main`. Falta que Henry corra en lab-02 `scripts/ensayo-migracion-lab.sh --dry-run` y luego `--ejecutar`, con la evidencia en `evidence/ENSAYO/` de Bzzz. Con eso F-27 se cierra con (b) o con (c), según haya `pg_net` o `http`, y, si confirma el §6.2, Henry firma D62.
 - La tarea 3.7 de BzzzBX implementa contra el contrato 0.5.3, con `member_refs_seen` como cuarto entregable (turno de Federico).
 
 ## Notas de sesión
@@ -119,4 +117,5 @@
 - 2026-11-21: segunda lectura de la spec del Slice 3 (PR #30, `9b900a1`): cuatro errores de la propia spec corregidos, sin cambio de contrato. La spec queda cerrada; turno de Federico en la tarea 6.
 - 2026-11-21: `bob.users` para `bob_app` (P-1 de Bob-New #30) y fuera el trigger de alta por registro, que dejaba elegir org y rol. Probado en el stack compartido `bob-v1` (puerto 54322) sin resetearlo; la migración se aplicó a mano allí. Las fallas de `member_refs_seen` son de otra rama.
 - 2026-11-21: F-43 por orden de Henry, revocadas las escrituras de `bob_app` en `audit_log`. El rojo se vio en local; el verde, en CI, porque el stack `bob-v1` ya no existía.
+- 2026-11-21: «Siguiente paso» al día con lo fusionado (#22, #24, #25, #33, #35); no cambió nada pendiente.
 - 2026-11-21: aviso de F-41 publicado en la tarea 6 por orden de Henry. Salió dos veces por error (13:31 y 13:32, iguales); una nota breve pide leer el primero. Turno de Federico.
