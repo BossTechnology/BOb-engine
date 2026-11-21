@@ -236,6 +236,46 @@ export async function tenantTables(client) {
   return rows
 }
 
+// The tables a tenant IS rather than the tables a tenant owns: keyed by their
+// own primary key, with no org_id of their own. Today that is organizations,
+// whose tenant key is `id`. tenantTables cannot see them, and that is how
+// bob_app held SELECT on bob.organizations with no policy reaching it (F-46).
+//
+// Discovered, not named: a table whose single-column primary key is what some
+// other table's org_id points to through a foreign key. The org_id tables say
+// which table holds their tenants, so a second such table, or this one moved
+// or renamed, is found without anyone extending a list. Same shape as
+// tenantTables, plus `tenant_key`, the primary-key column a policy has to
+// constrain.
+export async function tenantRootTables(client) {
+  const { rows } = await client.query(`
+    SELECT DISTINCT n.nspname AS table_schema,
+           c.relname AS table_name,
+           format('%I.%I', n.nspname, c.relname) AS qualified,
+           c.relrowsecurity  AS rls_enabled,
+           c.relforcerowsecurity AS rls_forced,
+           (SELECT count(*)::int FROM pg_policies p
+             WHERE p.schemaname = n.nspname AND p.tablename = c.relname) AS policy_count,
+           key.attname AS tenant_key
+      FROM pg_constraint fk
+      JOIN pg_attribute ref ON ref.attrelid = fk.conrelid
+                           AND ref.attnum = fk.conkey[1] AND ref.attname = 'org_id'
+      JOIN pg_class c ON c.oid = fk.confrelid
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      JOIN pg_constraint pk ON pk.conrelid = c.oid AND pk.contype = 'p'
+                           AND cardinality(pk.conkey) = 1 AND pk.conkey = fk.confkey
+      JOIN pg_attribute key ON key.attrelid = c.oid AND key.attnum = pk.conkey[1]
+     WHERE fk.contype = 'f' AND cardinality(fk.conkey) = 1
+       AND n.nspname NOT LIKE 'pg\\_%'
+       AND n.nspname <> 'information_schema'
+       AND c.relkind IN ('r', 'p')
+       AND NOT EXISTS (
+         SELECT 1 FROM pg_attribute a
+          WHERE a.attrelid = c.oid AND a.attname = 'org_id' AND NOT a.attisdropped)
+     ORDER BY 1, 2`)
+  return rows
+}
+
 // The floor under tenantTables. A discovery that finds nothing passes every
 // check that loops over what it found, so the suite asserts these are in the
 // set wherever they live. They are the tables the tenancy tests and the

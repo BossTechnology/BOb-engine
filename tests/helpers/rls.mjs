@@ -6,7 +6,7 @@
 // meta-test creates a deliberately broken table, calls these same functions,
 // and asserts they report it. A green suite that cannot go red is not a suite.
 
-import { tenantTables, becomeTenant } from './db.mjs'
+import { tenantTables, tenantRootTables, becomeTenant } from './db.mjs'
 
 // Tables where RLS is enabled with NO policy on purpose — deny-all, server-side
 // only, service role bypasses. Stated intent, not oversight. Anything else with
@@ -29,7 +29,14 @@ const APP_ROLES = ['bob_app']
 
 export async function structuralFindings(client) {
   const findings = []
-  const tables = await tenantTables(client)
+  // Both kinds of tenant table, each with the column its policies must
+  // constrain: org_id on the tables a tenant owns, the primary key on the ones
+  // a tenant is (organizations, keyed by `id`; F-46). One loop, so a check
+  // added below reaches both.
+  const tables = [
+    ...(await tenantTables(client)).map((t) => ({ ...t, tenant_key: 'org_id' })),
+    ...(await tenantRootTables(client)).map((t) => ({ ...t, root: true })),
+  ]
 
   // roles comes back as name[]; cast so the driver parses it as an array
   // rather than handing back the literal '{authenticated}'.
@@ -52,7 +59,10 @@ export async function structuralFindings(client) {
       findings.push({
         table: t.table_name,
         rule: 'ID-10',
-        finding: 'carries org_id but row-level security is not enabled',
+        finding: t.root
+          ? `is keyed by its own ${t.tenant_key}, which org_id points to, but ` +
+            'row-level security is not enabled'
+          : 'carries org_id but row-level security is not enabled',
       })
       continue
     }
@@ -94,14 +104,17 @@ export async function structuralFindings(client) {
       const roles = (p.roles || []).map(String)
       if (!roles.some((r) => PUBLIC_FACING.has(r))) continue
 
+      // A word, not a substring: on organizations the claim is spelled
+      // 'org_id' too, and `USING ((auth.jwt() ->> 'org_id') IS NOT NULL)`
+      // must not pass for constraining `id`.
       const expressions = [p.qual, p.with_check].filter(Boolean).join(' ')
-      if (!expressions.includes('org_id')) {
+      if (!new RegExp(`\\b${t.tenant_key}\\b`).test(expressions)) {
         findings.push({
           table: t.table_name,
           rule: 'ID-10',
           finding:
             `policy "${p.policyname}" is reachable by ${roles.join(', ')} ` +
-            'but its expression does not constrain org_id',
+            `but its expression does not constrain ${t.tenant_key}`,
         })
       }
     }

@@ -3185,7 +3185,8 @@ reading `telemetry_started_at` as `bob_app` got no row and every cell came back
 empty. The tenancy guard did not see it: it discovers tenant tables by
 `org_id`, and `organizations` is keyed by `id`. The second migration adds
 `bob_app_reads_own_org` (FOR SELECT TO bob_app, `id` equal to the claim).
-Extending the discovery to tables keyed by their own `id` is left open.
+Extending the discovery to tables keyed by their own `id` is left open; closed
+in "F-46 · closed: the tenancy guard sees the tables a tenant is" below.
 
 ### In `bob`, so `bob` restores alone — closes F-47's open case
 
@@ -3330,3 +3331,49 @@ not touched.
 ---
 
 *Boss.Technology · BOb v1 · Internal only*
+
+## F-46 · closed: the tenancy guard sees the tables a tenant is
+
+The structural tenancy check discovered tenant tables by an `org_id` column,
+so `bob.organizations`, keyed by its own `id`, was never checked, and
+`bob_app` read it as empty (F-46). The guard now discovers it.
+
+- **Discovered, not named.** `tenantRootTables()` (`tests/helpers/db.mjs`)
+  finds every table, in any schema, whose single-column primary key is what
+  some other table's `org_id` points to through a foreign key, and that
+  carries no `org_id` itself. Today that is `bob.organizations`, keyed by `id`.
+  Each row carries `tenant_key`, the column its policies must constrain.
+- **Same checks.** `structuralFindings()` runs those tables through the same
+  loop as the `org_id` tables: RLS enabled, at least one policy (or
+  `DELIBERATE_DENY_ALL`), every grant to `bob_app` reached per command by a
+  policy for that command, and every policy reachable by `public`, `anon`,
+  `authenticated` or `bob_app` constrains the tenant key. The key is matched
+  as a word, so on `organizations` an expression that only reads the
+  `'org_id'` claim does not pass for constraining `id`.
+- **Floor.** `tests/tenancy.test.mjs` asserts the discovery finds
+  `organizations` keyed by `id`, so a discovery that goes empty fails first.
+- **Meta probes**, in `public` and in `bob` (`tests/tenancy-meta.test.mjs`): a
+  table keyed by `id`, pointed to by a child's `org_id`, granted SELECT to
+  `bob_app` with only an `authenticated` policy (reported, "bob_app is granted
+  SELECT but no SELECT policy reaches it"); and one with a `bob_app` policy
+  that reads the claim but not `id` (reported, "does not constrain id").
+- **Seen red.** With the old `structuralFindings`, all four probes fail (two
+  per schema: the table was never looked at). With the new guard on the chain
+  as PR #40 leaves it, the tenancy suite reports `organizations` for INSERT,
+  UPDATE and DELETE (below). With the revoke applied and PR #40's
+  `bob_app_reads_own_org` dropped, it reports `organizations` for SELECT, and
+  only that.
+- **Run.** Own local stack (`bob-v1-idkeyed`, port 61322), `db reset
+  --no-seed` over the whole chain: `pnpm test` 359 tests, 356 pass, 0 fail,
+  3 `todo`; pgTAP 18 of 18.
+- **What it found on the way.** `bob_app` also held INSERT, UPDATE and DELETE
+  on `organizations` since `20260902100300`, with no policy for any of them:
+  RLS refused every write, the shape of F-43. Revoked in
+  `20261121210000_organizations_read_only_for_bob_app.sql`. Nothing changes in
+  behaviour: the operator creates and changes an organization through the
+  service role, and nothing in this repository writes it as `bob_app`. For
+  Henry to confirm; the alternative is write policies on `id`.
+- **Not extended:** `truncateFindings` and `aggregateLeakFindings` still read
+  `org_id` tables only. TRUNCATE on `organizations` is not held by any
+  application role today, and a count over it is bounded by its policies,
+  which the structural check now reads.

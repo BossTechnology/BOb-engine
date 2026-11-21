@@ -3,6 +3,7 @@
 > Actualizar al cerrar cada sesión. Es lo primero que lee la siguiente.
 
 ## Tarea actual
+- F-46 cerrado en el guard (rama `tenancy-guard-id-keyed`, apilada sobre el PR #40, PR abierto sin fusionar): `tenantRootTables()` descubre las tablas a las que apunta un `org_id` por llave foránea (hoy `bob.organizations`, llave `id`) y `structuralFindings` les aplica los mismos chequeos. Encontró además INSERT, UPDATE y DELETE de `bob_app` sobre `organizations` sin política; revocados en `20261121210000` (Henry confirma). Se fusiona después del PR #40.
 - Slice 3 construido (rama `slice-3-absent-not-zero`, PR abierto, sin fusionar): catálogo de celdas, tres capacidades nuevas, `actor_types` en el mapa del alimentador, `bob_cell_state`, `bob_cell_rollup`, `bob_available_state`, `bob_actor_cell_state` y `v_ai_cell_state` para BObee, todos en `bob` y con cuerpo `BEGIN ATOMIC`, para que la restauración de `bob` solo funcione (cierra el caso de F-47; guard nuevo `restoreCycleFindings`, también en `box-check`); el alimentador escribe el cero observado al sellar. Hallazgos F-45 y F-46. El contrato sigue en 0.5.3: el texto de 0.6 espera a Federico.
 - F-47 (PR #41, fusionado: `5e5b9be`): el `DROP SCHEMA bob CASCADE` del procedimiento de P5 se llevaba `public.bob_outbox_drain`, y el PR #40 agrega cinco funciones más en `public` que dependen de `bob`. Henry resolvió arreglar el procedimiento: `scripts/bob-dependientes.sh` las guarda antes y las repone después, y el kit lo ensaya. `service_role` sin EXECUTE sobre el drenaje (`20261121190000`). Con el PR #40 encima, restaurar `bob.sql.gz` falla: `bob.v_ai_cell_state` lee `public.bob_ai_cell_state()`, que lee tablas de `bob` (ciclo). Henry resolvió el 21 nov: las funciones del Slice 3 que leen `bob` pasan a `bob`, en el PR #40, con un guard del ciclo ; hecho en el PR #40, con `restoreCycleFindings`. Después: Henry corre el kit en lab-02 con el SHA de `main`; si el #40 ya está fusionado, el kit lo incluye.
 - F-43 cerrado (PR #35 y PR #37 en `main`). F-44 cerrado (PR #39, fusionado: `a5bfc7f`): ningún rol de la aplicación tiene TRUNCATE en una tabla con `org_id`, y los privilegios por defecto de `public` ya no lo reparten.
@@ -64,7 +65,7 @@
 
 ## Pendiente
 - Slice 3: que Federico acepte F-28 a F-34, F-38 y F-39 (0.6) y diga cuáles son las «nueve reglas» y los «siete consumidores». El aviso y su corrección están publicados en la tarea 6. El PR de implementación está abierto; falta el texto de 0.6 en el contrato cuando Federico acepte, y lo que cambie vuelve como migración.
-- Slice 3, para Henry: las once decisiones de construcción en amendments («Slice 3 · The absent-not-zero state, built»), F-45 (corregir la tabla del §8.2 de la spec: la web queda `pending` por R3) y F-46 (`organizations` no tenía política para `bob_app`; el guard de tenancy no descubre tablas sin `org_id`).
+- Slice 3, para Henry: las once decisiones de construcción en amendments («Slice 3 · The absent-not-zero state, built»), F-45 (corregir la tabla del §8.2 de la spec: la web queda `pending` por R3) y F-46 (`organizations` no tenía política para `bob_app`; el guard de tenancy no descubría tablas sin `org_id`; lo cierra el PR del guard de tablas con llave `id`).
 - Abiertos del Slice 3 (spec §10): ceros por actor en el drill-down (se decide con el Slice 7), materializar `bob_cell_state` solo si el `EXPLAIN` lo pide, ceros de `hallucinations` cuando el alimentador pueda ver el ground truth, y F-34 (resolución de referencias AREP).
 - Bob-New PR #29 (matriz mínima): su «no configurado» no lee los marcadores de D-14. La matriz definitiva lee `v_cell_state` y no reimplementa las reglas.
 - P5 (D62): las siete objeciones del §8 están respondidas, y Q6 se reabrió el 2026-11-21 (F-40). Henry eligió (a) en Q6. Antes de firmar falta el ensayo en lab-02. El ensayo en lab-02 (migración amañada, las nueve sin envolver, `db push` y restaurar `bob` solo) va antes de la firma.
@@ -82,6 +83,7 @@
 - Nada.
 
 ## Siguiente paso
+- F-46: fusionar el PR #40 y luego el PR del guard de tablas con llave `id`; si el #40 renumera sus migraciones, la de este PR (`…210000`) sigue quedando después.
 - F-47: fusionar el PR y, con eso, correr el ensayo en lab-02 (`--dry-run`, luego `--ejecutar`) desde ese commit. lab-02 necesita la CLI de Supabase 2.120.0.
 - Slice 6 cerrado: PR #26 y PR #31 en `main`. Queda abierto para P5 si el outbox necesita un estado `claimed` (el stub marca `drained` antes del intento). Bob-New tiene que seguir el cambio de columnas de `response_rules` y llamar a Verify antes de la primera intención.
 - P5 Q6, opción (a), construida y fusionada (PR #33, `f8c8474`). `bob.member_refs_seen` con RLS por `org_id`, INSERT solo para `bob_feeder`, SELECT y DELETE para `bob_app`; `stageMemberRefs` en el alimentador de referencia; `reconciliation/ghosts.mjs` lee la tabla como `bob_app` y borra lo que consumió, con la ventana de H3 y el barrido de 395 días. Enmienda del contrato §7.2 y §7.3a propuesta como F-41 y avisada a Federico en la tarea 6 el 21 nov (cambia quién llama a `member_refs_seen`, entregable de 3.7); falta su respuesta, y con ella si el CHECK de la ventana se queda. D62 sigue sin firmar.
@@ -91,6 +93,7 @@
 
 ## Notas de sesión
 <!-- AAAA-MM-DD: una o dos líneas -->
+- 2026-11-21: guard de tenancy para tablas con llave `id` construido en un stack local propio (proyecto `bob-v1-idkeyed`, puerto 61322), sin tocar el compartido.
 - 2026-10-28: VALIDATE CONSTRAINT y fixture BR-3 en `main`; puente AutoBotz de Bob-New desactivado (Bob-New #24). Respuesta a Federico publicada con fechas del TTL (Febor: 2026-10-26 16:55:42 UTC).
 - 2026-10-28: D-05 verificada contra el esquema en `aed52ba` y registrada en amendments; paso 6a queda para Slice 5.
 - 2026-10-29: paquete de guards de la tarea 7 de Relevo (F-17 a F-19), 82 → 100 tests; cada guard visto fallar. PR #11 verde, respuesta publicada.
