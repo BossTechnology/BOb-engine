@@ -120,6 +120,14 @@ jobs:
         env:
           SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
         run: node --test --test-concurrency=1 tests/autobotz-br3.test.mjs
+      - name: Slice 6 · RS-30 to RS-35, the webhook move, the outbox and its limits, read back as a projection
+        env:
+          SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+        run: node --test --test-concurrency=1 tests/slice6-registries-outbox.test.mjs
+      # The path is named: the bare command also runs supabase/tests/fixtures/*.sql,
+      # which are fixtures, not pgTAP, and fails on them.
+      - name: pgTAP · supabase test db over supabase/tests/database
+        run: supabase test db supabase/tests/database
       - name: Product naming is case-sensitive
         run: node --test --test-concurrency=1 tests/naming.test.mjs
       # Asserts every test file is invoked by some job here, so the next guard
