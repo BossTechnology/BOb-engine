@@ -3187,3 +3187,7 @@ Nov, over (b): a revoke from PUBLIC would not cover a later install.
 - Nothing is uninstalled or revoked by a migration. If a box ever needs one of
   them (self-hosted Supabase installs `pg_net` for webhooks), that is a new
   decision, not a guard to relax.
+- **Measured on lab-02 only.** On model-01 and Febor it is not known whether
+  either extension is installed. Their first window runs the box check, and a
+  red "no egress from the database" there is a finding to rule on before going
+  on, not something to uninstall in the window.
