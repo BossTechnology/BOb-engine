@@ -30,42 +30,53 @@ const PUBLIC_FACING = new Set(['public', 'anon', 'authenticated', 'bob_app', 'bo
 const APP_ROLES = ['bob_app', 'bob_feeder']
 
 // What a tenant-scoped expression looks like, read from the catalog rather
-// than assumed: every policy reachable by the roles above compares its tenant
-// key, unqualified, with the org_id claim, as
+// than assumed: one of the conditions AND-ed at the top of it is, whole,
 //   key = ((auth.jwt() ->> 'org_id'::text))::uuid
-// at the top level of the expression, AND-ed with whatever else it checks.
-// Mentioning the key is not enough (review of PR #43): `id IS NOT NULL`,
-// `->> 'id'` or a subquery over `u.id` all name it and constrain nothing.
-// So the subqueries are cut out first, the comparison is looked for in what
-// is left, and an OR or a NOT there fails it, because either can let a row
-// through without the comparison holding.
-const CLAIM = String.raw`\(\(auth\.jwt\(\) ->> 'org_id'::text\)\)::uuid`
+// with the key unqualified, or the same the other way round. Mentioning the
+// key is not enough (`id IS NOT NULL`, `->> 'id'`, a subquery over `u.id`),
+// and neither is holding the comparison somewhere inside (`… OR true`,
+// CASE, COALESCE, IS NOT TRUE): only a conjunct binds every row. So nothing
+// is searched for. The expression is split into its conjuncts and each is
+// compared as text, which also means a key is never read as a pattern.
+// Anything this does not recognise fails, so a new shape is looked at.
+const CLAIM = "((auth.jwt() ->> 'org_id'::text))::uuid"
 const quoteIdent = (s) => `"${s.replace(/"/g, '""')}"`
-const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
-function withoutSubqueries(expr) {
-  let out = expr
-  for (;;) {
-    const m = /\(\s*SELECT\b/i.exec(out)
-    if (!m) return out
-    let depth = 0
-    let end = m.index
-    for (; end < out.length; end++) {
-      if (out[end] === '(') depth++
-      else if (out[end] === ')' && --depth === 0) break
+// pg_policies deparses with every AND and OR list in brackets of its own.
+// Brackets and words inside a literal or a quoted name are text.
+function conjuncts(expr) {
+  let depth = 0
+  let quote = null
+  let closesAt = -1   // where the first bracket closes
+  let start = 0
+  const parts = []
+  for (let i = 0; i < expr.length; i++) {
+    const ch = expr[i]
+    if (quote) {
+      if (ch === quote) quote = null
+    } else if (ch === "'" || ch === '"') {
+      quote = ch
+    } else if (ch === '(') {
+      depth++
+    } else if (ch === ')') {
+      if (--depth === 0 && closesAt < 0) closesAt = i
+    } else if (depth === 0) {
+      if (expr.startsWith(' OR ', i)) return [expr]
+      if (expr.startsWith(' AND ', i)) {
+        parts.push(expr.slice(start, i))
+        start = i + ' AND '.length
+      }
     }
-    out = out.slice(0, m.index) + '(<subquery>)' + out.slice(end + 1)
   }
+  if (parts.length > 0) return [...parts, expr.slice(start)].flatMap(conjuncts)
+  if (expr.startsWith('(') && closesAt === expr.length - 1) return conjuncts(expr.slice(1, -1))
+  return [expr]
 }
 
 export function constrainsTenant(expr, keys) {
-  const top = withoutSubqueries(expr)
-  if (/\bOR\b/i.test(top) || /\bNOT\s*\(/i.test(top)) return false
-  return keys.some((key) => {
-    const k = escapeRegExp(key)
-    return new RegExp(`(^|[^.\\w"])${k} = ${CLAIM}`).test(top) ||
-      new RegExp(`${CLAIM} = ${k}($|[^\\w"])`).test(top)
-  })
+  const bound = new Set(keys.flatMap((key) => [key, quoteIdent(key)])
+    .flatMap((k) => [`${k} = ${CLAIM}`, `${CLAIM} = ${k}`]))
+  return conjuncts(expr).some((c) => bound.has(c))
 }
 
 export async function structuralFindings(client) {
@@ -161,8 +172,11 @@ export async function structuralFindings(client) {
 
       // Each expression on its own: USING decides what is read, WITH CHECK
       // what is written, and a tight one does not cover a loose other.
-      const loose = [p.qual, p.with_check].filter(Boolean)
-        .filter((e) => !constrainsTenant(e, t.tenant_keys))
+      // No expression at all constrains nothing either.
+      const written = [p.qual, p.with_check].filter(Boolean)
+      const loose = written.length === 0
+        ? ['(no expression)']
+        : written.filter((e) => !constrainsTenant(e, t.tenant_keys))
       if (loose.length > 0) {
         findings.push({
           table: t.table_name,
@@ -195,7 +209,7 @@ export async function aggregateLeakFindings(client, tenant, other) {
   const hidden = new Set((await tenantTablesUnreadableByApi(client)).map((t) => t.qualified))
   const tables = [
     ...(await tenantTables(client)).map((t) => ({ ...t, tenant_keys: ['org_id'] })),
-    ...(await tenantRootTables(client)),
+    ...(await tenantRootTables(client)).map((t) => ({ ...t, root: true })),
   ].filter((t) => !hidden.has(t.qualified))
   const owns = new Map()
   let otherRows = 0
@@ -206,7 +220,9 @@ export async function aggregateLeakFindings(client, tenant, other) {
               count(*) FILTER (WHERE ${match(2)})::int AS other
          FROM ${t.qualified}`, [tenant, other])
     owns.set(t.qualified, rows[0].own)
-    otherRows += rows[0].other
+    // Not the other tenant's own row in a root: it always exists, and would
+    // keep "there was something to leak" true over empty tables.
+    if (!t.root) otherRows += rows[0].other
   }
 
   const findings = []

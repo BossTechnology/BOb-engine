@@ -3383,9 +3383,9 @@ so `bob.organizations`, keyed by its own `id`, was never checked, and
   loop as the `org_id` tables: RLS enabled, at least one policy (or
   `DELIBERATE_DENY_ALL`), every grant to `bob_app` reached per command by a
   policy for that command, and every policy reachable by `public`, `anon`,
-  `authenticated` or `bob_app` constrains the tenant key. The key is matched
-  as a word, so on `organizations` an expression that only reads the
-  `'org_id'` claim does not pass for constraining `id`.
+  `authenticated` or `bob_app` constrains the tenant key. The key was first
+  matched as a word; the review below replaced that with a comparison against
+  the claim.
 - **Floor.** `tests/tenancy.test.mjs` asserts the discovery finds
   `organizations` keyed by `id`, so a discovery that goes empty fails first.
 - **Meta probes**, in `public` and in `bob` (`tests/tenancy-meta.test.mjs`): a
@@ -3409,29 +3409,30 @@ so `bob.organizations`, keyed by its own `id`, was never checked, and
   behaviour: the operator creates and changes an organization through the
   service role, and nothing in this repository writes it as `bob_app`.
   **Confirmed** by Henry, 21 Nov ("Revocar"), over write policies on `id`.
-- **Not extended:** `truncateFindings` and `aggregateLeakFindings` still read
-  `org_id` tables only. TRUNCATE on `organizations` is not held by any
-  application role today, and a count over it is bounded by its policies,
-  which the structural check now reads.
+- **Not extended at first:** `truncateFindings` and `aggregateLeakFindings`.
+  The review below extended both. TRUNCATE on `organizations` is not held by
+  any application role today.
 
 ## F-46 · an independent review of PR #43, applied
 
 Relayed by the session that owns the release, 21 Nov. Each point has a meta
 probe in `tests/tenancy-meta.test.mjs` that fails against the guard as it was
-and passes after; 14 tests, all seen red first.
+and passes after.
 
 - **Medium · naming the key is not constraining it.** The check accepted any
   policy whose expression mentioned the key as a word, so `id IS NOT NULL`,
   `->> 'id'` or `EXISTS (SELECT 1 FROM users u WHERE u.id = auth.uid())`
   passed for `organizations`. `constrainsTenant` (`tests/helpers/rls.mjs`) now
-  cuts the subqueries out of the deparsed expression and requires the tenant
-  key, unqualified, compared with the claim:
-  `key = ((auth.jwt() ->> 'org_id'::text))::uuid`, with no `OR` and no
-  `NOT (` left at the top level. USING and WITH CHECK are judged each on its
-  own. Every policy in the chain already had that shape, `org_id` tables
-  included, so the stricter rule holds for both kinds and nothing went red.
-  Probes: a `bob_app` policy over a subquery on `u.id` (public and bob), and a
-  table of 13 expressions for the matcher, the review's examples among them.
+  splits the deparsed expression into the conditions AND-ed at its top and
+  requires one of them to be, whole and unqualified,
+  `key = ((auth.jwt() ->> 'org_id'::text))::uuid`. So a comparison inside a
+  subquery, an OR, a NOT, a CASE, a COALESCE or an IS NOT TRUE does not
+  count. USING and WITH CHECK are judged each on its own, and a policy with
+  neither is a finding. Every policy in the chain already had that shape,
+  `org_id` tables included, so the stricter rule holds for both kinds and
+  nothing went red. Probes: a `bob_app` policy over a subquery on `u.id`, one
+  with no expression (both in public and bob), and a table of expressions for
+  the matcher, the review's examples among them.
 - **Medium · roots reached only through a single-column primary key.**
   `tenantRootTables` (`tests/helpers/db.mjs`) now reads every foreign key in
   which `org_id` takes part, single or composite, to whatever unique key it
@@ -3442,7 +3443,7 @@ and passes after; 14 tests, all seen red first.
   tables have none (the projections, the logs), so the check fails closed
   instead: tenant tables and no root is a finding. Probe: every foreign key on
   `org_id` dropped in a rolled-back transaction. A root that only FK-less
-  columns point to is still not seen; today none exists.
+  columns point to is still not seen.
 - **Low · `bob_feeder`.** It joins `bob_app` in the per-command reach check
   and among the roles whose policies must constrain the key. It holds no
   grant on `organizations`: `v_feeder_channel_map` is `security_invoker=false`
@@ -3453,8 +3454,18 @@ and passes after; 14 tests, all seen red first.
 - **Low · `truncateFindings` and `aggregateLeakFindings`** include the roots,
   counted by their tenant key. Probes: TRUNCATE on a root granted to
   `bob_app`; a root whose policy lets `authenticated` count both tenants.
-- **Low · the key is escaped** before it goes into a regular expression, and
-  quoted before it goes into SQL.
+- **Low · the key is never a pattern.** It is compared as text, with no
+  regular expression, and quoted before it goes into SQL. Cases: the keys
+  `i.` and `(id`.
+- **Run.** Own local stack, `db reset --no-seed` over #40's head (`2647fce`)
+  plus this branch: `pnpm test` 376 tests, 374 pass, 0 fail, 2 `todo`; pgTAP
+  18 of 18.
+- **Found re-reading the fix, before it was reported.** The first cut
+  (`59179a4`) searched for the comparison anywhere outside a subquery, so
+  CASE, COALESCE and IS NOT TRUE passed; it stopped reporting a policy with no
+  expression; and it counted the other tenant's organization row in
+  `otherRows`, which made the "something to leak" floor of the aggregate
+  check always true. All three have tests seen red against `59179a4`.
 
 ## F-27 · closed by (c): no egress extension may be installed
 

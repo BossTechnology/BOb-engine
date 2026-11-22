@@ -152,6 +152,20 @@ describe('ID-12 · the tenancy suite detects what it claims to detect', () => {
       })
     })
 
+    // No expression is not a tenant-scoped one. It refuses every row, and
+    // the reach check would read it as a policy that reaches the grant.
+    test(`a bob_app policy with no expression at all is reported (in ${s})`, async () => {
+      await probe(s, `
+        CREATE TABLE $S.meta_probe_empty_policy (org_id UUID NOT NULL);
+        ALTER TABLE $S.meta_probe_empty_policy ENABLE ROW LEVEL SECURITY;
+        CREATE POLICY "app_nothing" ON $S.meta_probe_empty_policy FOR SELECT TO bob_app;
+        GRANT SELECT ON $S.meta_probe_empty_policy TO bob_app;`, async () => {
+        const findings = await structuralFindings(db)
+        assert.ok(findings.some((f) => f.table === 'meta_probe_empty_policy' &&
+          /does not constrain org_id/.test(f.finding)), 'a policy with no expression went unreported')
+      })
+    })
+
     // bob_feeder writes the projections under each tenant's claim (F-22). A
     // grant it holds that no policy reaches fails every time, like bob_app's.
     test(`a table granted to bob_feeder that no policy reaches is reported (in ${s})`, async () => {
@@ -465,6 +479,21 @@ describe('ID-12 · the tenancy suite detects what it claims to detect', () => {
       [`(o.id = ${C})`, ['id'], false],
       [`(org_id = ${C})`, ['id'], false],
       ['true', ['org_id'], false],
+      // Holding the comparison is not being bound by it: each of these
+      // contains it word for word and still lets another tenant's row through.
+      [`CASE WHEN (id = ${C}) THEN true ELSE true END`, ['id'], false],
+      [`COALESCE((id = ${C}), true)`, ['id'], false],
+      [`((id = ${C}) IS NOT TRUE)`, ['id'], false],
+      [`((id = ${C}) IS FALSE)`, ['id'], false],
+      [`((id = ${C}) = false)`, ['id'], false],
+      // A bracket or an AND inside a literal or a quoted name is text.
+      [`((name = ') AND (id = ${C.replaceAll("'", "''")}) AND ('::text))`, ['id'], false],
+      [`((name = ')'::text) AND (id = ${C}))`, ['id'], true],
+      [`((a AND (id = ${C})) AND b)`, ['id'], true],
+      [`("Tenant Id" = ${C})`, ['Tenant Id'], true],
+      // The key is a name, never a pattern.
+      [`(id = ${C})`, ['i.'], false],
+      [`(id = ${C})`, ['(id'], false],
     ]
     for (const [expr, keys, want] of cases) {
       assert.equal(constrainsTenant(expr, keys), want, `${expr} with key ${keys}`)
@@ -488,6 +517,22 @@ describe('ID-12 · the tenancy suite detects what it claims to detect', () => {
       assert.deepEqual(await tenantRootTables(db), [])
       assert.ok((await structuralFindings(db)).some((f) => f.table === '(tenant root)'),
         'tables carry org_id, no root was found, and the check said nothing')
+    } finally {
+      await db.query('ROLLBACK')
+    }
+  })
+
+  // `otherRows` is what shows the aggregate check had something to leak. The
+  // other tenant's own organization row always exists, so counting it there
+  // would keep that floor green over empty tables.
+  test("the other tenant's organization row alone is nothing to leak", async () => {
+    await db.query('BEGIN')
+    try {
+      const { rows: [other] } = await db.query(`
+        INSERT INTO bob.organizations (name, slug)
+        VALUES ('Cliente Demo', 'cliente-demo-vacio') RETURNING id`)
+      const { otherRows } = await aggregateLeakFindings(db, TENANT_A, other.id)
+      assert.equal(otherRows, 0, 'an empty tenant counted as something that could leak')
     } finally {
       await db.query('ROLLBACK')
     }
