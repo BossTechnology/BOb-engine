@@ -3414,6 +3414,48 @@ so `bob.organizations`, keyed by its own `id`, was never checked, and
   application role today, and a count over it is bounded by its policies,
   which the structural check now reads.
 
+## F-46 · an independent review of PR #43, applied
+
+Relayed by the session that owns the release, 21 Nov. Each point has a meta
+probe in `tests/tenancy-meta.test.mjs` that fails against the guard as it was
+and passes after; 14 tests, all seen red first.
+
+- **Medium · naming the key is not constraining it.** The check accepted any
+  policy whose expression mentioned the key as a word, so `id IS NOT NULL`,
+  `->> 'id'` or `EXISTS (SELECT 1 FROM users u WHERE u.id = auth.uid())`
+  passed for `organizations`. `constrainsTenant` (`tests/helpers/rls.mjs`) now
+  cuts the subqueries out of the deparsed expression and requires the tenant
+  key, unqualified, compared with the claim:
+  `key = ((auth.jwt() ->> 'org_id'::text))::uuid`, with no `OR` and no
+  `NOT (` left at the top level. USING and WITH CHECK are judged each on its
+  own. Every policy in the chain already had that shape, `org_id` tables
+  included, so the stricter rule holds for both kinds and nothing went red.
+  Probes: a `bob_app` policy over a subquery on `u.id` (public and bob), and a
+  table of 13 expressions for the matcher, the review's examples among them.
+- **Medium · roots reached only through a single-column primary key.**
+  `tenantRootTables` (`tests/helpers/db.mjs`) now reads every foreign key in
+  which `org_id` takes part, single or composite, to whatever unique key it
+  references; the tenant key is the column `org_id` lands on, and a table
+  reached through several keys carries them all (`tenant_keys`). Probes: a
+  root reached through a unique `slug`, and one through `(region, org_id)` →
+  `(region, id)`. An `org_id` with no foreign key names no table, and 22
+  tables have none (the projections, the logs), so the check fails closed
+  instead: tenant tables and no root is a finding. Probe: every foreign key on
+  `org_id` dropped in a rolled-back transaction. A root that only FK-less
+  columns point to is still not seen; today none exists.
+- **Low · `bob_feeder`.** It joins `bob_app` in the per-command reach check
+  and among the roles whose policies must constrain the key. It holds no
+  grant on `organizations`: `v_feeder_channel_map` is `security_invoker=false`
+  (a definer view), so it reads `organizations` as the view's owner, not as
+  `bob_feeder`; the review's premise that it reads it as invoker does not hold.
+  Its grants on the projections are all reached by `public` policies. Probe: a
+  table granted to `bob_feeder` that no policy reaches.
+- **Low · `truncateFindings` and `aggregateLeakFindings`** include the roots,
+  counted by their tenant key. Probes: TRUNCATE on a root granted to
+  `bob_app`; a root whose policy lets `authenticated` count both tenants.
+- **Low · the key is escaped** before it goes into a regular expression, and
+  quoted before it goes into SQL.
+
 ## F-27 · closed by (c): no egress extension may be installed
 
 lab-02's rehearsal showed `http` and `pg_net` available and not installed,

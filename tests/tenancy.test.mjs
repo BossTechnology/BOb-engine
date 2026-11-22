@@ -45,7 +45,7 @@ describe('ID-10 · every read and write is constrained to a single organisation'
   // discovery that finds nothing would leave organizations unchecked again.
   test('discovery finds organizations as the table org_id points to', async () => {
     const roots = await tenantRootTables(db)
-    assert.ok(roots.some((t) => t.table_name === 'organizations' && t.tenant_key === 'id'),
+    assert.ok(roots.some((t) => t.table_name === 'organizations' && t.tenant_keys.includes('id')),
       `tenantRootTables() did not find organizations keyed by id: ${JSON.stringify(roots)}`)
   })
 
