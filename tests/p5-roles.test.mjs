@@ -10,6 +10,7 @@
 
 import { test, before, after, describe } from 'node:test'
 import assert from 'node:assert/strict'
+import pg from 'pg'
 import {
   connect, loadFixture, tenantTables, TENANCY_FLOOR, TENANT_A,
 } from './helpers/db.mjs'
@@ -177,7 +178,7 @@ describe('P5 §6.3 · bob_ai_ro reads views only (IR-1)', () => {
 
 // ── No egress from the database ────────────────────────────────────────────
 describe('P5 §6.3 · no egress from the database', () => {
-  test('neither pg_net nor http is installed, and none of the three can execute them', async (t) => {
+  test('nothing outside the approved list is installed: extensions, foreign servers, untrusted languages', async (t) => {
     const fns = await egressFunctions(db)
     t.diagnostic(`egress functions installed: ${fns.length}`)
     assert.deepEqual(await egressFindings(db), [])
@@ -215,6 +216,60 @@ describe('P5 §6.3 · no egress from the database', () => {
           `"${where}" went unreported: ${JSON.stringify(findings.slice(0, 3))}`)
       }
     })
+  })
+
+  // The review of PR #44: naming two extensions leaves every other way out
+  // open. The guard fails closed on what is not approved, so each of these is
+  // installed for real and rolled back.
+  test('dblink, installed, fails the guard', async () => {
+    await inTx(async () => {
+      await db.query('CREATE EXTENSION dblink')
+      const findings = await egressFindings(db)
+      assert.ok(findings.some((f) => f.startsWith('dblink is installed')),
+        `dblink went unreported: ${JSON.stringify(findings.slice(0, 3))}`)
+    })
+  })
+
+  // Not named anywhere as egress. Outside the approved list is enough.
+  test('an extension nobody named, outside the approved list, fails the guard', async () => {
+    await inTx(async () => {
+      await db.query('CREATE EXTENSION fuzzystrmatch')
+      const findings = await egressFindings(db)
+      assert.ok(findings.some((f) => f.startsWith('fuzzystrmatch is installed')),
+        `an unapproved extension went unreported: ${JSON.stringify(findings.slice(0, 3))}`)
+    })
+  })
+
+  test('a foreign server fails the guard', async () => {
+    await inTx(async () => {
+      await db.query('CREATE EXTENSION postgres_fdw')
+      await db.query(`CREATE SERVER p5_probe_srv FOREIGN DATA WRAPPER postgres_fdw
+                        OPTIONS (host 'example.invalid')`)
+      const findings = await egressFindings(db)
+      assert.ok(findings.some((f) => f.startsWith('foreign server p5_probe_srv')),
+        `a foreign server went unreported: ${JSON.stringify(findings.slice(0, 3))}`)
+    })
+  })
+
+  // Only a superuser creates a language, and `postgres` is not one on
+  // Supabase, so this probe runs as the local stack's supabase_admin, in its
+  // own transaction, rolled back.
+  test('an untrusted language fails the guard', async () => {
+    const url = new URL(process.env.SUPABASE_DB_URL ||
+      'postgresql://postgres:postgres@127.0.0.1:54322/postgres')
+    url.username = 'supabase_admin'
+    const admin = new pg.Client({ connectionString: url.href })
+    await admin.connect()
+    try {
+      await admin.query('BEGIN')
+      await admin.query('CREATE LANGUAGE p5_probe_untrusted HANDLER plpgsql_call_handler')
+      const findings = await egressFindings(admin)
+      assert.ok(findings.some((f) => f.startsWith('untrusted language p5_probe_untrusted')),
+        `an untrusted language went unreported: ${JSON.stringify(findings.slice(0, 3))}`)
+    } finally {
+      await admin.query('ROLLBACK').catch(() => {})
+      await admin.end()
+    }
   })
 })
 

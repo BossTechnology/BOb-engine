@@ -3187,3 +3187,44 @@ Nov, over (b): a revoke from PUBLIC would not cover a later install.
 - Nothing is uninstalled or revoked by a migration. If a box ever needs one of
   them (self-hosted Supabase installs `pg_net` for webhooks), that is a new
   decision, not a guard to relax.
+
+## F-27 · the egress guard fails closed (review of PR #44)
+
+An independent review found, high: the guard that closed F-27 named two
+extensions, `http` and `pg_net`, so `dblink`, `postgres_fdw`, `wrappers` or an
+untrusted language opened a way out and "no egress from the database" still
+read ok. It enumerated what is dangerous instead of failing on what is not
+known.
+
+- `egressFindings` (`scripts/box-checks.mjs`) now fails on any installed
+  extension outside `APPROVED_EXTENSIONS`, on any row in `pg_foreign_server`,
+  and on any untrusted language other than `c` and `internal`. CI and
+  `scripts/box-check.mjs` run the same function. `EGRESS_EXTENSIONS` remains
+  only to list who could EXECUTE what; the verdict does not read it.
+- **Where the approved list comes from.** `SELECT extname FROM pg_extension`
+  after `supabase db reset --no-seed` of `main`'s chain, on
+  `public.ecr.aws/supabase/postgres:15.19.0.002` (CLI 2.119.0):
+  `pg_stat_statements`, `pgcrypto`, `plpgsql`, `supabase_vault`, `uuid-ossp`.
+  No migration creates an extension, so all five are the image's. The same
+  catalog had no foreign server and no untrusted language but `c` and
+  `internal`. CI (CLI 2.120.0, a full `supabase start`) asserts the same.
+- **Seen red.** Four probes, each installing for real and rolling back, fail
+  against the guard as merged in #44 and pass now: `dblink`; `fuzzystrmatch`
+  (an extension nobody would name); a `postgres_fdw` foreign server; an
+  untrusted language, which needs a superuser and so runs as the local
+  stack's `supabase_admin`.
+- **Run.** Own local stack (port 61322), `db reset --no-seed` over `main`'s
+  chain: `pnpm test` 306 tests, 304 pass, 0 fail, 2 `todo`; pgTAP 18 of 18;
+  `box-check` ok on egress. The rehearsal kit was not run.
+- **Not covered:** what a superuser can do without installing anything
+  (`COPY … TO PROGRAM`, a C function loaded by hand), and what an approved
+  extension could do.
+- **For PR #46, low: likely red on model-01 and Febor.** F-27 above records
+  that self-hosted Supabase installs `pg_net` for webhooks, and only lab-02
+  was measured. A box built that way fails this check, and a self-hosted image
+  may install others outside the five (`pg_graphql`, `pgsodium`, `pgjwt` are
+  possible; none was measured). Read `SELECT extname FROM pg_extension` on
+  each box before relying on this check there. lab-02's full list is not
+  recorded either, only `http` and `pg_net`, so its recorded green predates
+  this guard, and so does the rehearsal kit's expectation of that line.
+  Adding an extension to the list is Henry's decision per extension.
