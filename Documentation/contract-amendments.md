@@ -3319,6 +3319,17 @@ loops); `declared AS MATERIALIZED` judges it once per channel, metric and
 actor. Materializing `bob_cell_state` itself (spec §10) is not needed at this
 size.
 
+**Re-measured on 23 Nov, with the functions in `bob`** (Postgres 15.19, the
+same fixture and frames). The plan keeps its shape: `declared` is materialized
+once (270 rows), and the capability subquery runs 270 times, once per channel,
+metric and actor, not once per cell. The deployed body, read back with
+`pg_get_functiondef` and explained the way the table above was: 15 hours in
+84 ms. The machine was loaded at the time (load average 35 to 52 on 8 cores,
+from other projects), so calls through the function, five runs each, varied
+widely, as the owner and as `bob_app` under the claim: 1 hour 17 to 316 ms, 15
+hours 126 to 455 ms, 18 days 2.8 to 13 s. The minimums match the table; the
+spread is the machine, not the move.
+
 ### Verified by sabotage
 
 Each guard was seen failing, then restored and seen passing.
