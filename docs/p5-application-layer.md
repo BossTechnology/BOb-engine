@@ -276,6 +276,10 @@ Each entry and its source:
       neither installed, before and after the chain. The guard of §6.3 now
       fails if either is installed, in any schema, in CI and in the box check;
       the installed probe is a test that sees it fail, no longer a `todo`.
+      **Measured on lab-02 only.** On model-01 and Febor it is not known
+      whether either is installed. Their first window's box check tells; a red
+      there is a finding to rule on before going on, not an uninstall in the
+      window.
     - **Corrected 2026-11-22 (review of PR #44).** "No egress" was more than
       that guard checked: `dblink`, `postgres_fdw`, `wrappers` or an untrusted
       language open a connection out, and it stayed green. The guard now fails
