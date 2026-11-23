@@ -3227,7 +3227,8 @@ The P5 restore (`docs/p5-failed-migration-procedure.md` §4.3) drops `bob` with
 CASCADE and restores `pg_dump -n bob`: `bob.v_ai_cell_state` read
 `public.bob_ai_cell_state()`, which read `bob` through a `BEGIN ATOMIC` body,
 so the CASCADE took the function, the dump did not carry it, and the view
-could not be restored. Found by the lab-02 rehearsal with PR #41 merged in.
+could not be restored. Found by running the lab-02 rehearsal kit locally, on
+a throwaway tree with PR #41 merged in; not by a run on lab-02 itself.
 Henry's ruling: "Both in bob".
 
 - `bob_cell_state`, `bob_cell_rollup`, `bob_available_state`,
@@ -3338,6 +3339,8 @@ Each guard was seen failing, then restored and seen passing.
 | S12 | Actor types fixed per metric | The F-38 tests |
 | S13 | Applicability ignored | The never-`user` test (F-33) |
 | S14 | `ZERO_PRECONDITIONS` loses `abandoned` | Catalog equality, the abandoned test |
+| S15 | The feeder drops the `MEASURED` filter | No row for an unmeasured metric; their cells `not_observed` |
+| S16 | `MEASURED` gains `abandoned`, which nothing counts | The counting-path test, and the two above |
 
 The fuzz test draws 160 seeded cases (lags, marks, mixes, capabilities) and
 compares `bob_cell_state` with a JavaScript oracle of §3's order.
@@ -3362,6 +3365,15 @@ After merging `main` (with #35, #37, #39 and #41), on a fresh `supabase db
 reset --no-seed` of a stack of its own: `pnpm test` 354 tests, 351 pass, 0
 fail, 3 `todo` (with the move to `bob`, the restore guard and `MEASURED`). pgTAP over `supabase/tests/database`: 18 of 18. The shared stack was
 not touched.
+
+After merging `main` at `5600867` (#44, #45 and #46): 354 tests, 352 pass, 0
+fail, 2 `todo` (#44 turned the installed-egress probe from a `todo` into a
+test). pgTAP 18 of 18.
+
+The rehearsal bench (`scripts/ensayo-migracion-lab/probar-local.sh`, CLI
+2.120.0, a disposable copy of lab-02's identity stack) at `7542401`, after
+`MEASURED` and the renumbering: every case matches, the bob-alone restore and
+the nine sabotages included. Not a run on lab-02.
 
 ---
 
