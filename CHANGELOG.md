@@ -4,7 +4,7 @@ Una línea por cambio entregado, en lenguaje de usuario.
 
 ## Sin publicar
 - El chequeo de tenancy también revisa las tablas que son el tenant (hoy `organizations`, con llave `id`), no solo las que tienen `org_id`, y exige que cada política compare la llave con el claim de la organización (mencionarla no basta); `bob_app` ya no tiene permisos de escritura sobre `organizations` que la seguridad por filas le negaba siempre (F-46).
-- La base de BOb no puede tener instalada ninguna extensión que salga a la red (`pg_net`, `http`): el chequeo de CI y el de la caja fallan si aparece una, en cualquier esquema (F-27, opción c).
+- El chequeo de salida a la red de CI y de la caja falla cerrado: cualquier extensión fuera de una lista aprobada de cinco, cualquier servidor foráneo o cualquier lenguaje no confiable que no sea `c` o `internal` lo pone en rojo (F-27, opción c, ampliada). No revisa lo que un superusuario puede hacer sin instalar nada, ni otras bases del mismo servidor. El kit del ensayo anota todas las extensiones instaladas, y una prueba corre `box-check.mjs` entero y ve el exit 1.
 - El ensayo de P5 corrió en lab-02: 41 comprobaciones, todas como se esperaba, con la cadena aplicada y `auth.users` sin tocar. El kit compara inventarios sin depender del idioma de la caja.
 - Restaurar `bob` solo ya no se lleva las funciones de `public` que dependen de él: el procedimiento y el kit del ensayo las guardan antes de borrar `bob` y las reponen después (`scripts/bob-dependientes.sh`). `service_role` ya no puede drenar el outbox (F-47).
 - Ningún rol con el que corre la aplicación puede vaciar una tabla de un golpe (TRUNCATE), algo que se saltaba la separación entre organizaciones.
