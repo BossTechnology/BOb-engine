@@ -3223,12 +3223,41 @@ known.
 - **Not covered:** what a superuser can do without installing anything
   (`COPY … TO PROGRAM`, a C function loaded by hand), and what an approved
   extension could do.
-- **For PR #46, low: likely red on model-01 and Febor.** F-27 above records
+- **Likely red on model-01 and Febor** (noted for PR #46, since merged). F-27 above records
   that self-hosted Supabase installs `pg_net` for webhooks, and only lab-02
   was measured. A box built that way fails this check, and a self-hosted image
   may install others outside the five (`pg_graphql`, `pgsodium`, `pgjwt` are
   possible; none was measured). Read `SELECT extname FROM pg_extension` on
   each box before relying on this check there. lab-02's full list is not
   recorded either, only `http` and `pg_net`, so its recorded green predates
-  this guard, and so does the rehearsal kit's expectation of that line.
-  Adding an extension to the list is Henry's decision per extension.
+  this guard. Adding an extension to the list is Henry's decision per
+  extension, per box, before that box's window.
+
+### Second review of PR #47, applied
+
+Relayed by the session that owns the release, 23 Nov. Nothing high.
+
+- **Medium · the rehearsal kit.** `scripts/ensayo-migracion-lab.sh` still
+  read the egress line as "over what is installed" and its header spoke only
+  of `pg_net` and `http`. The header, the step-6 label and its comment now say
+  the check fails closed, and that a box with an extension outside the five
+  is red on purpose, the run with it: lab-02's 41/41 predates this guard and
+  its full list was never recorded, so a rerun there may be red until each
+  extension is ruled on. The kit now records every installed extension, at
+  the start and after the chain. Not run: there is no lab-02 window here.
+- **Medium · the text.** P5 §3.2 said the five were "the Supabase image"'s.
+  They are the local CLI image's; self-hosted installs `pg_net`. §3.2 now says
+  so, with the expected red on model-01 and Febor and that each extension per
+  box is Henry's call before its window. The §6.3 matrix row for this guard
+  states what it asserts now.
+- **Low · box-check.mjs end to end.** No test ran the script. One now does,
+  as the operator would, against a scratch database on the same cluster
+  (`bob_box_check_e2e`, created and dropped by the test) holding the least a
+  box has, so every other check is green: exit 0, then `fuzzystrmatch`
+  installed, `FAIL  no egress from the database` and exit 1. The suite's own
+  database could not serve, its two tenants make "one organization" fail.
+  Seen red: with egress findings left out of the exit code, it fails on
+  `0 !== 1`; restored, it passes.
+- **Low · noted.** The check reads only the database it connects to:
+  `pg_extension` and `pg_foreign_server` are per database, so an extension in
+  another database of the same cluster is not seen. BOb's boxes hold one.

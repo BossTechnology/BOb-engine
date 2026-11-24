@@ -25,8 +25,10 @@
 #      compared against a fingerprint, and the projections rebuilt by the
 #      reference feeder;
 #   5. auth.users counted at every step: `auth` is never touched by BOb;
-#   6. scripts/box-check.mjs, read-only, and whether `pg_net` or `http` is on
-#      the box (F-27 closes with (b) or (c) on that answer).
+#   6. scripts/box-check.mjs, read-only. Its egress check fails closed (PR
+#      #47): any extension outside the approved five, any foreign server, any
+#      untrusted language but c and internal. The kit records every installed
+#      extension, and still where `pg_net` and `http` stand (F-27).
 #
 # WHAT IT LEAVES. The box with the real chain applied at the checkout's commit,
 # and no synthetic data. To take BOb off the box again: --deshacer <run dir>.
@@ -303,9 +305,14 @@ preflight() {
   CUENTAS0="$(auth_cuentas)"; AUTH0="$(auth_huella)"
   ev "- auth.users: $CUENTAS0 cuenta(s); huella de auth \`${AUTH0:0:12}…\`"
   ev "- ¿hay esquema bob? \`$(q "SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'bob')")\` · versiones aplicadas: \`$(versiones_aplicadas)\`"
-  # F-27: whether the box has pg_net or http decides how F-27 closes, (b) or (c).
-  # Evidence only: either answer is a finding, neither is a failure.
+  # F-27: evidence only, never a failure here. The verdict is step 6's.
   ev "- F-27 · extensiones de salida en la caja: \`$(extensiones_salida)\`"
+  ev "- F-27 · extensiones instaladas: \`$(extensiones_instaladas)\`"
+}
+extensiones_instaladas() {
+  # Read-only: every installed extension, to set against the approved five of
+  # scripts/box-checks.mjs (APPROVED_EXTENSIONS).
+  q "SELECT string_agg(extname || ' ' || extversion, ', ' ORDER BY extname) FROM pg_extension"
 }
 extensiones_salida() {
   # Read-only: for each egress extension, installed or not, in which schema,
@@ -532,9 +539,15 @@ ejecutar)
     env BOX_DB_URL="$DB_URL" "$NODE" "$REPO/scripts/box-check.mjs"
   comprobar "box-check: tres roles y no más" "sí" \
     "$(grep -qE '^ok +three roles, no more$' "$EV" && echo sí || echo no)"
-  comprobar "box-check: sin salida a red desde la base, sobre lo instalado" "sí" \
+  # Fail closed since PR #47: this is red on any box with an extension outside
+  # the approved five, on purpose, and so is the run. lab-02's 41/41 of 21 Nov
+  # predates it (it checked only pg_net and http), and lab-02's full extension
+  # list was not recorded, so a rerun there may be red until Henry rules on
+  # each extension found. The installed list is in the evidence above.
+  comprobar "box-check: sin salida a red desde la base, falla cerrado (solo las cinco extensiones aprobadas)" "sí" \
     "$(grep -qE '^ok +no egress from the database$' "$EV" && echo sí || echo no)"
   ev "- F-27 · extensiones de salida tras la cadena: \`$(extensiones_salida)\`"
+  ev "- F-27 · extensiones instaladas tras la cadena: \`$(extensiones_instaladas)\`"
   inventario > "$RUN/inventario-despues.txt"
   ev "- lo que la cadena añadió fuera de bob y supabase_migrations:"
   comm_c -13 "$RUN/inventario-antes.txt" "$RUN/inventario-despues.txt" \

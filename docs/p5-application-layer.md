@@ -284,11 +284,17 @@ Each entry and its source:
       that guard checked: `dblink`, `postgres_fdw`, `wrappers` or an untrusted
       language open a connection out, and it stayed green. The guard now fails
       closed on three things: an installed extension outside
-      `APPROVED_EXTENSIONS` (the five the Supabase image installs), any row in
+      `APPROVED_EXTENSIONS` (the five the local CLI image installs), any row in
       `pg_foreign_server`, and any untrusted language other than `c` and
       `internal`. It does not see what a superuser can do without installing
       anything (`COPY … TO PROGRAM`, a C function loaded by hand), nor what an
-      approved extension could do.
+      approved extension could do, nor any database but the one it connects
+      to (`pg_extension` is per database).
+    - **Expected red on model-01 and Febor.** The list is the local CLI
+      image's, not a box's. Self-hosted Supabase installs `pg_net` for
+      webhooks, so this check fails there, and the rehearsal kit's step 6 with
+      it. What to do with each extension found on each box (approve it here,
+      or uninstall it) is Henry's decision, taken before that box's window.
 
 ### 3.3 How each role meets RLS
 
@@ -579,7 +585,7 @@ the other three were built on 2026-11-20. The third column says where each one s
 | Feeder reads nothing else | As `bob_feeder`, every non-projection table and every view other than the two refuses SELECT | Built (PR #20) |
 | `bob_ai_ro` reads views only | As `bob_ai_ro`, UPDATE is refused, and any base table refuses SELECT (route-plan test, IR-1) | Built (2026-11-20). There are no `v_ai_*` views yet, so the guard asserts `bob_ai_ro` reads exactly the `v_ai_*` views, which today is none |
 | History is append-only | As `bob_app`, UPDATE and DELETE on `actor_ref_history` are refused | Built, by trigger (§3.2) |
-| No egress from the database | None of the three holds EXECUTE on any function of the `pg_net` or `http` extensions, wherever they are installed | Built over what is installed (2026-11-20), and green because neither is installed. **[FINDING] F-27:** installing either one gives PUBLIC EXECUTE, so all three can call them. Henry chose (a) on 2026-11-20, then closed it by (c) on 2026-11-21, after lab-02 showed neither installed: the guard also fails if either extension is installed, in any schema, in CI and in the box check. Corrected 2026-11-22 to fail closed: any extension outside the approved five, any foreign server, any untrusted language but `c` and `internal` |
+| No egress from the database | No installed extension outside the approved five, no foreign server, no untrusted language but `c` and `internal`; and none of the three holds EXECUTE on a function of a known egress extension (`dblink`, `http`, `pg_net`, `postgres_fdw`, `wrappers`), wherever installed | Built over what is installed (2026-11-20), and green because neither is installed. **[FINDING] F-27:** installing either one gives PUBLIC EXECUTE, so all three can call them. Henry chose (a) on 2026-11-20, then closed it by (c) on 2026-11-21, after lab-02 showed neither installed: the guard also fails if either extension is installed, in any schema, in CI and in the box check. Corrected 2026-11-22 to fail closed: any extension outside the approved five, any foreign server, any untrusted language but `c` and `internal` |
 
 ---
 
