@@ -25,8 +25,30 @@ export const SUPABASE_ROLES = new Set([
   'supabase_replication_admin', 'supabase_storage_admin',
 ])
 
-// The extensions that let Postgres open a connection out (BZZ-3 Ruling 2).
-export const EGRESS_EXTENSIONS = ['http', 'pg_net']
+// The extensions that may be installed in BOb's database, and nothing else
+// (P5 §6.3, fail closed). Not a list of what is dangerous, which can never be
+// complete (dblink, postgres_fdw, wrappers, an untrusted language each open a
+// way out): a list of what is there when nothing was added.
+//
+// Where it comes from, not invented: `SELECT extname FROM pg_extension` after
+// `supabase db reset --no-seed` of this chain, on the local stack's image
+// `public.ecr.aws/supabase/postgres:15.19.0.002` (Supabase CLI 2.119.0),
+// 2026-11-21. No migration in the chain creates an extension, so all five are
+// the image's own. CI runs a full `supabase start` with CLI 2.120.0, and the
+// suite asserts the same list there; an image that ships one more turns CI
+// red, and the answer is a decision to add it here, not a silent pass.
+export const APPROVED_EXTENSIONS = [
+  'pg_stat_statements', 'pgcrypto', 'plpgsql', 'supabase_vault', 'uuid-ossp',
+]
+
+// The languages that run inside the server with no way out of it. Every other
+// untrusted language (plpython3u, plperlu, …) can open a socket.
+export const APPROVED_UNTRUSTED_LANGUAGES = ['c', 'internal']
+
+// The extensions known to open a connection out (BZZ-3 Ruling 2). Used only to
+// say who could call what on a box that fails; the guard itself does not read
+// this list, so an extension missing from it is still caught.
+export const EGRESS_EXTENSIONS = ['dblink', 'http', 'pg_net', 'postgres_fdw', 'wrappers']
 
 // Every role that holds a privilege in schema `bob`, with what it holds it
 // through. "Holds" means: owns, or is granted (directly, or as a member of a
@@ -136,32 +158,47 @@ export async function egressFunctions(client) {
   return rows
 }
 
-// Guard "no egress from the database" (P5 §6.3). F-27, closed by (c) (Henry,
-// 2026-11-21): neither egress extension may be installed, in any schema.
-// Installing either one hands EXECUTE on every function to PUBLIC, so "not
-// granted" never holds once installed; only "not installed" does, and lab-02
-// has both available and neither installed. An install is a finding by
-// itself, and so is a later one, which a revoke (b) would not have covered.
+// Guard "no egress from the database" (P5 §6.3), fail closed. F-27 was
+// closed by (c) (Henry, 2026-11-21) over pg_net and http; the review of PR #44
+// found that naming two extensions leaves every other way out open. So it
+// fails on:
+//   - any installed extension outside APPROVED_EXTENSIONS, in any schema;
+//   - any foreign server (pg_foreign_server), whatever wrapper made it;
+//   - any untrusted language other than c and internal.
+// Installing an egress extension hands EXECUTE on its functions to PUBLIC, so
+// "not granted" never holds once installed; only "not there" does.
 //
 // The EXECUTE findings stay beside it, so a failing box says who could call
 // what. Strict on purpose: EXECUTE alone is a finding, with or without USAGE
 // on the schema, because USAGE is one GRANT away.
 export async function egressFindings(client) {
   const installed = (await egressInstalled(client))
-    .map((e) => `${e.extname} is installed (in ${e.schema}); no egress extension may be (F-27)`)
+    .map((e) => `${e.extname} is installed (in ${e.schema}) and is not an approved extension; ` +
+      'nothing outside APPROVED_EXTENSIONS may be (P5 §6.3, F-27)')
+  const { rows: servers } = await client.query(`
+    SELECT s.srvname, w.fdwname FROM pg_foreign_server s
+      JOIN pg_foreign_data_wrapper w ON w.oid = s.srvfdw ORDER BY 1`)
+  const { rows: languages } = await client.query(`
+    SELECT lanname FROM pg_language
+     WHERE NOT lanpltrusted AND lanname <> ALL($1) ORDER BY 1`, [APPROVED_UNTRUSTED_LANGUAGES])
   const executable = (await egressFunctions(client))
     .filter((f) => f.execute_granted_to.length > 0)
     .map((f) => `${f.fn} (${f.extname}, in ${f.schema}) executable by ${f.execute_granted_to.join(', ')}`)
-  return [...installed, ...executable]
+  return [
+    ...installed,
+    ...servers.map((s) => `foreign server ${s.srvname} (${s.fdwname}) exists; it is a connection out`),
+    ...languages.map((l) => `untrusted language ${l.lanname} is installed; it can open a connection out`),
+    ...executable,
+  ]
 }
 
-// Which egress extensions are installed, and where. The box check prints it,
-// so an empty egress result can be told apart from an empty install.
+// The installed extensions outside APPROVED_EXTENSIONS, and where. The box
+// check prints them, so a failure says what to look at.
 export async function egressInstalled(client) {
   const { rows } = await client.query(`
     SELECT e.extname, n.nspname AS schema FROM pg_extension e
       JOIN pg_namespace n ON n.oid = e.extnamespace
-     WHERE e.extname = ANY($1) ORDER BY 1`, [EGRESS_EXTENSIONS])
+     WHERE e.extname <> ALL($1) ORDER BY 1`, [APPROVED_EXTENSIONS])
   return rows
 }
 

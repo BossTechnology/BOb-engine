@@ -16,6 +16,8 @@ export const REPO_ROOT = resolve(HERE, '..', '..')
 const CONNECTION =
   process.env.SUPABASE_DB_URL ||
   'postgresql://postgres:postgres@127.0.0.1:54322/postgres'
+// For a test that runs a script of its own against the same cluster.
+export const DB_URL = CONNECTION
 
 export const TENANT_A = 'aaaaaaaa-0000-4000-8000-000000000001'
 export const TENANT_B = 'bbbbbbbb-0000-4000-8000-000000000002'
