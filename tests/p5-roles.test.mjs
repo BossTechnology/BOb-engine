@@ -10,8 +10,10 @@
 
 import { test, before, after, describe } from 'node:test'
 import assert from 'node:assert/strict'
+import pg from 'pg'
+import { execFile } from 'node:child_process'
 import {
-  connect, loadFixture, tenantTables, TENANCY_FLOOR, TENANT_A,
+  connect, loadFixture, tenantTables, TENANCY_FLOOR, TENANT_A, DB_URL, REPO_ROOT,
 } from './helpers/db.mjs'
 import {
   BOB_ROLES, rolesWithPrivilegeInBob, threeRolesFindings, egressFunctions,
@@ -177,7 +179,7 @@ describe('P5 §6.3 · bob_ai_ro reads views only (IR-1)', () => {
 
 // ── No egress from the database ────────────────────────────────────────────
 describe('P5 §6.3 · no egress from the database', () => {
-  test('neither pg_net nor http is installed, and none of the three can execute them', async (t) => {
+  test('nothing outside the approved list is installed: extensions, foreign servers, untrusted languages', async (t) => {
     const fns = await egressFunctions(db)
     t.diagnostic(`egress functions installed: ${fns.length}`)
     assert.deepEqual(await egressFindings(db), [])
@@ -216,6 +218,60 @@ describe('P5 §6.3 · no egress from the database', () => {
       }
     })
   })
+
+  // The review of PR #44: naming two extensions leaves every other way out
+  // open. The guard fails closed on what is not approved, so each of these is
+  // installed for real and rolled back.
+  test('dblink, installed, fails the guard', async () => {
+    await inTx(async () => {
+      await db.query('CREATE EXTENSION dblink')
+      const findings = await egressFindings(db)
+      assert.ok(findings.some((f) => f.startsWith('dblink is installed')),
+        `dblink went unreported: ${JSON.stringify(findings.slice(0, 3))}`)
+    })
+  })
+
+  // Not named anywhere as egress. Outside the approved list is enough.
+  test('an extension nobody named, outside the approved list, fails the guard', async () => {
+    await inTx(async () => {
+      await db.query('CREATE EXTENSION fuzzystrmatch')
+      const findings = await egressFindings(db)
+      assert.ok(findings.some((f) => f.startsWith('fuzzystrmatch is installed')),
+        `an unapproved extension went unreported: ${JSON.stringify(findings.slice(0, 3))}`)
+    })
+  })
+
+  test('a foreign server fails the guard', async () => {
+    await inTx(async () => {
+      await db.query('CREATE EXTENSION postgres_fdw')
+      await db.query(`CREATE SERVER p5_probe_srv FOREIGN DATA WRAPPER postgres_fdw
+                        OPTIONS (host 'example.invalid')`)
+      const findings = await egressFindings(db)
+      assert.ok(findings.some((f) => f.startsWith('foreign server p5_probe_srv')),
+        `a foreign server went unreported: ${JSON.stringify(findings.slice(0, 3))}`)
+    })
+  })
+
+  // Only a superuser creates a language, and `postgres` is not one on
+  // Supabase, so this probe runs as the local stack's supabase_admin, in its
+  // own transaction, rolled back.
+  test('an untrusted language fails the guard', async () => {
+    const url = new URL(process.env.SUPABASE_DB_URL ||
+      'postgresql://postgres:postgres@127.0.0.1:54322/postgres')
+    url.username = 'supabase_admin'
+    const admin = new pg.Client({ connectionString: url.href })
+    await admin.connect()
+    try {
+      await admin.query('BEGIN')
+      await admin.query('CREATE LANGUAGE p5_probe_untrusted HANDLER plpgsql_call_handler')
+      const findings = await egressFindings(admin)
+      assert.ok(findings.some((f) => f.startsWith('untrusted language p5_probe_untrusted')),
+        `an untrusted language went unreported: ${JSON.stringify(findings.slice(0, 3))}`)
+    } finally {
+      await admin.query('ROLLBACK').catch(() => {})
+      await admin.end()
+    }
+  })
 })
 
 // ── One organization per box (objection 3) ─────────────────────────────────
@@ -253,5 +309,56 @@ describe('P5 objection 3 · the box check: one organization, slug = bzzz.tenant'
       assert.ok(findings.some((f) => /holds 0 rows/.test(f)), findings.join('\n'))
     })
     assert.deepEqual(await oneOrganizationFindings(db, ''), ['the box tenant (bzzz.tenant) was not given'])
+  })
+})
+
+// ── scripts/box-check.mjs, end to end ──────────────────────────────────────
+// The functions above are what box-check.mjs runs; this runs the script itself,
+// as the operator does, and reads its exit code. Against a scratch database on
+// the same cluster, holding the least a box has (one organization, one active
+// user, a staging run, the three roles), so that every other check is green and the exit code answers for
+// egress alone. The suite's database cannot serve: its two tenants make "one
+// organization" fail, and exit 1 would prove nothing. The script reads only
+// the database it connects to (`pg_extension` is per database).
+describe('P5 §6.3 · box-check.mjs exits 1 on an egress finding', () => {
+  const SCRATCH = 'bob_box_check_e2e'
+  const url = new URL(DB_URL)
+  url.pathname = `/${SCRATCH}`
+
+  const boxCheck = () => new Promise((done) => {
+    execFile(process.execPath, [`${REPO_ROOT}/scripts/box-check.mjs`, '--tenant', 'cliente-demo'],
+      { env: { ...process.env, BOX_DB_URL: url.toString() } },
+      (error, stdout) => done({ code: error ? error.code : 0, stdout }))
+  })
+
+  test('green box: exit 0; an extension outside the list: FAIL and exit 1', async () => {
+    await db.query(`DROP DATABASE IF EXISTS ${SCRATCH} WITH (FORCE)`)
+    await db.query(`CREATE DATABASE ${SCRATCH}`)
+    const box = new pg.Client({ connectionString: url.toString() })
+    await box.connect()
+    try {
+      await box.query(`
+        CREATE SCHEMA bob;
+        CREATE TABLE bob.organizations (id uuid PRIMARY KEY, slug text NOT NULL);
+        CREATE TABLE bob.users (id uuid PRIMARY KEY, org_id uuid NOT NULL, active boolean NOT NULL);
+        CREATE TABLE bob.member_refs_runs (org_id uuid NOT NULL, ran_at timestamptz NOT NULL);
+        INSERT INTO bob.organizations VALUES ('${TENANT_A}', 'cliente-demo');
+        INSERT INTO bob.users VALUES (gen_random_uuid(), '${TENANT_A}', true);
+        INSERT INTO bob.member_refs_runs VALUES ('${TENANT_A}', now());
+        GRANT USAGE ON SCHEMA bob TO ${BOB_ROLES.join(', ')};`)
+
+      const green = await boxCheck()
+      assert.match(green.stdout, /^ok +no egress from the database$/m, green.stdout)
+      assert.equal(green.code, 0, `a green box did not exit 0:\n${green.stdout}`)
+
+      await box.query('CREATE EXTENSION fuzzystrmatch')
+      const red = await boxCheck()
+      assert.match(red.stdout, /^FAIL +no egress from the database$/m, red.stdout)
+      assert.match(red.stdout, /fuzzystrmatch is installed/, red.stdout)
+      assert.equal(red.code, 1, `an egress finding did not exit 1:\n${red.stdout}`)
+    } finally {
+      await box.end()
+      await db.query(`DROP DATABASE IF EXISTS ${SCRATCH} WITH (FORCE)`)
+    }
   })
 })
