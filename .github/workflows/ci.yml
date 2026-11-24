@@ -163,3 +163,29 @@ jobs:
         env:
           SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
         run: pnpm run test:availability
+
+  # O-3 (D77), diagnostic: the chain applied as bob_migrador, not postgres,
+  # over a Supabase database with no BOb in it. Lists every place it stops.
+  owner-chain-probe:
+    name: O-3 probe · the chain as bob_migrador
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: pnpm
+      - uses: supabase/setup-cli@v2
+        with:
+          version: ${{ env.SUPABASE_CLI_VERSION }}
+      - run: pnpm install --frozen-lockfile
+      - name: Start Supabase with no migration, then keep the chain aside
+        run: |
+          mv supabase/migrations "$RUNNER_TEMP/chain" && mkdir supabase/migrations
+          sed -i '/\[auth.hook.custom_access_token\]/,/^enabled/ s/^enabled = true/enabled = false/' supabase/config.toml
+          supabase start
+      - name: Apply the chain as bob_migrador
+        env:
+          ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+        run: CHAIN_DIR="$RUNNER_TEMP/chain" node scripts/owner-chain-probe.mjs
