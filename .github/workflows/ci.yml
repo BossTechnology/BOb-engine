@@ -7,17 +7,16 @@ on:
 
 # ID-12 — a tenancy failure is a build-blocking defect, not a bug.
 #
-# ALL SIX JOBS BELOW MUST BE REQUIRED STATUS CHECKS on the protected branch:
+# ALL FIVE JOBS BELOW MUST BE REQUIRED STATUS CHECKS on the protected branch:
 #
 #   Migrations apply from an empty database
 #   Tenancy (build-blocking · ID-10 to ID-12)
 #   Contracts, schema and naming
 #   Availability (FR-20 to FR-23)
 #   Chain applies as bob_migrador (O-3)
-#   Chain applies as bob_migrador on Postgres 17 (O-3)
 #
-# Today main requires the first four. The two O-3 jobs are still to be made
-# required by Henry, in branch protection.
+# Today main requires the first four. "Chain applies as bob_migrador (O-3)" is
+# still to be made required by Henry, in branch protection.
 #
 # Lint and build joins this list when an application layer exists. The setting
 # lives in branch protection, not here, and is the one part of ID-12 a workflow
@@ -205,56 +204,27 @@ jobs:
           git diff FETCH_HEAD -- "$list"
           echo "::error::$list changed. The install chain is frozen (O-3, P5 §6.2); only the label install-chain-change, put by the repository variable INSTALL_CHAIN_APPROVER, lets it through. Re-run the job after labelling."
           exit 1
-      - name: Start Supabase with no migration
+      # The box's image, supabase/postgres:17.6.1.136 (F-37), not CI's 15: the
+      # alta of bzzz#450 relies on Postgres 16+.
+      - name: Start Supabase on the box's Postgres image, with no migration
         run: |
           mv supabase/migrations "$RUNNER_TEMP/chain" && mkdir supabase/migrations
+          sed -i 's/^major_version = 15$/major_version = 17/' supabase/config.toml
+          mkdir -p supabase/.temp && echo 17.6.1.136 > supabase/.temp/postgres-version
           sed -i '/\[auth.hook.custom_access_token\]/,/^enabled/ s/^enabled = true/enabled = false/' supabase/config.toml
           supabase start
           rmdir supabase/migrations && mv "$RUNNER_TEMP/chain" supabase/migrations
+          docker ps --format '{{.Image}}' | grep -E 'supabase/postgres:' | tee /dev/stderr | grep -q ':17.6.1.136$'
       - name: Install BOb as a box would (scripts/instalar-bob.sh)
         env:
           POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
           SUPABASE_ADMIN_URL: postgresql://supabase_admin:postgres@127.0.0.1:54322/postgres
           MIGRADOR_URL: postgresql://bob_migrador:bob_migrador-local-test@127.0.0.1:54322/postgres
           MIGRADOR_PASSWORD: bob_migrador-local-test
-        run: scripts/instalar-bob.sh
+        run: scripts/instalar-bob.sh todo
       - name: Check what it left
         env:
           ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
           MIGRADOR_PASSWORD: bob_migrador-local-test
         run: CHAIN_DIR=supabase/migrations node scripts/owner-chain-check.mjs
 
-  # The same on Postgres 17, what the boxes run (F-37).
-  owner-chain-pg17:
-    name: Chain applies as bob_migrador on Postgres 17 (O-3)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v5
-        with:
-          node-version: '22'
-          cache: pnpm
-      - uses: supabase/setup-cli@v2
-        with:
-          version: ${{ env.SUPABASE_CLI_VERSION }}
-      - run: pnpm install --frozen-lockfile
-      - name: Start Supabase with no migration
-        run: |
-          mv supabase/migrations "$RUNNER_TEMP/chain" && mkdir supabase/migrations
-          sed -i 's/^major_version = 15$/major_version = 17/' supabase/config.toml
-          sed -i '/\[auth.hook.custom_access_token\]/,/^enabled/ s/^enabled = true/enabled = false/' supabase/config.toml
-          supabase start
-          rmdir supabase/migrations && mv "$RUNNER_TEMP/chain" supabase/migrations
-      - name: Install BOb as a box would (scripts/instalar-bob.sh)
-        env:
-          POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
-          SUPABASE_ADMIN_URL: postgresql://supabase_admin:postgres@127.0.0.1:54322/postgres
-          MIGRADOR_URL: postgresql://bob_migrador:bob_migrador-local-test@127.0.0.1:54322/postgres
-          MIGRADOR_PASSWORD: bob_migrador-local-test
-        run: scripts/instalar-bob.sh
-      - name: Check what it left
-        env:
-          ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
-          MIGRADOR_PASSWORD: bob_migrador-local-test
-        run: CHAIN_DIR=supabase/migrations node scripts/owner-chain-check.mjs
