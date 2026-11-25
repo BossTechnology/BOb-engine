@@ -3608,3 +3608,26 @@ Measured in `tests/install-approval.test.mjs` with `caja-prueba`. Not
 measured: `setpriv`, `flock` and `caja` as root on a box, and a real security
 key; ESTADO lists them as follow-ups.
 
+### O-3 · final verification of PR #48, applied
+
+The verification at `7f1da5c` found nothing blocking, two important points
+and minors; each was verified first.
+
+- **Settings not shown; passwords to any host.** True: `POSTGRES_HOST=evil` in
+  a prepared command would have had root send `postgres`'s password away. The
+  `instalo` screen now shows the settings and where passwords go, and root
+  sends them only to loopback or a host in `/opt/bob/hosts-permitidos`
+  (root's), checked in `caja` and again in `instalar-bob.sh`, for
+  `POSTGRES_HOST` and the alta's `MIGRADOR_HOST`. `psql` runs with
+  `PGREQUIREAUTH=scram-sha-256`; `cadena`'s `supabase db push` does not read
+  it, and keeps the host check.
+- **A listed set of programs.** True, against «discover, do not enumerate».
+  Now every directory of the fixed `PATH` and `git --exec-path`, every file in
+  them and every link target is checked; the comment no longer says «every
+  program».
+- **Minor.** The commit, the pair and the settings are shown again after the
+  log; the connection files are checked along their whole path; `FIRMA_GID`
+  must be non-zero; `firmar-instalacion.sh` writes under `$TMPDIR` by default;
+  P5 says `instalo` is a last look, not proof of presence: the barrier is the
+  signature.
+

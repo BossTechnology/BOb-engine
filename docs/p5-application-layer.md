@@ -729,8 +729,8 @@ scripts/firmar-instalacion.sh <commit-to-install> --base <commit-the-box-runs>
 It runs `main`'s `firma-instalacion.sh` on both commits as git objects, shows
 the log and the whole diff between them (no external diff, no textconv), asks
 for `firmo`, and signs the pair with `ssh-keygen -Y sign -n bob-install-chain`
-(the touch and the PIN). It writes the two files into `./aprobacion/` and
-commits nothing. Henry copies them to the box's `/opt/bob/aprobaciones/`, as
+(the touch and the PIN). It writes the two files into a new directory under
+`$TMPDIR` (never the checkout) and commits nothing. Henry copies them to the box's `/opt/bob/aprobaciones/`, as
 root. An approval may also be committed under `supabase/provision/aprobaciones/`;
 the box reads either. The namespace is its own: **this key is not the one in
 Bzzz's `config/bob/firmantes_imagen`**.
@@ -743,6 +743,7 @@ sudo install -d -o root -g root -m 755 /opt/bob /opt/bob/bin /opt/bob/aprobacion
 sudo install -o root -g root -m 755 scripts/firma-instalacion.sh /opt/bob/bin/firma-instalacion
 sudo install -o root -g root -m 644 supabase/provision/firmantes_instalacion /opt/bob/firmantes_instalacion
 sudo install -o root -g root -m 644 /dev/null /opt/bob/aprobaciones-revocadas
+echo <database container name> | sudo tee /opt/bob/hosts-permitidos   # only if a host is not loopback
 echo <digest> | sudo tee /opt/bob/instalacion-firmada && sudo chmod 644 /opt/bob/instalacion-firmada
 ```
 
@@ -761,13 +762,21 @@ It:
    directories first) and `HOME=/root`, and only `POSTGRES_ENV`,
    `POSTGRES_HOST`, `POSTGRES_PORT`, `MIGRADOR_ENV` and `MIGRADOR_PUERTO`,
    given as `VAR=value` arguments, each checked (a path, a host not starting
-   with `-`, a port); any other is refused;
+   with `-`, a port); any other is refused. Root sends a password only to
+   loopback or to a host listed in `/opt/bob/hosts-permitidos` (root's; the
+   database's container name, for one): `POSTGRES_HOST`, and `MIGRADOR_HOST`
+   from the alta's file, are checked by `caja` and again by `instalar-bob.sh`.
+   `psql` runs with `PGREQUIREAUTH=scram-sha-256` (libpq 16+), so it refuses a
+   server that does not ask for SCRAM. Not for `cadena`'s `supabase db push`,
+   whose driver does not read it; the host check still applies;
 2. refuses unless these are root's and writable by nobody else: `/opt`,
    `/opt/bob`, `/opt/bob/bin`, itself, the signers file, the revocation list,
-   the state file, `/opt/bob/aprobaciones/` and each approval in it, the
-   connection files, and every program it or `instalar-bob.sh` runs (`git`,
-   `ssh-keygen`, `psql`, `docker`, `supabase` and the rest), along its whole
-   path and through every link;
+   the state file, `/opt/bob/aprobaciones/` and each approval in it, and the
+   connection files along their whole path. Nothing it may run is listed by
+   hand: every directory of the fixed `PATH` and `git --exec-path` must be
+   root's along its whole path, every file in it (or that a link in it points
+   to) root's and writable by no group or other, and the directories those
+   links lead to root's along their whole path;
 3. takes a lock (`flock` on `/opt/bob/.instalando`) and removes work
    directories an interrupted run left;
 4. fetches the commit by its sha into a new repository of root's, with
@@ -780,8 +789,11 @@ It:
    revoked, signed by a key in `/opt/bob/firmantes_instalacion`;
 6. for `cadena`, needs the `supabase` CLI to be the version CI pins
    (`SUPABASE_CLI_VERSION`, read from the signed tree);
-7. shows the commit, the pair and the commit's log (non-printing characters
-   removed), and installs only if Henry, at a terminal, types `instalo`;
+7. shows the commit, the pair, the settings and where it sends passwords,
+   then the commit's log (non-printing characters removed), then the commit,
+   the pair and the settings again, and installs only if Henry, at a
+   terminal, types `instalo`. That is a last look, not proof that Henry is
+   there: the barrier is the signature;
 8. runs `instalar-bob.sh` from that directory, as root, and only if it ends
    well writes the new digest as the box's state. The directory is removed.
 
@@ -790,8 +802,7 @@ root's, with `BOB_FIRMA_VERIFICADA` set; only CI skips that, on a stack it
 throws away.
 
 **Withdrawing an approval.** A signed approval cannot be taken back from
-wherever it was copied. Two stops: Henry types `instalo` only after reading
-what is shown, and `/opt/bob/aprobaciones-revocadas` (root's) lists digests or
+wherever it was copied. The stop is `/opt/bob/aprobaciones-revocadas` (root's) lists digests or
 `<base>-<nueva>` pairs, one per line, `#` for comments; an approval of a listed
 digest or pair is refused. When a signed change is abandoned, Henry adds it
 there on every box.

@@ -167,7 +167,7 @@ describe('on a box', () => {
     assert.ok(res.ran[0].startsWith(join(b.raiz, 'trabajo.')), `ran from ${res.ran[0]}, not from the checkout`)
     assert.equal(res.ran[1], d); assert.equal(res.ran[2], 'unset', 'the caller\'s environment does not reach it'); assert.equal(res.ran[3], 'committed')
     assert.equal(res.ran[4], 'unset', 'a connection setting in the environment does not reach it either')
-    assert.match(res.out.stdout, new RegExp(`commit ${b.r.git('rev-parse', 'HEAD')}\\nbase   a{64} \\(this box\\)\\nnueva  ${d}`), 'Henry sees the commit and the pair')
+    assert.match(res.out.stdout, new RegExp(`commit +${b.r.git('rev-parse', 'HEAD')}\\nbase +a{64} \\(this box\\)\\nnueva +${d}`), 'Henry sees the commit and the pair')
     assert.equal(res.state, d, 'the box now stands at the new digest')
     assert.deepEqual(readdirSync(b.raiz).filter((f) => f.startsWith('trabajo.')), [], 'the directory is removed')
     const again = b.caja(); assert.equal(again.out.status, 0, again.out.stderr); assert.equal(again.state, d, 'running it again is accepted')
@@ -237,8 +237,18 @@ describe('on a box', () => {
   })
   test('connection settings go as arguments, each checked', () => {
     const b = box(); b.approve('a'.repeat(64))
+    refusedBefore(b.caja(undefined, { args: ['POSTGRES_HOST=db.example.com'] }), /not loopback nor in .*hosts-permitidos/)
+    writeFileSync(join(b.raiz, 'hosts-permitidos'), '# the database container\ndb.example.com\n'); chmodSync(join(b.raiz, 'hosts-permitidos'), 0o644)
     const okr = b.caja(undefined, { args: ['POSTGRES_HOST=db.example.com'] })
     assert.equal(okr.out.status, 0, okr.out.stderr); assert.equal(okr.ran[4], 'db.example.com')
+    const shown = okr.out.stdout.split('== Again:')
+    assert.equal(shown.length, 2, 'the commit and the pair are shown again after the log')
+    for (const part of shown) {
+      assert.match(part, /settings +POSTGRES_HOST=db\.example\.com/, 'Henry sees the settings')
+      assert.match(part, /sends passwords to postgres@db\.example\.com:5432/)
+    }
+    chmodSync(join(b.raiz, 'hosts-permitidos'), 0o666)
+    refusedBefore(b.caja(undefined, { args: ['POSTGRES_HOST=db.example.com'] }), /writable by others/)
     refusedBefore(b.caja(undefined, { args: ['POSTGRES_HOST=x;touch /tmp/p'] }), /POSTGRES_HOST refused/)
     refusedBefore(b.caja(undefined, { args: ['POSTGRES_HOST=-oProxyCommand'] }), /POSTGRES_HOST refused/)
     refusedBefore(b.caja(undefined, { args: ['BASH_ENV=/tmp/x'] }), /unknown setting/)
@@ -279,6 +289,8 @@ describe('on a box', () => {
     const d = tmp('prog-'); writeFileSync(join(d, 'psql'), '#!/bin/sh\n'); chmodSync(join(d, 'psql'), 0o755)
     const r = run(['herramienta', join(d, 'psql')]); assert.equal(r.status, 1); assert.match(r.stderr, /not owned by uid 0/)
     assert.equal(run(['herramienta', '/bin/sh']).status, 0, 'a system program is accepted')
+    const dr = run(['herramienta', d]); assert.equal(dr.status, 1, 'a directory on the PATH not root\'s is refused')
+    assert.equal(run(['herramienta', '/bin']).status, 0, 'a system directory is accepted')
     rmSync(d, { recursive: true })
   })
   test('caja proper needs root', () => {

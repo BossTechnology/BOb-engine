@@ -130,18 +130,40 @@ cadena_propia() {  # <path>: the file, every link to it and every directory up t
   propio "$f" 0
 }
 
-# Every program caja and instalar-bob.sh run as root, where it is found on the
-# fixed PATH, must be root's along its whole path. One that is missing is not
-# run either (instalar-bob.sh stops); git and ssh-keygen are required.
-HERRAMIENTAS="bash env git ssh-keygen psql docker supabase setpriv flock stat sed awk grep sort cut tr od wc
-  mktemp cmp cat mv chmod mkdir rm tail head dirname basename sha256sum shasum tee id ls"
+# Whatever caja and instalar-bob.sh can run as root is found on the fixed PATH
+# or in git's exec-path. Discovered, not listed: every directory there must be
+# root's along its whole path; every file in it, and every file a link in it
+# points to, root's and writable by no group or other; and the directories
+# those links lead to, root's along their whole path.
+directorio_propio() {  # <dir>
+  local d=$1 bad t
+  cadena_propia "$d"
+  bad=$(find -L "$d" -mindepth 1 -maxdepth 1 \( ! -uid 0 -o -perm -0002 -o -perm -0020 \) -print 2>/dev/null | head -1)
+  [ -z "$bad" ] || fail "$bad (on the PATH) is not root's, or is writable by a group or others: refused"
+  find "$d" -mindepth 1 -maxdepth 1 -type l -exec readlink -f {} + 2>/dev/null | while IFS= read -r t; do
+    [ -e "$t" ] && dirname "$t"
+  done | sort -u | while IFS= read -r t; do cadena_propia "$t"; done
+}
 herramientas() {
-  local t p
-  for t in $HERRAMIENTAS; do
-    p=$(command -v "$t" 2>/dev/null) || continue
-    case "$p" in /*) cadena_propia "$p" ;; esac   # a builtin is bash's own
-  done
+  local d
   command -v git >/dev/null && command -v ssh-keygen >/dev/null || fail "git and ssh-keygen are required"
+  for d in ${PATH_FIJO//:/ }; do [ -d "$d" ] && directorio_propio "$d"; done
+  d=$(git --exec-path) || fail "git --exec-path failed"
+  directorio_propio "$d"
+}
+
+# hosts: where root sends a password. Loopback, or a line of
+# <raiz>/hosts-permitidos (root's): the database's container name, for one.
+host_permitido() {  # <raiz> <uid> <host>
+  local l
+  case "$3" in 127.0.0.1|localhost|::1) return 0 ;; esac
+  [ -f "$1/hosts-permitidos" ] || return 1
+  propio "$1/hosts-permitidos" "$2"
+  while IFS= read -r l; do l=${l%%#*}; l=${l//[[:space:]]/}; [ "$l" = "$3" ] && return 0; done < "$1/hosts-permitidos"
+  return 1
+}
+clave() {  # <file> <KEY>: a value, as instalar-bob.sh reads it
+  sed -n "s/^$2=//p" "$1" | tail -1 | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/"
 }
 
 revocada() {  # <file> <base> <nueva>: is the pair, or the new digest, revoked?
@@ -180,7 +202,7 @@ revocada() {  # <file> <base> <nueva>: is the pair, or the new digest, revoked?
 #   8. instalar-bob.sh runs from that directory, and only if it ends well is
 #      the new digest written as this box's state. The directory is removed.
 caja() {
-  local raiz=$1 uid=$2 relajado=$3 repo=$4 commit=$5 step=$6 v gd d prev cand ok c base pin have rc n src up ans f
+  local raiz=$1 uid=$2 relajado=$3 repo=$4 commit=$5 step=$6 v gd d prev cand ok c base pin have rc n src up ans f h hosts
   case "$step" in cadena|resto) ;; *) fail "step: cadena or resto" ;; esac
   [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || fail "the commit: its full sha, as Henry read it (git rev-parse HEAD)"
   [[ "$repo" =~ ^/[A-Za-z0-9_./-]+$ ]] || fail "the repository: an absolute path in [A-Za-z0-9_./-]"
@@ -203,9 +225,20 @@ caja() {
   propio "$raiz/aprobaciones-revocadas" "$uid"
   propio "$raiz/instalacion-firmada" "$uid"
   [ ! -e "$raiz/aprobaciones" ] || propio "$raiz/aprobaciones" "$uid"
-  # The connection files are read by root: root's, as the rest.
-  [ -z "${POSTGRES_ENV:-}" ] || propio "$POSTGRES_ENV" "$uid"
-  if [ "$step" = resto ]; then f=${MIGRADOR_ENV:-$raiz/secrets/migrador.env}; [ ! -e "$f" ] || propio "$f" "$uid"; fi
+  # The connection files are read by root: root's, along their whole path.
+  conf() { if [ "$relajado" = relajado ]; then propio "$1" "$uid"; else cadena_propia "$1"; fi; }
+  [ -z "${POSTGRES_ENV:-}" ] || conf "$POSTGRES_ENV"
+  # Root sends passwords only to a permitted host.
+  hosts="postgres@${POSTGRES_HOST:-127.0.0.1}:${POSTGRES_PORT:-5432}"
+  host_permitido "$raiz" "$uid" "${POSTGRES_HOST:-127.0.0.1}" || fail "POSTGRES_HOST ${POSTGRES_HOST} is not loopback nor in $raiz/hosts-permitidos: refused"
+  if [ "$step" = resto ]; then
+    f=${MIGRADOR_ENV:-$raiz/secrets/migrador.env}
+    if [ -e "$f" ]; then
+      conf "$f"; h=$(clave "$f" MIGRADOR_HOST)
+      [ -z "$h" ] || host_permitido "$raiz" "$uid" "$h" || fail "MIGRADOR_HOST in $f is not loopback nor in $raiz/hosts-permitidos: refused"
+      hosts="$hosts, migrador@${h:-?}:${MIGRADOR_PUERTO:-5432} (from $f)"
+    fi
+  fi
 
   # One at a time; what an interrupted run left is removed.
   if command -v flock >/dev/null; then
@@ -222,7 +255,7 @@ caja() {
   up=()
   if [ "$relajado" != relajado ]; then
     # git-upload-pack reads the caller's repository as the caller, never as root.
-    [[ "${FIRMA_UID:-}" =~ ^[1-9][0-9]*$ && "${FIRMA_GID:-}" =~ ^[0-9]+$ ]] || fail "run through sudo, as Henry: SUDO_UID is missing"
+    [[ "${FIRMA_UID:-}" =~ ^[1-9][0-9]*$ && "${FIRMA_GID:-}" =~ ^[1-9][0-9]*$ ]] || fail "run through sudo, as Henry: SUDO_UID is missing"
     command -v setpriv >/dev/null || fail "setpriv is required"
     up=(--upload-pack="setpriv --reuid=$FIRMA_UID --regid=$FIRMA_GID --clear-groups env HOME=/ git-upload-pack")
   fi
@@ -263,13 +296,21 @@ caja() {
     [ -n "$pin" ] && [ "$have" = "$pin" ] || fail "the supabase CLI here is '${have:-none}', CI pins '${pin:-none}': nothing installed"
   fi
 
-  # Henry sees what he is about to install, and says so. An approval cannot be
-  # withdrawn from a repository; this, and the revocation list, are the stop.
+  # Henry sees what is about to run, with which settings, and says so. This is
+  # a last look, not proof that he is there: the barrier is the signature.
+  resumen() {
+    echo "commit   $commit"
+    echo "base     $prev (this box)"
+    echo "nueva    $d (approval in $src)"
+    echo "settings ${ajustes:-none}"
+    echo "sends passwords to $hosts"
+  }
+  ajustes=""; for v in $PASAN; do [ -z "${!v:-}" ] || ajustes="$ajustes $v=${!v}"; done
   echo "== About to run $step on this box, as root"
-  echo "commit $commit"
-  echo "base   $prev (this box)"
-  echo "nueva  $d (approval in $src)"
+  resumen
   G --git-dir="$gd" --no-pager log --oneline --no-decorate -n 30 "$commit" | LC_ALL=C tr -cd '[:print:]\n'
+  echo "== Again:"
+  resumen
   if [ "$relajado" != relajado ]; then [ -t 0 ] || fail "the confirmation needs a terminal"; fi
   printf 'Type «instalo» to install it: '
   read -r ans || ans=""
@@ -309,7 +350,7 @@ case "$cmd" in
   huella) huella "${1:?rev}" "${2:-.}" "${3:-}" ;;
   mensaje) mensaje "${1:?}" "${2:?}" ;;
   verificar) verificar "${1:?}" "${2:?}" "${3:?}" ;;
-  herramienta) cadena_propia "${1:?path}"; echo "root's along its whole path: $1" ;;
+  herramienta) if [ -d "${1:?path}" ]; then directorio_propio "$1"; else cadena_propia "$1"; fi; echo "root's along its whole path: $1" ;;
   caja)
     [ "$(id -u)" = 0 ] || fail "run as root: sudo /opt/bob/bin/firma-instalacion caja <repo> <commit> cadena|resto [VAR=value …]"
     NFIJOS=3; [ "${FIRMA_ENV_LIMPIO:-}" = 1 ] || limpio /root caja "$@"

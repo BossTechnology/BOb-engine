@@ -104,6 +104,17 @@ unset PGPASSWORD
 
 : "${POSTGRES_ENV:?POSTGRES_ENV: the file holding POSTGRES_PASSWORD}"
 PG_HOST=${POSTGRES_HOST:-127.0.0.1}; PG_PORT=${POSTGRES_PORT:-5432}
+# On a box, root sends passwords only to loopback or a host in
+# /opt/bob/hosts-permitidos (root's); caja checked it too, and showed it.
+permitido() {
+  signed_tree || return 0
+  case "$1" in 127.0.0.1|localhost|::1) return 0 ;; esac
+  [ -f /opt/bob/hosts-permitidos ] && sed -e 's/#.*//' -e 's/[[:space:]]//g' /opt/bob/hosts-permitidos | grep -qxF -- "$1"
+}
+permitido "$PG_HOST" || { echo "POSTGRES_HOST $PG_HOST is not permitted (/opt/bob/hosts-permitidos)" >&2; exit 2; }
+# libpq 16+ refuses a server that does not ask for SCRAM: the password never
+# goes in the clear, nor to a server that skips authentication.
+export PGREQUIREAUTH=scram-sha-256
 pw=$(key "$POSTGRES_ENV" POSTGRES_PASSWORD)
 [ -n "$pw" ] || { echo "$POSTGRES_ENV lacks POSTGRES_PASSWORD" >&2; exit 2; }
 ( umask 077; pgpass_line "$PG_HOST" "$PG_PORT" postgres "$pw" > "$priv/pgpass" )
@@ -137,12 +148,13 @@ M_PORT=${MIGRADOR_PUERTO:-5432}
 mpw=$(key "$ENVF" MIGRADOR_CLAVE)
 [ -n "$M_USER" ] && [ -n "$M_HOST" ] && [ -n "$mpw" ] || { echo "$ENVF lacks MIGRADOR_USUARIO, MIGRADOR_HOST or MIGRADOR_CLAVE" >&2; exit 2; }
 [[ "$M_USER" =~ ^[a-z_][a-z0-9_]*$ ]] || { echo "MIGRADOR_USUARIO is not a role name" >&2; exit 2; }
+permitido "$M_HOST" || { echo "MIGRADOR_HOST $M_HOST is not permitted (/opt/bob/hosts-permitidos)" >&2; exit 2; }
 mkdir -m 700 "$priv/m"
 ( umask 077; pgpass_line "$M_HOST" "$M_PORT" "$M_USER" "$mpw" > "$priv/m/pgpass" )
 unset mpw
 if [ -n "$M_NET" ]; then
   img=$(docker inspect -f '{{.Image}}' "$M_HOST")
-  mig() { docker run --rm --user 0 --network "$M_NET" -v "$priv/m:/run/bob:ro" -e PGPASSFILE=/run/bob/pgpass "$img" \
+  mig() { docker run --rm --user 0 --network "$M_NET" -v "$priv/m:/run/bob:ro" -e PGPASSFILE=/run/bob/pgpass -e PGREQUIREAUTH=scram-sha-256 "$img" \
             psql -h "$M_HOST" -p "$M_PORT" -U "$M_USER" -d postgres -X -q -v ON_ERROR_STOP=1 "$@"; }
 else
   mig() { PGPASSFILE="$priv/m/pgpass" psql -h "$M_HOST" -p "$M_PORT" -U "$M_USER" -d postgres -X -q -v ON_ERROR_STOP=1 "$@"; }

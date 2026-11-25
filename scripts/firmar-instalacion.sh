@@ -13,12 +13,13 @@
 # default ~/.ssh/id_ed25519_sk) in the namespace bob-install-chain, which is
 # this approval's alone: the key is not the one in Bzzz's
 # config/bob/firmantes_imagen. It writes <base>-<nueva>.aprobacion and its
-# .sig into <dir> (default ./aprobacion), to copy to the box's
+# .sig into <dir> (default a new directory under $TMPDIR, never the
+# checkout), to copy to the box's
 # /opt/bob/aprobaciones/ as root. Nothing is committed.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 new_rev=${1:?Usage: $0 <rev-nueva> --base <rev-base> [--salida <dir>]}; shift
-base_rev=""; out=aprobacion
+base_rev=""; out=""
 while [ $# -gt 0 ]; do
   case "$1" in --base) base_rev=${2:?}; shift 2 ;; --salida) out=${2:?}; shift 2 ;; *) echo "unknown: $1" >&2; exit 2 ;; esac
 done
@@ -40,6 +41,7 @@ echo "base  $b"
 echo "nueva $n"
 read -r -p "Type 'firmo' to sign this pair with the key at $KEY: " ok
 [ "$ok" = firmo ] || { echo "Not signed."; exit 1; }
+[ -n "$out" ] || out=$(mktemp -d "${TMPDIR:-/tmp}/bob-aprobacion.XXXXXX")
 mkdir -p "$out"
 a=$out/$b-$n.aprobacion
 "$F" mensaje "$b" "$n" > "$a"
