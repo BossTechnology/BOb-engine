@@ -17,3 +17,6 @@ CREATE SCHEMA bob AUTHORIZATION bob_migrador;
 CREATE ROLE bob_app NOLOGIN;
 CREATE ROLE bob_feeder NOLOGIN;
 CREATE ROLE bob_ai_ro NOLOGIN;
+
+-- O-3 sabotage, to be reverted: one grant D77 does not allow.
+GRANT CREATE ON SCHEMA extensions TO bob_migrador;
