@@ -189,4 +189,4 @@ jobs:
       - name: Apply the chain as bob_migrador
         env:
           ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
-        run: CHAIN_DIR="$RUNNER_TEMP/chain" node scripts/owner-chain-probe.mjs
+        run: CHAIN_DIR="$RUNNER_TEMP/chain" PROVISION=supabase/provision/bob-vecina.sql node scripts/owner-chain-probe.mjs

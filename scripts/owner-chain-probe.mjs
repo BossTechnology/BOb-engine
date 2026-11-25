@@ -1,97 +1,78 @@
 #!/usr/bin/env node
-// O-3 (D77): apply the migration chain as bob_migrador, not as postgres, on a
-// database that has Supabase and no BOb yet, and report every place it stops.
+// O-3 (D77): apply the migration chain as bob_migrador, not as postgres, over
+// a Supabase database with no BOb in it.
 //
-//   ADMIN_URL=postgresql://postgres:…@host:port/postgres \
-//   CHAIN_DIR=<dir of migrations> [PROVISION=<sql postgres runs first>] \
-//   node scripts/owner-chain-probe.mjs
+//   ADMIN_URL=postgresql://postgres:…@host:port/postgres CHAIN_DIR=<dir> \
+//   PROVISION=supabase/provision/bob-vecina.sql node scripts/owner-chain-probe.mjs
 //
-// For each migration, in order, as bob_migrador, in its own transaction. When
-// one fails, the failure is recorded, postgres applies that migration instead,
-// and whatever it created is handed to bob_migrador, as a run that had passed
-// would have left it. So one run lists every blocker, not only the first.
-// Diagnostic: it changes the database it is pointed at. Never a customer box.
+// 1. postgres applies PROVISION, one statement at a time; a statement postgres
+//    cannot run is reported (it could not go in bob.sql as written).
+// 2. bob_migrador applies the chain, each migration in its own transaction,
+//    and stops at the first one it cannot apply.
+// 3. What bob_migrador owns, and may do, outside `bob` once it is done.
+// Exits 1 if anything stopped. It changes the database it points at: never a
+// customer box.
 
 import pg from 'pg'
 import { readFileSync, readdirSync } from 'node:fs'
 
 const adminUrl = process.env.ADMIN_URL
 const dir = process.env.CHAIN_DIR
-if (!adminUrl || !dir) { console.error('ADMIN_URL and CHAIN_DIR are required'); process.exit(2) }
+const prov = process.env.PROVISION
+if (!adminUrl || !dir || !prov) { console.error('ADMIN_URL, CHAIN_DIR and PROVISION are required'); process.exit(2) }
 const PASSWORD = 'bob_migrador-local-test'
+let failed = false
 
 const admin = new pg.Client({ connectionString: adminUrl })
 await admin.connect()
-await admin.query(`DO $$ BEGIN
-  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'bob_migrador') THEN
-    CREATE ROLE bob_migrador LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
-  END IF; END $$`)
+console.log('== provisioning, as postgres')
+// Statements end at a semicolon closing a line; the file holds no bodies.
+const statements = readFileSync(prov, 'utf8').replace(/--.*$/gm, '').split(/;\s*$/m)
+  .map((s) => s.trim()).filter(Boolean)
+for (const s of statements) {
+  try { await admin.query(s); console.log(`ok   ${s.split('\n')[0]}`) }
+  catch (e) { failed = true; console.log(`FAIL ${s.split('\n')[0]}\n    ${e.code} ${e.message}`) }
+}
 await admin.query(`ALTER ROLE bob_migrador PASSWORD '${PASSWORD}'`)
-// Probe only: lets postgres hand a fallback's objects to bob_migrador.
-await admin.query('GRANT bob_migrador TO postgres')
-if (process.env.PROVISION) await admin.query(readFileSync(process.env.PROVISION, 'utf8'))
 
 const url = new URL(adminUrl)
 url.username = 'bob_migrador'
 url.password = PASSWORD
 const owner = new pg.Client({ connectionString: url.toString() })
 await owner.connect()
-
-// What postgres owns outside the system schemas, to hand over what a fallback creates.
-const OWNED = `
-  SELECT 'TABLE' AS kind, format('%I.%I', n.nspname, c.relname) AS name, c.relkind::text AS sub
-    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-   WHERE c.relowner = 'postgres'::regrole AND c.relkind IN ('r','p','v','m','S','f')
-     AND n.nspname NOT IN ('pg_catalog','information_schema')
-  UNION ALL
-  SELECT 'FUNCTION', p.oid::regprocedure::text, p.prokind::text FROM pg_proc p
-   JOIN pg_namespace n ON n.oid = p.pronamespace
-   WHERE p.proowner = 'postgres'::regrole AND n.nspname NOT IN ('pg_catalog','information_schema')
-  UNION ALL
-  SELECT 'TYPE', format('%I.%I', n.nspname, t.typname), t.typtype::text FROM pg_type t
-   JOIN pg_namespace n ON n.oid = t.typnamespace
-   WHERE t.typowner = 'postgres'::regrole AND t.typtype IN ('e','d','c') AND t.typrelid = 0
-     AND n.nspname NOT IN ('pg_catalog','information_schema')
-  UNION ALL
-  SELECT 'SCHEMA', quote_ident(nspname), '' FROM pg_namespace
-   WHERE nspowner = 'postgres'::regrole AND nspname NOT LIKE 'pg\\_%' AND nspname <> 'information_schema'`
-const key = (r) => `${r.kind} ${r.name}`
-
-const blockers = []
-let applied = 0
+console.log('== the chain, as bob_migrador')
 for (const f of readdirSync(dir).filter((f) => /^\d{14}_.*\.sql$/.test(f)).sort()) {
-  const sql = readFileSync(`${dir}/${f}`, 'utf8')
   try {
-    await owner.query('BEGIN'); await owner.query(sql); await owner.query('COMMIT'); applied++
+    await owner.query(readFileSync(`${dir}/${f}`, 'utf8'))
+    await owner.query('ROLLBACK').catch(() => {}) // a file that left a transaction open
     console.log(`ok   ${f}`)
   } catch (e) {
-    await owner.query('ROLLBACK')
-    const b = { migration: f, code: e.code, message: e.message, where: (e.where || '').split('\n')[0] }
-    blockers.push(b)
-    console.log(`STOP ${f}\n    ${b.code} ${b.message}${b.where ? `\n    at ${b.where}` : ''}`)
-    const before = new Set((await admin.query(OWNED)).rows.map(key))
-    await admin.query('BEGIN')
-    try { await admin.query(sql) } catch (err) {
-      await admin.query('ROLLBACK')
-      console.log(`    and postgres cannot apply it either: ${err.code} ${err.message}; the probe ends here`)
-      break
-    }
-    const fresh = (await admin.query(OWNED)).rows.filter((r) => !before.has(key(r)))
-    for (const r of fresh) {
-      const kind = r.kind === 'TABLE'
-        ? ({ v: 'VIEW', m: 'MATERIALIZED VIEW', S: 'SEQUENCE', f: 'FOREIGN TABLE' }[r.sub] || 'TABLE')
-        : r.kind === 'FUNCTION' ? (r.sub === 'p' ? 'PROCEDURE' : 'FUNCTION') : r.kind
-      if (r.kind === 'TABLE' && r.sub === 'S') continue // owned sequences follow their table
-      await admin.query('SAVEPOINT handover')
-      await admin.query(`ALTER ${kind} ${r.name} OWNER TO bob_migrador`).catch(async (err) => {
-        await admin.query('ROLLBACK TO SAVEPOINT handover')
-        console.log(`    cannot hand ${kind} ${r.name} over: ${err.message}`)
-      })
-    }
-    await admin.query('COMMIT')
+    failed = true
+    await owner.query('ROLLBACK').catch(() => {})
+    console.log(`STOP ${f}\n    ${e.code} ${e.message}${e.where ? `\n    at ${e.where.split('\n')[0]}` : ''}`)
+    break
   }
 }
-await owner.end(); await admin.end()
+await owner.end()
 
-console.log(`applied as bob_migrador: ${applied}; stopped: ${new Set(blockers.map((b) => b.migration)).size}`)
-for (const b of blockers) console.log(`- ${b.migration}\n    ${b.code} ${b.message}${b.where ? `\n    at ${b.where}` : ''}`)
+console.log('== what bob_migrador holds outside bob')
+const { rows: owns } = await admin.query(`
+  SELECT n.nspname || '.' || c.relname AS obj, c.relkind::text AS kind FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+   WHERE c.relowner = 'bob_migrador'::regrole AND n.nspname <> 'bob' AND c.relkind <> 'S'
+  UNION ALL
+  SELECT p.oid::regprocedure::text, 'function' FROM pg_proc p
+   WHERE p.proowner = 'bob_migrador'::regrole AND p.pronamespace <> 'bob'::regnamespace
+  UNION ALL
+  SELECT 'publication ' || pubname, 'publication' FROM pg_publication WHERE pubowner = 'bob_migrador'::regrole
+  ORDER BY 1`)
+for (const r of owns) console.log(`owns ${r.kind} ${r.obj}`)
+const { rows: privs } = await admin.query(`
+  SELECT n.nspname, string_agg(p, ',') AS privs FROM pg_namespace n,
+         unnest(ARRAY['USAGE','CREATE']) p
+   WHERE n.nspname NOT IN ('bob') AND n.nspname NOT LIKE 'pg\\_%' AND n.nspname <> 'information_schema'
+     AND has_schema_privilege('bob_migrador', n.oid, p)
+   GROUP BY 1 ORDER BY 1`)
+for (const r of privs) console.log(`may  ${r.privs} on schema ${r.nspname}`)
+await admin.end()
+process.exit(failed ? 1 : 0)
