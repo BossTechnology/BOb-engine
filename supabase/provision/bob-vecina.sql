@@ -7,6 +7,10 @@
 -- The owner. LOGIN; its password is set by the box's secret, never here.
 CREATE ROLE bob_migrador LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
 
+-- On Postgres 15 a role's creator is not its admin, and CREATE SCHEMA …
+-- AUTHORIZATION needs membership in the owner (measured, 77d8bbb).
+GRANT bob_migrador TO postgres;
+
 -- Its schema, so it needs no CREATE on the database.
 CREATE SCHEMA bob AUTHORIZATION bob_migrador;
 

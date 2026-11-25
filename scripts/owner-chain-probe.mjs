@@ -25,12 +25,38 @@ let failed = false
 
 const admin = new pg.Client({ connectionString: adminUrl })
 await admin.connect()
+console.log('== what postgres may grant on what the chain touches')
+const { rows: can } = await admin.query(`
+  SELECT 'schema ' || s AS obj, p, has_schema_privilege('postgres', s, p || ' WITH GRANT OPTION') AS grantable
+    FROM unnest(ARRAY['auth','public','extensions']) s, unnest(ARRAY['USAGE','CREATE']) p
+  UNION ALL
+  SELECT 'table auth.users', p, has_table_privilege('postgres', 'auth.users', p || ' WITH GRANT OPTION')
+    FROM unnest(ARRAY['SELECT','TRIGGER','REFERENCES']) p
+  UNION ALL
+  SELECT 'function ' || f, 'EXECUTE', has_function_privilege('postgres', f, 'EXECUTE WITH GRANT OPTION')
+    FROM unnest(ARRAY['auth.jwt()','auth.uid()']) f`)
+for (const r of can) console.log(`${r.grantable ? 'can ' : 'cannot'} grant ${r.p} on ${r.obj}`)
+const { rows: [own] } = await admin.query(`SELECT
+  (SELECT nspowner::regrole::text FROM pg_namespace WHERE nspname = 'auth') AS auth,
+  (SELECT nspowner::regrole::text FROM pg_namespace WHERE nspname = 'public') AS public,
+  (SELECT relowner::regrole::text FROM pg_class WHERE oid = 'auth.users'::regclass) AS users,
+  (SELECT pubowner::regrole::text FROM pg_publication WHERE pubname = 'supabase_realtime') AS pub`)
+console.log(`owners: schema auth ${own.auth}, schema public ${own.public}, auth.users ${own.users}, supabase_realtime ${own.pub}`)
+// A GRANT without the grant option only warns; it is reported as a failure here.
+const warnings = []
+admin.on('notice', (n) => warnings.push(n.message))
 console.log('== provisioning, as postgres')
 // Statements end at a semicolon closing a line; the file holds no bodies.
 const statements = readFileSync(prov, 'utf8').replace(/--.*$/gm, '').split(/;\s*$/m)
   .map((s) => s.trim()).filter(Boolean)
 for (const s of statements) {
-  try { await admin.query(s); console.log(`ok   ${s.split('\n')[0]}`) }
+  try {
+    warnings.length = 0
+    await admin.query(s)
+    const w = warnings.filter((m) => /privileges? (were|was) (not )?granted|no privileges/i.test(m))
+    if (w.length) { failed = true; console.log(`FAIL ${s.split('\n')[0]}\n    warning: ${w.join('; ')}`) }
+    else console.log(`ok   ${s.split('\n')[0]}`)
+  }
   catch (e) { failed = true; console.log(`FAIL ${s.split('\n')[0]}\n    ${e.code} ${e.message}`) }
 }
 await admin.query(`ALTER ROLE bob_migrador PASSWORD '${PASSWORD}'`)
@@ -62,7 +88,8 @@ const { rows: owns } = await admin.query(`
    WHERE c.relowner = 'bob_migrador'::regrole AND n.nspname <> 'bob' AND c.relkind <> 'S'
   UNION ALL
   SELECT p.oid::regprocedure::text, 'function' FROM pg_proc p
-   WHERE p.proowner = 'bob_migrador'::regrole AND p.pronamespace <> 'bob'::regnamespace
+   WHERE p.proowner = 'bob_migrador'::regrole
+     AND p.pronamespace <> (SELECT oid FROM pg_namespace WHERE nspname = 'bob')
   UNION ALL
   SELECT 'publication ' || pubname, 'publication' FROM pg_publication WHERE pubowner = 'bob_migrador'::regrole
   ORDER BY 1`)
