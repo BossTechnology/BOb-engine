@@ -3261,3 +3261,19 @@ Relayed by the session that owns the release, 23 Nov. Nothing high.
 - **Low · noted.** The check reads only the database it connects to:
   `pg_extension` and `pg_foreign_server` are per database, so an extension in
   another database of the same cluster is not seen. BOb's boxes hold one.
+
+## O-3 · the chain applied by its own owner — measured, not decided
+
+D77 (Henry, 24 Nov) puts BOb beside the box's apps, on the box's database and
+GoTrue, with one schema per neighbour app, and its §2.8 names the owner
+`bob_migrador`. Objection O-3: the chain is applied today by `postgres`, which
+can touch every schema, `auth` included. Measured in CI on PR #48, a Supabase
+stack started with no migration: `bob_migrador` applies 12 of the 33 files and
+stops at 21. Five causes, none cleared by a grant D77 allows: creating in
+`public` (17 files), the trigger on `auth.users`, the `supabase_realtime`
+publication, `CREATE ROLE` and `CREATE SCHEMA IF NOT EXISTS`. And the one grant
+that is needed outside `bob`, USAGE on `auth`, only `supabase_admin` can give,
+not `postgres`. The table, `bob.sql`'s measured content and the guard are in
+P5 §6.2, "Applied by `bob_migrador`". The guard is
+`scripts/owner-chain-check.mjs`, a required check, seen red twice before green.
+Open for Henry: a baseline for new boxes, or `postgres` until one exists.

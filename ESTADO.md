@@ -62,6 +62,7 @@
   - CHASS1S (repo `CHS`): 137 de producción. jszip tiene doble licencia (MIT o GPL), duck declara solo «BSD» y Chromium se descarga en tiempo de ejecución.
 
 ## Pendiente
+- O-3 (D77): medido en el PR #48, sin fusionar. `bob_migrador` no puede aplicar la cadena tal como está: se traba en 21 de 33 migraciones (crea en `public`, trigger en `auth.users`, la publicación `supabase_realtime`, `CREATE ROLE`, `CREATE SCHEMA`), y el USAGE en `auth` solo lo da `supabase_admin`, no `postgres`. Decide Henry: una migración base para cajas nuevas, o `postgres` como aplicador hasta tenerla. Tabla en P5 §6.2.
 - Slice 3: que Federico acepte F-28 a F-34, F-38 y F-39 (0.6) y diga cuáles son las «nueve reglas» y los «siete consumidores». El aviso y su corrección están publicados en la tarea 6. La implementación está en el PR #40 (abierto, con las funciones de la celda en `bob` desde F-47) y se fusiona cuando Federico acepte la 0.6.
 - Abiertos del Slice 3 (spec §10): ceros por actor en el drill-down (se decide con el Slice 7), materializar `bob_cell_state` solo si el `EXPLAIN` lo pide, ceros de `hallucinations` cuando el alimentador pueda ver el ground truth, y F-34 (resolución de referencias AREP).
 - Bob-New PR #29 (matriz mínima): su «no configurado» no lee los marcadores de D-14. La matriz definitiva lee `v_cell_state` y no reimplementa las reglas.

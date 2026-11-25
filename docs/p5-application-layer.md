@@ -502,7 +502,7 @@ The reasons:
 |---|---|
 | What is applied | A BOb-engine commit on `main` with four green checks. The box pins the commit SHA, the way it pins images (D4, D9), and reports it in its manifest (task 3.11) |
 | With what | The Supabase CLI at the version CI pins (`SUPABASE_CLI_VERSION`, today 2.120.0): `supabase db push --db-url …` against `supabase-db` on `bzzz-app`. It writes `supabase_migrations.schema_migrations` exactly as CI's reset does, so the same F-15 check reads the box |
-| As whom | The migration owner (`postgres` in the Supabase image), from `/opt/bzzz/secrets/bob/migrador.env`, its own file (§8, objection 6). It owns every object, which the `SECURITY DEFINER` functions and definer views need |
+| As whom | The migration owner, from `/opt/bzzz/secrets/bob/migrador.env`, its own file (§8, objection 6). It owns every object, which the `SECURITY DEFINER` functions and definer views need. D77 §2.8 names it `bob_migrador` (LOGIN, NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE, no CREATE on the database), with what lies outside `bob` in Bzzz `config/supabase/vecinas/bob.sql`, applied by `postgres`. **Measured 2026-11-24 (O-3): the chain as written cannot be applied by it.** See "Applied by `bob_migrador`" below |
 | From where | A step in `scripts/actualizar.sh`, after the database and before any service that uses the new schema. That follows BzzzBX's rule of migration before code, as with the centro's 009 |
 | Who runs it | Henry, in a maintenance window with notice to the company (CLAUDE.md: production is Henry's). Never an agent, and never a running service |
 | How it is tried first | Development runs on a local Supabase pinned to the box's images and to CI's CLI version (§5.1, Q3 **[DECIDED]**). Then `supabase db push --dry-run` on `bzzz-lab-02`, the real apply there, then `bzzz-model-01`, then the company boxes. lab-02 is where every chain is applied first. This is plan §3.6's `--plan` habit, and D16's rule that tests run on another machine, never on a second copy |
@@ -513,6 +513,59 @@ The reasons:
   container changes no row of this table. But options (a), (b) and (d) of
   §7, Q6 each need a new migration (a table, a function or a grant). It goes
   through this step, lab-02 first, like any other. Option (c) needs none.
+
+**Applied by `bob_migrador` (O-3, D77 §2.8) — measured 2026-11-24, not
+decided.** The CI job "Chain applies as bob_migrador (O-3)" starts Supabase
+with no migration, provisions as below, and has `bob_migrador` apply the chain
+file by file (`scripts/owner-chain-check.mjs`). Past a stop, `supabase_admin`
+applies that file and hands what it made to `bob_migrador`, so every later file
+is measured as it would run. Result: 12 of the 33 files apply, 21 stop.
+
+| Stop | Files | Clears with a grant in `bob.sql`? | Remedy |
+|---|---|---|---|
+| Creates in `public` (tables before the move to `bob`, and functions after it: `bob_autobotz_*`, `bob_outbox_*`, `bob_grant_feeder_staging`, `custom_access_token_hook`, …) | 17: `20260606120000` to `20261121140000` | Only `CREATE ON SCHEMA public`, which `postgres` can give, and D77 does not allow: BOb would own objects in a schema it shares. With that grant, `bob_migrador` ends owning 24 functions in `public` | Change the chain. A new box needs a chain that never creates outside `bob` (a baseline, below), and a forward migration moves the functions still in `public` into `bob`. `custom_access_token_hook` is called by GoTrue by name, so moving it also changes the box's GoTrue hook setting |
+| Trigger on `auth.users` (`on_auth_user_created`, made in `…120000`, dropped in `…130000`) | `20260606120000`, `20261121130000` | No. `postgres` cannot grant TRIGGER on `auth.users` (owner `supabase_auth_admin`); `supabase_admin` can, but dropping it needs the owner | Change: the end state has no trigger, so a baseline never makes one |
+| `ALTER PUBLICATION supabase_realtime ADD TABLE` | `20260606120002` | No. The publication is `postgres`'s and the neighbours share it; giving it to `bob_migrador` also fails (it would need CREATE on the database) | Change: the baseline leaves the publication alone. If bob-web needs Realtime on a `bob` table (not measured), `postgres` adds it in the same window, after the push |
+| `CREATE ROLE bob_app …` | `20260902100300` | No. `bob.sql` creates the three roles, but `CREATE ROLE` checks CREATEROLE before it sees the role exists, and `COMMENT ON ROLE` needs it too | Change: the baseline expects the roles, made by `bob.sql` |
+| `CREATE SCHEMA IF NOT EXISTS bob` | `20261118100000` | No. `bob.sql` creates `bob` for `bob_migrador`, but the statement checks CREATE on the database first | Change: the baseline expects the schema |
+
+What `bob.sql` must hold, measured (`supabase/provision/`):
+
+- As `postgres`: `CREATE ROLE bob_migrador LOGIN NOSUPERUSER NOBYPASSRLS
+  NOCREATEDB NOCREATEROLE` (password from the box's secret);
+  `GRANT bob_migrador TO postgres`, because on Postgres 15 the creator of a
+  role is not its admin and `CREATE SCHEMA … AUTHORIZATION` needs membership;
+  `CREATE SCHEMA bob AUTHORIZATION bob_migrador`; and `bob_app`, `bob_feeder`,
+  `bob_ai_ro` as NOLOGIN roles.
+- `GRANT USAGE ON SCHEMA auth TO bob_migrador`, which every tenant policy
+  needs (they call `auth.jwt()`). **`postgres` cannot make this grant**: it
+  holds no grant option on `auth` (owner `supabase_admin`), and the GRANT only
+  warns. Only `supabase_admin` can. That contradicts D77's "applied by
+  postgres", and is for Bzzz to settle.
+- Nothing else. The check asserts `bob_migrador`'s footprint outside `bob` is
+  exactly: LOGIN and none of the other attributes, CONNECT and TEMPORARY on
+  the database, no membership, USAGE on `auth` and on `public`.
+
+Not measured: `supabase db push` as `bob_migrador` writes
+`supabase_migrations.schema_migrations`, a schema it does not own; the check
+applies files itself, not through the CLI. Nor what `bob_migrador` as owner
+changes for the `SECURITY DEFINER` functions on a box with data.
+
+The guard. CI fails if a file not in `KNOWN_STOPS` stops (so every migration
+from here on must apply as `bob_migrador`, inside `bob`), if a listed one
+starts to apply, if any provisioning statement fails or only warns, or if
+`bob_migrador` holds more or less than the footprint above. Each run it also
+checks that a migration creating in `public`, altering `auth`, or creating a
+schema is refused, that one in `bob` is not, and that an extra grant shows in
+the footprint. Seen red: with the list empty (21 findings), and with one extra
+grant in `bob-vecina.sql` and a migration creating `public.o3_sabotage`.
+
+The decision this leaves, for Henry: either (a) a baseline, one migration
+reproducing today's end state inside `bob`, for boxes with no BOb yet
+(model-01, Febor), applied by `bob_migrador`, while lab-02 keeps the history
+`postgres` applied; or (b) keep `postgres` as the applier until that is
+built, and O-3 stays open. Either way the forward migration that moves the
+remaining functions out of `public` is needed.
 
 **If a migration fails mid-chain.** What these inputs say today is read, not
 measured:
