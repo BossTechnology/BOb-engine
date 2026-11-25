@@ -1,22 +1,22 @@
 #!/usr/bin/env node
-// O-3 (D77 §2.8). Henry, 2026-11-24: «postgres una vez, luego migrador». The
-// install chain is applied once by postgres; every later migration is applied
-// by bob_migrador and must apply as it, inside bob. This check reproduces that
-// path on a Supabase stack started with no migration (CI job "Chain applies as
-// bob_migrador (O-3)"):
+// O-3 (D77 §2.8). Henry, 2026-11-24: «postgres una vez, luego migrador». A box
+// gets BOb through scripts/instalar-bob.sh: the install chain pushed by
+// postgres, the provisioning (the hand-over of bob to bob_migrador by
+// supabase_admin), and every other migration pushed by bob_migrador. CI runs
+// that script on a Supabase stack started with no migration, then this check
+// on what it left (CI job "Chain applies as bob_migrador (O-3)"):
 //
 //   ADMIN_URL=postgresql://postgres:…@host:port/postgres CHAIN_DIR=<dir> \
-//   node scripts/owner-chain-check.mjs
+//   MIGRADOR_PASSWORD=… node scripts/owner-chain-check.mjs
 //
-// A. The install chain, a closed list of files with their sha256: each must be
-//    present and unchanged, and postgres applies them, as on a box.
-// P. The provisioning: supabase/provision/bob-vecina.sql as postgres, then
-//    bob-vecina-supabase-admin.sql as supabase_admin (D77 77.21 and 77.22),
-//    which hands schema bob and everything in it to bob_migrador. Applied twice,
-//    since lab-02 gets it over an existing bob. A statement that fails, or a
-//    GRANT that only warns, is a finding.
-// B. Every other migration the CLI would apply, as bob_migrador alone. A stop
-//    is a finding.
+// A. The install chain, the closed list in install-chain.sha256: each file is
+//    present and unchanged, and every migration file (the CLI's rule: digits,
+//    an underscore, .sql) is recorded as applied.
+// P. The provisioning applied once more, statement by statement: it must be
+//    idempotent, and a GRANT that only warns is a finding. Then nothing in bob
+//    is left to anyone but bob_migrador, and no SECURITY DEFINER function
+//    lost what it uses: one outside bob that reads bob, or one in bob that
+//    calls a function outside it.
 // F. bob_migrador's footprint outside bob, discovered from the catalogs: role
 //    attributes, memberships both ways, and every object it owns or holds a
 //    privilege on, in any database, must be exactly what P gives it.
@@ -41,7 +41,8 @@ const dir = process.env.CHAIN_DIR
 if (!adminUrl || !dir) { console.error('ADMIN_URL and CHAIN_DIR are required'); process.exit(2) }
 const PROVISION = 'supabase/provision/bob-vecina.sql'
 const PROVISION_SA = 'supabase/provision/bob-vecina-supabase-admin.sql'
-const PASSWORD = 'bob_migrador-local-test'
+const PASSWORD = process.env.MIGRADOR_PASSWORD
+if (!PASSWORD) { console.error('MIGRADOR_PASSWORD is required'); process.exit(2) }
 const findings = []
 const as = (user, password) => { const u = new URL(adminUrl); u.username = user; if (password) u.password = password; return u.toString() }
 
@@ -54,20 +55,19 @@ for (const c of [admin, sa]) c.on('notice', (n) => warnings.push(n.message))
 const files = readdirSync(dir).filter((f) => /^[0-9]+_.*\.sql$/.test(f)).sort()
 const sha = (f) => createHash('sha256').update(readFileSync(`${dir}/${f}`)).digest('hex')
 
-// ── A · the install chain, as postgres ─────────────────────────────────────
-console.log('== A · the install chain, as postgres')
+// ── A · the install chain, and what was applied ────────────────────────────
+console.log('== A · the install chain')
 for (const [f, h] of Object.entries(INSTALL_CHAIN)) {
   if (!files.includes(f)) { findings.push(`${f}, in the install chain, is missing`); continue }
   if (sha(f) !== h) findings.push(`${f}, in the install chain, was edited (sha256 ${sha(f)}): the install chain is frozen, a change goes in a new migration`)
 }
-for (const f of files.filter((f) => f in INSTALL_CHAIN)) {
-  try { await admin.query(readFileSync(`${dir}/${f}`, 'utf8')); console.log(`ok   ${f}`) } catch (e) {
-    await admin.query('ROLLBACK').catch(() => {})
-    findings.push(`${f}: postgres cannot apply it (${e.code} ${e.message}); the rest was not measured`)
-    console.log(`STOP ${f}\n    ${e.code} ${e.message}`)
-    break
-  }
+const { rows: applied } = await admin.query('SELECT version FROM supabase_migrations.schema_migrations')
+const appliedSet = new Set(applied.map((r) => r.version))
+for (const f of files) {
+  const v = f.split('_')[0]
+  if (!appliedSet.has(v)) findings.push(`${f} is not recorded as applied: scripts/instalar-bob.sh did not get it in`)
 }
+console.log(`     ${files.length} migration file(s), ${Object.keys(INSTALL_CHAIN).length} in the install chain, ${appliedSet.size} recorded as applied`)
 
 // ── P · the provisioning ───────────────────────────────────────────────────
 // One statement at a time; a semicolon at a line end splits, except inside $$.
@@ -83,7 +83,7 @@ function statements(file) {
   return out.filter(Boolean)
 }
 const NOT_GRANTED = /no privileges were granted|not all privileges were granted|privileges? (were|was) not granted|no privileges could be revoked|not all privileges could be revoked/i
-for (const round of [1, 2]) {
+for (const round of [2]) {
   for (const [who, client, file] of [['postgres', admin, PROVISION], ['supabase_admin', sa, PROVISION_SA]]) {
     console.log(`== P${round} · provisioning, as ${who} (${file})`)
     for (const s of statements(file)) {
@@ -112,18 +112,24 @@ const { rows: notHanded } = await admin.query(`
 for (const r of notHanded) findings.push(`after the hand-over, ${r.what} is still ${r.owner}'s`)
 console.log(`== hand-over: ${notHanded.length} object(s) in bob not bob_migrador's`)
 
-// What the hand-over changes for code outside bob: a SECURITY DEFINER function
-// whose body reads bob runs as its owner, which no longer owns bob's tables.
+// What the hand-over changes for SECURITY DEFINER code, which runs as its
+// owner. A function's search_path, from its SET clause, counts: a name it
+// leaves unqualified resolves through it.
+const PATH = (p) => `coalesce((SELECT string_to_array(replace(replace(substr(c, 13), ' ', ''), '"', ''), ',')
+                                 FROM unnest(${p}.proconfig) c WHERE c LIKE 'search_path=%'), ARRAY[]::text[])`
+// Outside bob, still postgres's: one that reads bob must keep what it reads.
 const { rows: readers } = await admin.query(`
-  SELECT p.oid::regprocedure::text AS fn, pg_get_userbyid(p.proowner) AS owner, p.prosecdef AS definer,
-         has_schema_privilege(p.proowner, 'bob', 'USAGE') AS usage,
+  WITH f AS (SELECT p.*, ${PATH('p')} AS path FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+              WHERE n.nspname <> 'bob' AND n.nspname NOT LIKE 'pg\\_%')
+  SELECT f.oid::regprocedure::text AS fn, pg_get_userbyid(f.proowner) AS owner, f.prosecdef AS definer,
+         has_schema_privilege(f.proowner, 'bob', 'USAGE') AS usage,
          (SELECT string_agg(format('%s %s', c.relname,
                    coalesce((SELECT string_agg(x, ',' ORDER BY x) FROM unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE']) x
-                              WHERE has_table_privilege(p.proowner, c.oid, x)), 'none')), '; ' ORDER BY c.relname)
+                              WHERE has_table_privilege(f.proowner, c.oid, x)), 'none')), '; ' ORDER BY c.relname)
             FROM pg_class c WHERE c.relnamespace = 'bob'::regnamespace AND c.relkind IN ('r','p','v','m')
-             AND p.prosrc ~ ('\\mbob\\.' || c.relname || '\\M')) AS tables
-    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-   WHERE n.nspname <> 'bob' AND n.nspname NOT LIKE 'pg\\_%' AND p.prosrc ~ '\\mbob\\.' ORDER BY 1`)
+             AND (f.prosrc ~ ('\\mbob\\.' || c.relname || '\\M')
+                  OR ('bob' = ANY (f.path) AND f.prosrc ~ ('(^|[^.\\w])' || c.relname || '\\M')))) AS tables
+    FROM f WHERE f.prosrc ~ '\\mbob\\.' OR 'bob' = ANY (f.path) ORDER BY 1`)
 for (const r of readers) {
   console.log(`     ${r.fn}: owner ${r.owner}${r.definer ? ', SECURITY DEFINER' : ''}, USAGE on bob: ${r.usage}; ${r.tables ?? 'no bob table named'}`)
   if (!r.definer) continue
@@ -132,22 +138,27 @@ for (const r of readers) {
     findings.push(`${r.fn} is SECURITY DEFINER and its owner ${r.owner} has no privilege on bob.${t.split(' ')[0]} after the hand-over`)
   }
 }
-
-// ── B · every later migration, as bob_migrador alone ───────────────────────
-const owner = new pg.Client({ connectionString: as('bob_migrador', PASSWORD) }); await owner.connect()
-const later = files.filter((f) => !(f in INSTALL_CHAIN))
-console.log(`== B · every migration outside the install chain, as bob_migrador alone (${later.length})`)
-for (const f of later) {
-  try {
-    await owner.query(readFileSync(`${dir}/${f}`, 'utf8'))
-    console.log(`ok   ${f}`)
-  } catch (e) {
-    await owner.query('ROLLBACK').catch(() => {})
-    console.log(`STOP ${f}\n    ${e.code} ${e.message}`)
-    findings.push(`${f} does not apply as bob_migrador: ${e.code} ${e.message}. Every migration outside the install chain must, touching nothing outside bob (P5 §6.2)`)
-    break
-  }
+// In bob, now bob_migrador's: one that calls a function outside bob must be
+// able to execute it, or it fails at run time (42501), not at migration time.
+async function definerCallsOut(client) {
+  const { rows } = await client.query(`
+    WITH d AS (SELECT p.*, ${PATH('p')} AS path FROM pg_proc p
+                WHERE p.pronamespace = 'bob'::regnamespace AND p.prosecdef)
+    SELECT DISTINCT d.oid::regprocedure::text AS fn, q.oid::regprocedure::text AS callee, pg_get_userbyid(d.proowner) AS owner
+      FROM d JOIN pg_proc q ON q.pronamespace <> 'bob'::regnamespace
+      JOIN pg_namespace qn ON qn.oid = q.pronamespace
+     WHERE qn.nspname NOT IN ('pg_catalog', 'information_schema')
+       AND (d.prosrc ~* ('\\m' || qn.nspname || '\\.' || q.proname || '\\s*\\(')
+            OR (qn.nspname = ANY (d.path) AND d.prosrc ~* ('(^|[^.\\w])' || q.proname || '\\s*\\(')))
+       AND NOT has_function_privilege(d.proowner, q.oid, 'EXECUTE')
+     ORDER BY 1, 2`)
+  return rows
 }
+for (const r of await definerCallsOut(admin)) {
+  findings.push(`${r.fn} is SECURITY DEFINER, runs as ${r.owner}, and calls ${r.callee}, which ${r.owner} cannot execute`)
+}
+
+const owner = new pg.Client({ connectionString: as('bob_migrador', PASSWORD) }); await owner.connect()
 
 // ── F · the footprint ──────────────────────────────────────────────────────
 const EXPECTED_FOOTPRINT = [
@@ -160,6 +171,11 @@ const EXPECTED_FOOTPRINT = [
   'schema bob: owner',
   'schema public: USAGE',
 ]
+// bob-vecina.sql's EXECUTE on the PR-4 helper, named as the catalog names it.
+const { rows: [helper] } = await admin.query(`
+  SELECT (pg_identify_object('pg_proc'::regclass, 'public.bob_grant_projection(regclass)'::regprocedure, 0)).identity AS id`)
+EXPECTED_FOOTPRINT.push(`privilege on function ${helper.id}`)
+EXPECTED_FOOTPRINT.sort()
 async function footprint(client) {
   const { rows: [r] } = await client.query(`
     SELECT rolcanlogin, rolsuper, rolbypassrls, rolcreatedb, rolcreaterole, rolreplication FROM pg_roles WHERE rolname = 'bob_migrador'`)
@@ -232,7 +248,26 @@ const checks = [
   ['a policy on a table the install chain made in bob applies', await applies(`CREATE POLICY o3_selfcheck ON bob.organizations FOR SELECT TO bob_app USING (false)`)],
   ['replacing a view the install chain made in bob applies', !!someView && await applies(`CREATE OR REPLACE VIEW ${someView.v} AS ${someView.definition}`)],
   ['revoking on a table in bob applies', await applies('REVOKE ALL ON bob.organizations FROM anon')],
+  ['a new month of a projection is created (bob.proj_ensure_partition, as the feeder calls it)',
+    await applies(`SELECT bob.proj_ensure_partition('bob.proj_metric_counts'::regclass, '2099-01-01')`)],
 ]
+// The definer guard sees a call bob_migrador cannot make.
+await sa.query('BEGIN')
+await sa.query('REVOKE EXECUTE ON FUNCTION public.bob_grant_projection(regclass) FROM bob_migrador')
+const lost = await definerCallsOut(sa)
+await sa.query('ROLLBACK')
+checks.push(['a definer function in bob calling a function outside it without EXECUTE is seen',
+  lost.some((r) => r.fn.startsWith('bob.proj_ensure_partition(') && r.callee.startsWith('bob_grant_projection('))])
+// Default privileges. One with no schema is the role's own, outside bob, and
+// shows. One in schema bob does not: that is what bob opens, pending (P5 §6.2).
+await owner.query('BEGIN')
+await owner.query('ALTER DEFAULT PRIVILEGES GRANT SELECT ON TABLES TO anon')
+checks.push(['a default privilege of bob_migrador outside bob is seen', (await footprint(owner)).some((l) => !EXPECTED_FOOTPRINT.includes(l))])
+await owner.query('ROLLBACK')
+await owner.query('BEGIN')
+await owner.query('ALTER DEFAULT PRIVILEGES IN SCHEMA bob GRANT SELECT ON TABLES TO anon')
+console.log(`     measured: a default privilege in schema bob ${(await footprint(owner)).some((l) => !EXPECTED_FOOTPRINT.includes(l)) ? 'shows' : 'does not show'} in the footprint`)
+await owner.query('ROLLBACK')
 // An extra privilege of each kind shows in the footprint.
 for (const [name, client, sql] of [
   ['a schema privilege', admin, 'GRANT CREATE ON SCHEMA extensions TO bob_migrador'],
