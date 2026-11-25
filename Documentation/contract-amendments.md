@@ -3393,11 +3393,9 @@ verified first.
   reads, on stdin, the file, the CLI's `INSERT` into
   `supabase_migrations.schema_migrations`, and one `COMMIT`. For that,
   `bob.sql` gives `bob_migrador` USAGE on `supabase_migrations` and INSERT on
-  `schema_migrations`, inside a `DO` that checks the table exists. **This
-  changes `bob.sql`**: new sha256
-  `e8356b2c7d45a3bfb6fd8ea5099dd105600659ae4592c4f8ab15f271d787a5e4`, to copy
-  into #450. The check expects those two entries in the footprint and fails
-  if `bob_migrador` holds anything but INSERT on the table.
+  `schema_migrations`, inside a `DO` that checks the table exists. This
+  changed `bob.sql`. *Superseded by the fourth review below: the history moved
+  to `bob.schema_migrations` and `bob.sql` is back to #450's.*
   - Before anything runs, a file is refused if it has a backslash outside a
     dollar-quoted body or comment, or transaction control other than one
     leading `BEGIN` and one closing `COMMIT`. All 33 current files pass (9
@@ -3416,3 +3414,48 @@ verified first.
 Not changed: `scripts/ensayo-migracion-lab.sh` still passes `PGPASSWORD` to
 `docker exec -e`. That does not reach `Config.Env`, but it shows in the exec's
 inspect while it runs. It is a follow-up.
+
+### O-3 · fourth independent review of PR #48, applied
+
+The review at `c2b05f7`, measured with psql on PG16, found three blockers and
+four further points. Each was verified first.
+
+- **B3 · the guard in front of `resto` could be bypassed, and psql ran a
+  shell.** True. The awk guard did not know strings or `/* */` comments.
+  Measured against it: `\!` between two `/* $$ */` comments, and between two
+  `'$$'` strings, passed as "bare", and psql would have run them as Henry.
+  `SELECT '--'; COMMIT;` and `/* -- */ COMMIT;` passed too, and `END WORK;`
+  was not seen. Fixed by not parsing SQL:
+  - `scripts/aplicar-migraciones.mjs` applies each file with node-postgres,
+    one simple-protocol query, which runs SQL only;
+  - a backslash anywhere in a file refuses it before it is sent;
+  - a LOCAL value set before the file and read after it catches a file that
+    ends the transaction however it is written. It is then not recorded and
+    the run fails. The session is read-only by default, so nothing after that
+    end writes. What ran before it stays committed, and the failure says so.
+  - CI runs every case above as a sample file and sees each refused or
+    caught, the shell never run, nothing recorded.
+- **I1 and B1 · the history in a shared table.** True. INSERT on
+  `supabase_migrations.schema_migrations` let `bob_migrador` record future
+  versions for any CLI user, and the primary key answered which exist. And
+  `bob.sql` stopped matching #450. Now `resto` records in
+  `bob.schema_migrations`, owned by `bob_migrador`, made by its first run,
+  with no grant to anyone (as opsRUN's `opsrun.schema_migration`). The CLI's
+  history holds the install chain only. `bob.sql` is back to #450 at
+  `7429eec`, byte for byte (`ad9adf91…2605`), and the check pins that hash.
+  The check reads both histories: the chain in the CLI's, the rest in
+  `bob.schema_migrations`, nothing outside the chain in the CLI's. With the
+  CLI's history holding only the chain, `cadena` run again is a no-op,
+  measured in CI.
+- **I2.** An edited approval comment is not accepted (`created_at` must equal
+  `updated_at`), and `\r\n` is normalised.
+- **I3.** The approved digest covers the install list, `instalar-bob.sh`,
+  `aplicar-migraciones.mjs`, `owner-chain-check.mjs`, `bob.sql` and the guard
+  step itself. A change to any of them needs the approval.
+- **I4.** Without tmpfs (`$XDG_RUNTIME_DIR` or `/dev/shm`, checked as tmpfs on
+  Linux), the script stops. It no longer falls back to `/tmp`.
+- **Minor.** `name` and the rest of the record go as bound parameters.
+- **B2 · who signs the approval.** Open, for Henry. The `gh` the agents use is
+  signed in as his login, so an agent could write the comment. The mechanism
+  is unchanged until he decides.
+

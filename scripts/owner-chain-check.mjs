@@ -56,9 +56,8 @@ const files = readdirSync(dir).filter((f) => /^[0-9]+_.*\.sql$/.test(f)).sort()
 const sha = (f) => createHash('sha256').update(readFileSync(`${dir}/${f}`)).digest('hex')
 
 // supabase/provision/bob.sql is Bzzz's config/supabase/vecinas/bob.sql, byte for
-// byte (bzzz#450, P5 §6.2). A change goes to both, and here. This version adds
-// the history grants of BOb-engine#48's third review; bzzz#450 takes it next.
-const BZZZ_BOB_SQL = { commit: 'bzzz#450, after 7429eec', sha256: 'e8356b2c7d45a3bfb6fd8ea5099dd105600659ae4592c4f8ab15f271d787a5e4' }
+// byte (bzzz#450 at 7429eec, P5 §6.2). A change goes to both, and here.
+const BZZZ_BOB_SQL = { commit: '7429eec', sha256: 'ad9adf91d370fc008b4134c9a7d60646310f4b4560433655e677c1892b3f2605' }
 {
   const h = createHash('sha256').update(readFileSync('supabase/provision/bob.sql')).digest('hex')
   if (h !== BZZZ_BOB_SQL.sha256) findings.push(`supabase/provision/bob.sql (sha256 ${h}) is not Bzzz's config/supabase/vecinas/bob.sql at ${BZZZ_BOB_SQL.commit}: keep the two identical`)
@@ -70,13 +69,35 @@ for (const [f, h] of Object.entries(INSTALL_CHAIN)) {
   if (!files.includes(f)) { findings.push(`${f}, in the install chain, is missing`); continue }
   if (sha(f) !== h) findings.push(`${f}, in the install chain, was edited (sha256 ${sha(f)}): the install chain is frozen, a change goes in a new migration`)
 }
-const { rows: applied } = await admin.query('SELECT version FROM supabase_migrations.schema_migrations')
-const appliedSet = new Set(applied.map((r) => r.version))
+// Two histories. The CLI's, shared by every neighbour, holds the install chain
+// and nothing else: postgres pushed it. bob.schema_migrations, bob_migrador's,
+// holds every later file: instalar-bob.sh resto records each one there, in the
+// transaction that applies it.
+const { rows: cli } = await admin.query('SELECT version FROM supabase_migrations.schema_migrations')
+const cliSet = new Set(cli.map((r) => r.version))
+const chainVersions = new Set(Object.keys(INSTALL_CHAIN).map((f) => f.split('_')[0]))
+const bobHistory = new pg.Client({ connectionString: as('bob_migrador', PASSWORD) }); await bobHistory.connect()
+const { rows: own } = await bobHistory.query(`SELECT version FROM bob.schema_migrations`).catch((e) => {
+  findings.push(`bob.schema_migrations cannot be read as bob_migrador (${e.code}): instalar-bob.sh resto did not run`); return { rows: [] } })
+await bobHistory.end()
+const ownSet = new Set(own.map((r) => r.version))
 for (const f of files) {
   const v = f.split('_')[0]
-  if (!appliedSet.has(v)) findings.push(`${f} is not recorded as applied: scripts/instalar-bob.sh did not get it in`)
+  if (chainVersions.has(v) ? !cliSet.has(v) : !ownSet.has(v)) {
+    findings.push(`${f} is not recorded as applied in ${chainVersions.has(v) ? "the CLI's history" : 'bob.schema_migrations'}: scripts/instalar-bob.sh did not get it in`)
+  }
 }
-console.log(`     ${files.length} migration file(s), ${Object.keys(INSTALL_CHAIN).length} in the install chain, ${appliedSet.size} recorded as applied`)
+for (const v of cliSet) if (!chainVersions.has(v)) findings.push(`version ${v} is in the CLI's history and not in the install chain: only the chain goes there`)
+for (const v of ownSet) if (chainVersions.has(v)) findings.push(`version ${v} of the install chain is in bob.schema_migrations: the chain is recorded by the CLI`)
+{
+  // bob_migrador's history is its own: nobody else holds a privilege on it.
+  const { rows } = await admin.query(`
+    SELECT DISTINCT CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END AS grantee
+      FROM pg_class c, aclexplode(c.relacl) a
+     WHERE c.oid = to_regclass('bob.schema_migrations') AND a.grantee <> 'bob_migrador'::regrole`)
+  for (const r of rows) findings.push(`${r.grantee} holds a privilege on bob.schema_migrations: it is bob_migrador's alone`)
+}
+console.log(`     ${files.length} migration file(s), ${chainVersions.size} in the install chain, ${cliSet.size} in the CLI's history, ${ownSet.size} in bob.schema_migrations`)
 
 // ── P · the provisioning ───────────────────────────────────────────────────
 // One statement at a time; a semicolon at a line end splits, except inside $$.
@@ -194,12 +215,6 @@ EXPECTED_FOOTPRINT.push(PG16 ? 'members: postgres (admin only)' : 'members: (non
 const { rows: [helper] } = await admin.query(`
   SELECT (pg_identify_object('pg_proc'::regclass, 'public.bob_grant_projection(regclass)'::regprocedure, 0)).identity AS id`)
 EXPECTED_FOOTPRINT.push(`privilege on function ${helper.id}`)
-// bob.sql's grants on the CLI's history table, so resto records each migration in
-// the transaction that applies it: USAGE on the schema, INSERT on the table.
-if ((await admin.query(`SELECT to_regclass('supabase_migrations.schema_migrations') IS NOT NULL AS t`)).rows[0].t) {
-  EXPECTED_FOOTPRINT.push('privilege on schema supabase_migrations', 'privilege on table supabase_migrations.schema_migrations',
-    'schema supabase_migrations: USAGE')
-}
 EXPECTED_FOOTPRINT.sort()
 async function footprint(client) {
   const { rows: [r] } = await client.query(`
@@ -253,15 +268,6 @@ const actual = await footprint(admin)
 for (const l of actual) console.log(`     ${l}`)
 for (const l of actual.filter((l) => !EXPECTED_FOOTPRINT.includes(l))) findings.push(`bob_migrador holds what D77 does not give it: ${l}`)
 for (const l of EXPECTED_FOOTPRINT.filter((l) => !actual.includes(l))) findings.push(`bob_migrador lacks what the provisioning gives it: ${l}`)
-{
-  // On the history table, INSERT and nothing else: it can record, not read, rewrite or erase.
-  const { rows: [h] } = await admin.query(`
-    SELECT string_agg(p, ', ' ORDER BY p) FILTER (WHERE has_table_privilege('bob_migrador', 'supabase_migrations.schema_migrations', p)) AS privs
-      FROM unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) p
-     WHERE to_regclass('supabase_migrations.schema_migrations') IS NOT NULL`)
-  console.log(`     supabase_migrations.schema_migrations: ${h.privs ?? '(none)'}`)
-  if (h.privs && h.privs !== 'INSERT') findings.push(`bob_migrador holds ${h.privs} on supabase_migrations.schema_migrations; INSERT only`)
-}
 
 // ── S · self-checks ────────────────────────────────────────────────────────
 console.log('== S · self-checks')

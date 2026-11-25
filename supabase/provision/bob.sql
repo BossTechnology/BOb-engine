@@ -15,14 +15,3 @@ DO $$ BEGIN
     GRANT EXECUTE ON FUNCTION public.bob_grant_projection(regclass) TO bob_migrador;
   END IF;
 END $$;
-
--- scripts/instalar-bob.sh resto aplica cada migracion de BOb como bob_migrador y la anota en el historial de la CLI en
--- la MISMA transaccion: si una falla, no queda ni a medias ni anotada (BOb-engine#48). Para anotar, bob_migrador
--- necesita USAGE en supabase_migrations y INSERT en schema_migrations, nada mas: no lee ni cambia lo de otros. La tabla
--- la crea la primera cadena de BOb (supabase db push como postgres); en una caja nueva aun no existe y no se concede nada.
-DO $$ BEGIN
-  IF to_regclass('supabase_migrations.schema_migrations') IS NOT NULL THEN
-    GRANT USAGE ON SCHEMA supabase_migrations TO bob_migrador;
-    GRANT INSERT ON supabase_migrations.schema_migrations TO bob_migrador;
-  END IF;
-END $$;
