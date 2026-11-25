@@ -165,8 +165,9 @@ jobs:
           SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
         run: pnpm run test:availability
 
-  # O-3 (D77), diagnostic: the chain applied as bob_migrador, not postgres,
-  # over a Supabase database with no BOb in it. Lists every place it stops.
+  # O-3 (D77 §2.8): the chain applied by its own owner, bob_migrador, not by
+  # postgres, over a Supabase database with no BOb in it. See
+  # scripts/owner-chain-check.mjs and P5 §6.2.
   owner-chain-probe:
     name: Chain applies as bob_migrador (O-3)
     runs-on: ubuntu-latest
@@ -189,4 +190,4 @@ jobs:
       - name: Apply the chain as bob_migrador
         env:
           ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
-        run: CHAIN_DIR="$RUNNER_TEMP/chain" PROVISION=supabase/provision/bob-vecina.sql PROVISION_SA=supabase/provision/bob-vecina-supabase-admin.sql node scripts/owner-chain-probe.mjs
+        run: CHAIN_DIR="$RUNNER_TEMP/chain" node scripts/owner-chain-check.mjs
