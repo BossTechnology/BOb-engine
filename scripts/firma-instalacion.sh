@@ -138,7 +138,7 @@ cadena_propia() {  # <path>: the file, every link to it and every directory up t
 directorio_propio() {  # <dir>
   local d=$1 bad t
   cadena_propia "$d"
-  bad=$(find -L "$d" -mindepth 1 -maxdepth 1 \( ! -uid 0 -o -perm -0002 -o -perm -0020 \) -print 2>/dev/null | head -1)
+  bad=$(find -L "$d" -mindepth 1 -maxdepth 1 \( ! -uid 0 -o -perm -0002 -o -perm -0020 \) -print -quit 2>/dev/null || true)
   [ -z "$bad" ] || fail "$bad (on the PATH) is not root's, or is writable by a group or others: refused"
   find "$d" -mindepth 1 -maxdepth 1 -type l -exec readlink -f {} + 2>/dev/null | while IFS= read -r t; do
     [ -e "$t" ] && dirname "$t"
