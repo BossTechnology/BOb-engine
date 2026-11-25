@@ -29,8 +29,14 @@
 import pg from 'pg'
 import { readFileSync, readdirSync } from 'node:fs'
 
-// Measured on CI, run of 746cf98 onwards (see P5 §6.2). The remedy for each is
-// in the same section: none is a grant D77 allows.
+// Henry, 2026-11-24 (P5 §6.2): «postgres una vez, luego migrador». The chain up
+// to INSTALL_UP_TO is applied once, by postgres, when BOb is installed on a
+// box; every migration after it is applied by bob_migrador and must apply as
+// it, inside bob.
+export const INSTALL_UP_TO = '20261121190000'
+
+// The files of that install chain bob_migrador cannot apply, measured on CI
+// from 746cf98 on (P5 §6.2). They stay as they are: postgres applies them.
 export const KNOWN_STOPS = {
   '20260606120000_initial_schema.sql':
     'creates in public, before the move to bob; also a trigger on auth.users, owned by supabase_auth_admin',
@@ -159,7 +165,11 @@ const OWNED = `
    WHERE t.typowner = 'supabase_admin'::regrole AND t.typtype IN ('e','d') AND n.nspname IN ('public','bob')`
 console.log('== the chain, as bob_migrador')
 const stops = {}
-for (const f of readdirSync(dir).filter((f) => /^\d{14}_.*\.sql$/.test(f)).sort()) {
+const files = readdirSync(dir).filter((f) => /^\d{14}_.*\.sql$/.test(f)).sort()
+const installed = files.filter((f) => f.slice(0, 14) <= INSTALL_UP_TO)
+const later = files.filter((f) => f.slice(0, 14) > INSTALL_UP_TO)
+console.log(`== A · the install chain (to ${INSTALL_UP_TO}), as bob_migrador where it can`)
+for (const f of installed) {
   const sql = readFileSync(`${dir}/${f}`, 'utf8')
   try {
     await owner.query(sql)
@@ -182,7 +192,43 @@ for (const f of readdirSync(dir).filter((f) => /^\d{14}_.*\.sql$/.test(f)).sort(
   }
 }
 for (const f of Object.keys(stops)) {
-  if (!(f in KNOWN_STOPS)) findings.push(`${f} does not apply as bob_migrador: ${stops[f]}. A new migration must apply under the provisioning of D77 (bob-vecina.sql), touching nothing outside bob`)
+  if (!(f in KNOWN_STOPS)) findings.push(`${f}, in the install chain, does not apply as bob_migrador and is not in KNOWN_STOPS: ${stops[f]}`)
+}
+
+// After the install, the box is as postgres left it: what BOb made outside bob
+// is postgres's, not bob_migrador's. Here the fallback handed it over, so it
+// goes back, and a later migration that touches it is refused as it would be.
+const { rows: outside } = await sa.query(`
+  SELECT CASE c.relkind WHEN 'v' THEN 'VIEW' WHEN 'm' THEN 'MATERIALIZED VIEW' ELSE 'TABLE' END AS kind,
+         format('%I.%I', n.nspname, c.relname) AS name
+    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+   WHERE c.relowner = 'bob_migrador'::regrole AND c.relkind IN ('r','p','v','m') AND n.nspname <> 'bob'
+     AND n.nspname NOT LIKE 'pg\\_%'
+  UNION ALL
+  SELECT CASE p.prokind WHEN 'p' THEN 'PROCEDURE' ELSE 'FUNCTION' END, p.oid::regprocedure::text
+    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+   WHERE p.proowner = 'bob_migrador'::regrole AND n.nspname <> 'bob'
+  UNION ALL
+  SELECT 'TYPE', format('%I.%I', n.nspname, t.typname) FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
+   WHERE t.typowner = 'bob_migrador'::regrole AND t.typtype IN ('e','d') AND n.nspname <> 'bob'`)
+for (const r of outside) {
+  await sa.query(`ALTER ${r.kind} ${r.name} OWNER TO postgres`)
+    .catch((err) => findings.push(`cannot give ${r.kind} ${r.name} back to postgres (${err.message})`))
+}
+console.log(`== handed back to postgres: ${outside.length} object(s) outside bob`)
+
+console.log(`== B · every later migration, as bob_migrador alone (${later.length})`)
+for (const f of later) {
+  try {
+    await owner.query(readFileSync(`${dir}/${f}`, 'utf8'))
+    await owner.query('ROLLBACK').catch(() => {})
+    console.log(`ok   ${f}`)
+  } catch (e) {
+    await owner.query('ROLLBACK').catch(() => {})
+    console.log(`STOP ${f}\n    ${e.code} ${e.message}`)
+    findings.push(`${f} does not apply as bob_migrador: ${e.code} ${e.message}. Every migration after ${INSTALL_UP_TO} must, touching nothing outside bob (P5 §6.2)`)
+    break
+  }
 }
 for (const f of Object.keys(KNOWN_STOPS)) {
   if (!(f in stops)) findings.push(`${f} is listed in KNOWN_STOPS and now applies as bob_migrador: take it off the list`)
@@ -207,6 +253,9 @@ const checks = [
   ['a migration that creates in public is refused', await refused('CREATE TABLE public.o3_selfcheck (id int)')],
   ['a migration that alters auth is refused', await refused('ALTER TABLE auth.users ADD COLUMN o3_selfcheck int')],
   ['a migration that creates a schema is refused', await refused('CREATE SCHEMA o3_selfcheck')],
+  ['a migration that changes what BOb left in public is refused', await refused('ALTER FUNCTION public.cap_alert_log() SET search_path = public')],
+  ['a migration that drops what BOb left in public is refused', await refused('DROP FUNCTION public.bob_source_key_unset(text)')],
+  ['a migration that adds to the publication is refused', await refused('CREATE TABLE bob.o3_selfcheck_pub (id int PRIMARY KEY); ALTER PUBLICATION supabase_realtime ADD TABLE bob.o3_selfcheck_pub')],
   ['a migration in bob is not refused', !(await refused('CREATE TABLE bob.o3_selfcheck (id int)'))],
 ]
 await admin.query('BEGIN')
