@@ -502,7 +502,7 @@ The reasons:
 |---|---|
 | What is applied | A BOb-engine commit on `main` with four green checks. The box pins the commit SHA, the way it pins images (D4, D9), and reports it in its manifest (task 3.11) |
 | With what | The Supabase CLI at the version CI pins (`SUPABASE_CLI_VERSION`, today 2.120.0): `supabase db push --db-url …` against `supabase-db` on `bzzz-app`. It writes `supabase_migrations.schema_migrations` exactly as CI's reset does, so the same F-15 check reads the box |
-| As whom | The migration owner, from `/opt/bzzz/secrets/bob/migrador.env`, its own file (§8, objection 6). It owns every object, which the `SECURITY DEFINER` functions and definer views need. D77 §2.8 names it `bob_migrador` (LOGIN, NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE, no CREATE on the database), with what lies outside `bob` in Bzzz `config/supabase/vecinas/bob.sql`, applied by `postgres`. **Measured 2026-11-24 (O-3): the chain as written cannot be applied by it.** See "Applied by `bob_migrador`" below |
+| As whom | The migration owner, from `/opt/bzzz/secrets/bob/migrador.env`, its own file (§8, objection 6). It owns every object, which the `SECURITY DEFINER` functions and definer views need. D77 §2.8 names it `bob_migrador` (LOGIN, NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE, no CREATE on the database), with what lies outside `bob` in Bzzz `config/supabase/vecinas/bob.sql`, applied by `postgres`. **Decided 2026-11-24 (O-3), Henry: «postgres una vez, luego migrador».** `postgres` applies the chain to `20261121190000` once, when BOb is installed on a box; every later migration is applied by `bob_migrador`. See "Applied by `bob_migrador`" below |
 | From where | A step in `scripts/actualizar.sh`, after the database and before any service that uses the new schema. That follows BzzzBX's rule of migration before code, as with the centro's 009 |
 | Who runs it | Henry, in a maintenance window with notice to the company (CLAUDE.md: production is Henry's). Never an agent, and never a running service |
 | How it is tried first | Development runs on a local Supabase pinned to the box's images and to CI's CLI version (§5.1, Q3 **[DECIDED]**). Then `supabase db push --dry-run` on `bzzz-lab-02`, the real apply there, then `bzzz-model-01`, then the company boxes. lab-02 is where every chain is applied first. This is plan §3.6's `--plan` habit, and D16's rule that tests run on another machine, never on a second copy |
@@ -514,12 +514,21 @@ The reasons:
   §7, Q6 each need a new migration (a table, a function or a grant). It goes
   through this step, lab-02 first, like any other. Option (c) needs none.
 
-**Applied by `bob_migrador` (O-3, D77 §2.8) — measured 2026-11-24, not
-decided.** The CI job "Chain applies as bob_migrador (O-3)" starts Supabase
-with no migration, provisions as below, and has `bob_migrador` apply the chain
-file by file (`scripts/owner-chain-check.mjs`). Past a stop, `supabase_admin`
-applies that file and hands what it made to `bob_migrador`, so every later file
-is measured as it would run. Result: 12 of the 33 files apply, 21 stop.
+**Applied by `bob_migrador` (O-3, D77 §2.8) — decided 2026-11-24.** Henry,
+in the Relevo chat: «postgres una vez, luego migrador». The chain as it stands,
+to `20261121190000` (`INSTALL_UP_TO` in the check), is applied once by
+`postgres` when BOb is installed on a box. Every migration after it is applied
+by `bob_migrador`, and must apply as it, inside `bob`. The 21 stops below stay
+in the install chain, which is append-only and is not rewritten.
+
+The CI job "Chain applies as bob_migrador (O-3)" starts Supabase with no
+migration, provisions as below, and runs `scripts/owner-chain-check.mjs` in
+two phases. A, the install chain: `bob_migrador` applies it file by file, and
+past a stop `supabase_admin` applies that file and hands what it made to
+`bob_migrador`, so every later file is measured as it would run. Result: 12 of
+the 33 files apply, 21 stop. Then what that left outside `bob` goes back to
+`postgres`, as on a box where `postgres` applied it. B: every later migration
+is applied by `bob_migrador` alone, with no fallback.
 
 | Stop | Files | Clears with a grant in `bob.sql`? | Remedy |
 |---|---|---|---|
@@ -540,8 +549,9 @@ What `bob.sql` must hold, measured (`supabase/provision/`):
 - `GRANT USAGE ON SCHEMA auth TO bob_migrador`, which every tenant policy
   needs (they call `auth.jwt()`). **`postgres` cannot make this grant**: it
   holds no grant option on `auth` (owner `supabase_admin`), and the GRANT only
-  warns. Only `supabase_admin` can. That contradicts D77's "applied by
-  postgres", and is for Bzzz to settle.
+  warns. Only `supabase_admin` can. Henry, 2026-11-24: «Nota en D77: ese
+  grant con supabase_admin». The note goes in D77, in Bzzz; the grant is in
+  `supabase/provision/bob-vecina-supabase-admin.sql`.
 - Nothing else. The check asserts `bob_migrador`'s footprint outside `bob` is
   exactly: LOGIN and none of the other attributes, CONNECT and TEMPORARY on
   the database, no membership, USAGE on `auth` and on `public`.
@@ -551,21 +561,22 @@ Not measured: `supabase db push` as `bob_migrador` writes
 applies files itself, not through the CLI. Nor what `bob_migrador` as owner
 changes for the `SECURITY DEFINER` functions on a box with data.
 
-The guard. CI fails if a file not in `KNOWN_STOPS` stops (so every migration
-from here on must apply as `bob_migrador`, inside `bob`), if a listed one
-starts to apply, if any provisioning statement fails or only warns, or if
-`bob_migrador` holds more or less than the footprint above. Each run it also
-checks that a migration creating in `public`, altering `auth`, or creating a
+The guard. CI fails if a migration after `INSTALL_UP_TO` does not apply as
+`bob_migrador` alone; if a file of the install chain not in `KNOWN_STOPS`
+stops, or a listed one starts to apply; if any provisioning statement fails or
+only warns; or if `bob_migrador` holds more or less than the footprint above.
+Each run it also checks, after the hand-back to `postgres`, that a migration
+creating in `public`, altering or dropping a function BOb left in `public`,
+altering `auth`, adding to the `supabase_realtime` publication, or creating a
 schema is refused, that one in `bob` is not, and that an extra grant shows in
-the footprint. Seen red: with the list empty (21 findings), and with one extra
-grant in `bob-vecina.sql` and a migration creating `public.o3_sabotage`.
+the footprint. Seen red: with the list empty (21 findings); with one extra
+grant in `bob-vecina.sql` and a migration creating `public.o3_sabotage`; and,
+in phase B, with a new migration altering `public.cap_alert_log()`.
 
-The decision this leaves, for Henry: either (a) a baseline, one migration
-reproducing today's end state inside `bob`, for boxes with no BOb yet
-(model-01, Febor), applied by `bob_migrador`, while lab-02 keeps the history
-`postgres` applied; or (b) keep `postgres` as the applier until that is
-built, and O-3 stays open. Either way the forward migration that moves the
-remaining functions out of `public` is needed.
+Pending, no date: a baseline migration that does not leave `bob`, reproducing
+today's end state, after 0.6. Until it exists, a new box gets the install
+chain from `postgres`. The forward migration that moves the remaining
+functions out of `public` goes with it.
 
 **If a migration fails mid-chain.** What these inputs say today is read, not
 measured:

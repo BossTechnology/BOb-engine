@@ -3,7 +3,7 @@
 Una línea por cambio entregado, en lenguaje de usuario.
 
 ## Sin publicar
-- CI aplica la cadena de migraciones con el rol dueño propio de BOb (`bob_migrador`, D77) y falla si una migración nueva necesita algo fuera del esquema `bob`, o si ese rol tiene un permiso de más. Las 21 migraciones viejas que no aplican así quedan listadas con su motivo (O-3).
+- CI aplica la cadena de migraciones como se decidió para O-3 (D77): la cadena actual una vez con `postgres`, al instalar, y cada migración nueva con el rol dueño propio de BOb (`bob_migrador`). Falla si una migración nueva toca algo fuera del esquema `bob` (`public`, `auth`, la publicación) o si ese rol tiene un permiso de más. Las 21 migraciones viejas que no aplican así quedan listadas con su motivo.
 - El chequeo de salida a la red de CI y de la caja falla cerrado: cualquier extensión fuera de una lista aprobada de cinco, cualquier servidor foráneo o cualquier lenguaje no confiable que no sea `c` o `internal` lo pone en rojo (F-27, opción c, ampliada). No revisa lo que un superusuario puede hacer sin instalar nada, ni otras bases del mismo servidor. El kit del ensayo anota todas las extensiones instaladas, y una prueba corre `box-check.mjs` entero y ve el exit 1.
 - El ensayo de P5 corrió en lab-02: 41 comprobaciones, todas como se esperaba, con la cadena aplicada y `auth.users` sin tocar. El kit compara inventarios sin depender del idioma de la caja.
 - Restaurar `bob` solo ya no se lleva las funciones de `public` que dependen de él: el procedimiento y el kit del ensayo las guardan antes de borrar `bob` y las reponen después (`scripts/bob-dependientes.sh`). `service_role` ya no puede drenar el outbox (F-47).

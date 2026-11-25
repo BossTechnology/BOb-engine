@@ -3262,7 +3262,7 @@ Relayed by the session that owns the release, 23 Nov. Nothing high.
   `pg_extension` and `pg_foreign_server` are per database, so an extension in
   another database of the same cluster is not seen. BOb's boxes hold one.
 
-## O-3 · the chain applied by its own owner — measured, not decided
+## O-3 · the chain applied by its own owner — measured, decided
 
 D77 (Henry, 24 Nov) puts BOb beside the box's apps, on the box's database and
 GoTrue, with one schema per neighbour app, and its §2.8 names the owner
@@ -3276,4 +3276,15 @@ that is needed outside `bob`, USAGE on `auth`, only `supabase_admin` can give,
 not `postgres`. The table, `bob.sql`'s measured content and the guard are in
 P5 §6.2, "Applied by `bob_migrador`". The guard is
 `scripts/owner-chain-check.mjs`, a required check, seen red twice before green.
-Open for Henry: a baseline for new boxes, or `postgres` until one exists.
+
+Decided by Henry on 2026-11-24, in the Relevo chat: «postgres una vez, luego
+migrador». `postgres` applies the chain to `20261121190000` once, at install;
+every later migration is applied by `bob_migrador` and must apply as it. The
+check now runs in two phases: the install chain against its 21 pinned stops,
+then what it left outside `bob` back to `postgres`, then every later migration
+as `bob_migrador` alone, a stop being a finding. Phase B seen red with a
+migration altering `public.cap_alert_log()`. On the USAGE grant on `auth`:
+«Nota en D77: ese grant con supabase_admin»; the note goes in D77, in Bzzz.
+Pending, no date: a baseline migration that does not leave `bob`, after 0.6.
+The migrations of PR #40 and PR #43 are dated after `20261121190000`, so once
+merged they fall in phase B and must apply as `bob_migrador`.
