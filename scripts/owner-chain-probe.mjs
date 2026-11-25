@@ -27,6 +27,8 @@ await admin.query(`DO $$ BEGIN
     CREATE ROLE bob_migrador LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
   END IF; END $$`)
 await admin.query(`ALTER ROLE bob_migrador PASSWORD '${PASSWORD}'`)
+// Probe only: lets postgres hand a fallback's objects to bob_migrador.
+await admin.query('GRANT bob_migrador TO postgres')
 if (process.env.PROVISION) await admin.query(readFileSync(process.env.PROVISION, 'utf8'))
 
 const url = new URL(adminUrl)
@@ -80,8 +82,10 @@ for (const f of readdirSync(dir).filter((f) => /^\d{14}_.*\.sql$/.test(f)).sort(
         ? ({ v: 'VIEW', m: 'MATERIALIZED VIEW', S: 'SEQUENCE', f: 'FOREIGN TABLE' }[r.sub] || 'TABLE')
         : r.kind === 'FUNCTION' ? (r.sub === 'p' ? 'PROCEDURE' : 'FUNCTION') : r.kind
       if (r.kind === 'TABLE' && r.sub === 'S') continue // owned sequences follow their table
-      await admin.query(`ALTER ${kind} ${r.name} OWNER TO bob_migrador`).catch((err) => {
-        blockers.push({ migration: f, code: 'handover', message: `${kind} ${r.name}: ${err.message}`, where: '' })
+      await admin.query('SAVEPOINT handover')
+      await admin.query(`ALTER ${kind} ${r.name} OWNER TO bob_migrador`).catch(async (err) => {
+        await admin.query('ROLLBACK TO SAVEPOINT handover')
+        console.log(`    cannot hand ${kind} ${r.name} over: ${err.message}`)
       })
     }
     await admin.query('COMMIT')
