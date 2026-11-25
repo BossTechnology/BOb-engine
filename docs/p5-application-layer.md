@@ -824,8 +824,10 @@ is a new copy installed by root.
 
 Measured without a database (`tests/install-approval.test.mjs`), with
 `caja-prueba`: the same code as `caja`, never as root, with a directory for
-`/opt/bob`, any listed key accepted, the system `PATH` only, and no lock or
-`setpriv`. Measured: the digest's cover and refusals; the verifier's refusals;
+`/opt/bob`, any listed key accepted, the system `PATH` only, and no lock, no
+`setpriv` and no check of the machine's programs (tested apart, with
+`herramienta`; on GitHub's runner `psql`'s directory is writable by others, and
+`caja` would refuse it). Measured: the digest's cover and refusals; the verifier's refusals;
 the box runs the committed tree from its own directory with a clean
 environment and the settings given as arguments; it refuses a new unsigned
 migration, a replayed or revoked approval, a wrong text, an unlisted signer,

@@ -194,8 +194,11 @@ caja() {
     propio /opt 0; propio "$raiz/bin" 0
     [ "$0" = "$raiz/bin/firma-instalacion" ] || fail "run $raiz/bin/firma-instalacion, not $0"
     propio "$0" 0
+    # caja-prueba runs on a developer's machine or a CI runner, whose programs
+    # need not be root's (on GitHub's runner, psql's directory is writable by
+    # others: measured). The check itself is tested apart (herramienta).
+    herramientas
   fi
-  herramientas
   propio "$raiz/firmantes_instalacion" "$uid"
   propio "$raiz/aprobaciones-revocadas" "$uid"
   propio "$raiz/instalacion-firmada" "$uid"
