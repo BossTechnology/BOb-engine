@@ -686,33 +686,84 @@ Not measured: what the hand-over changes for the other SECURITY DEFINER
 functions in `bob` on a box with data, beyond what they call. What `bob` opens
 to `anon`, `authenticated` or PUBLIC is still pending; nothing here watches it.
 
-What installs BOb. The install list, `instalar-bob.sh`,
-`aplicar-migraciones.mjs`, `owner-chain-check.mjs`, `bob.sql` and the guard
-step itself change only with Henry's approval of that exact content. The
-step prints a digest over all six. It passes only if the label
-`install-chain-change` is on the PR when it runs, and a comment by the GitHub
-login in the repository variable `INSTALL_CHAIN_APPROVER` reads
-`install-chain-change <digest>`. The comment must never have been edited
-(`created_at` equal to `updated_at`); line endings are normalised. Any push
-that touches one of the six changes the digest, so an approval does not carry
-over. A comment rather than a review, because GitHub does not let an author
-approve their own PR. That variable is for Henry to set; while it is unset, no
-change passes. Re-run the job after approving. It cannot run red on the PR
-that adds the list, which is not on `main` yet. **Who may write that comment is
-open (B2, fourth review)**: the `gh` the agents use is signed in as Henry's
-login, so an agent could write it. Henry decides.
+What installs BOb changes only with Henry's signature (B2; Henry, «Firma con
+llave que pide toque»). The signature covers a digest that
+`scripts/huella-instalacion.mjs` computes over every file under
+`supabase/provision/` (the install list and `bob.sql` among them) except
+`supabase/provision/aprobaciones/`, plus what `supabase/provision/cubre-la-firma`
+lists: `instalar-bob.sh`, `aplicar-migraciones.mjs`, `owner-chain-check.mjs`,
+the digest and signature scripts, the approval workflow and `CODEOWNERS`. Each
+file counts by path and sha256, so an edit, an addition, a removal or a
+rename moves the digest. The list is itself under `supabase/provision/`, so
+shortening it needs a signature too.
 
-The guard lives in the workflow, so a PR could edit it away.
-`.github/CODEOWNERS` puts `.github/`, `scripts/owner-chain-check.mjs`,
-`scripts/instalar-bob.sh` and `supabase/provision/` under Henry. **Making
-code-owner review required is Henry's setting in branch protection**; until
-then CODEOWNERS only requests his review. The workflow's token is read-only
-(`contents`, `pull-requests`, `issues`).
+**How Henry signs.** On the PR's branch, after the last push that touches
+anything covered, with the security key at hand:
+
+```
+scripts/firmar-instalacion.sh     # FIRMA_LLAVE=~/.ssh/id_ed25519_sk by default
+```
+
+It refuses unless HEAD is what is pushed. It computes the digest of the
+committed HEAD and runs
+`printf '%s\n' <digest> | ssh-keygen -Y sign -f <key> -n bob-install-chain`,
+which asks for the touch (and the PIN, with `verify-required`). It writes
+`supabase/provision/aprobaciones/<digest>.sig`. Henry commits that one file
+and pushes it. Adding it does not move the digest, because nothing under
+`aprobaciones/` counts. A later push that touches anything covered needs a new
+signature.
+
+**A file, not a comment.** A comment can be edited or deleted after the run
+that read it, and it leaves no trace on `main`. The `.sig` file is reviewed in
+the diff, merged with the change it approves, and stays on `main` as the
+record. Neither can be forged without the key; the file keeps the evidence.
+
+**How CI checks it.** `.github/workflows/install-approval.yml`, job "What
+installs BOb is signed by Henry (O-3)", runs on `pull_request_target`, so the
+workflow, its scripts and the signers file all come from `main`. A PR cannot
+edit away the check that judges it, nor bring its own key. It never checks
+out or runs the PR's code. It reads the PR's files through the API as data,
+compares the digest with `main`'s, and passes when they match. When they
+differ, it fetches `aprobaciones/<digest>.sig` from the PR and runs
+`scripts/verificar-firma-instalacion.sh` against
+`supabase/provision/firmantes_instalacion` as it is on `main`. That file has
+Bzzz's `config/bob/firmantes_imagen` format (`allowed_signers`), with stricter
+rules:
+- every key is `sk-ssh-ed25519@openssh.com` or
+  `sk-ecdsa-sha2-nistp256@openssh.com` (Secure Enclave included);
+- it is bound to `namespaces="bob-install-chain"`;
+- it is never `no-touch-required`, so the touch flag is required;
+- the verify output must name an `-SK` key.
+
+No key, or any doubt, fails. The token is read-only.
+
+**Henry's step, before #48 merges.** Put his public key in
+`supabase/provision/firmantes_instalacion` **in #48 itself**, as one line:
+
+```
+henry namespaces="bob-install-chain",verify-required sk-ssh-ed25519@openssh.com AAAA…
+```
+
+Drop `verify-required` only if the key has no PIN or biometric. Until then
+the file holds no key and the check fails closed. Once `main` has an empty
+file, adding the key is itself a change that needs a signature nobody can
+make; only an admin merge would get out of that. Then make "What installs BOb
+is signed by Henry (O-3)" a required check. The workflow is not on `main` yet,
+so it does not run on #48; its first run is on the next PR. The pieces are
+measured in CI without a database (`tests/install-approval.test.mjs`): the
+digest, and every refusal of the verifier. A good signature by a real
+security key is not measured: that needs the key and a touch, so Henry's
+first signature is the measurement.
+
+`.github/CODEOWNERS` puts `.github/`, `supabase/provision/` and every script
+above under Henry, and a test checks that each path the signature covers is
+there. **Making code-owner review required is Henry's setting in branch
+protection.** The workflow tokens are read-only.
 
 The guard: the CI job "Chain applies as bob_migrador (O-3)", on
 `supabase/postgres:17.6.1.136`, **still to be made a required check by
 Henry**. Today `main` requires the other four. They fail if:
-- what installs BOb changes without that approval;
+- what installs BOb changes without Henry's signature (in its own workflow);
 - `instalar-bob.sh` stops: an install file is edited, `postgres` cannot push
   the chain, the provisioning fails, or a later migration does not apply as
   `bob_migrador`, whatever its date;

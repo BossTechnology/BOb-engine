@@ -3448,14 +3448,37 @@ four further points. Each was verified first.
   CLI's history holding only the chain, `cadena` run again is a no-op,
   measured in CI.
 - **I2.** An edited approval comment is not accepted (`created_at` must equal
-  `updated_at`), and `\r\n` is normalised.
+  `updated_at`), and `\r\n` is normalised. *Superseded by B2 below: there is
+  no comment any more.*
 - **I3.** The approved digest covers the install list, `instalar-bob.sh`,
   `aplicar-migraciones.mjs`, `owner-chain-check.mjs`, `bob.sql` and the guard
-  step itself. A change to any of them needs the approval.
+  itself. A change to any of them needs the approval. *Kept under B2, with
+  the cover discovered from `supabase/provision/` plus one list.*
 - **I4.** Without tmpfs (`$XDG_RUNTIME_DIR` or `/dev/shm`, checked as tmpfs on
   Linux), the script stops. It no longer falls back to `/tmp`.
 - **Minor.** `name` and the rest of the record go as bound parameters.
-- **B2 · who signs the approval.** Open, for Henry. The `gh` the agents use is
-  signed in as his login, so an agent could write the comment. The mechanism
-  is unchanged until he decides.
+- **B2 · who signs the approval.** The `gh` the agents use is signed in as
+  Henry's login, so an agent could write the comment. Henry decided: «Firma con
+  llave que pide toque». Applied:
+  - the comment approval is gone;
+  - Henry signs the digest with `ssh-keygen -Y sign -n bob-install-chain` and a
+    security key, through `scripts/firmar-instalacion.sh`, into
+    `supabase/provision/aprobaciones/<digest>.sig`. A file, not a comment: it
+    is reviewed, merged and kept on `main`, while a comment can change after
+    the run that read it;
+  - `install-approval.yml` runs on `pull_request_target`. Workflow, scripts
+    and `firmantes_instalacion` come from `main`, and the PR is read through
+    the API, never checked out;
+  - the verifier accepts only `sk-` keys bound to the namespace and never
+    `no-touch-required`, and fails closed with no key;
+  - the format reuses Bzzz's `config/bob/firmantes_imagen` (`allowed_signers`,
+    `namespaces=`, empty until Henry adds his key);
+  - the digest covers `supabase/provision/` (minus `aprobaciones/`) and what
+    `cubre-la-firma` lists; a test keeps that list under `CODEOWNERS`.
 
+  Measured without a key, in `tests/install-approval.test.mjs`: the digest
+  moves with each covered file and not otherwise, and the verifier refuses no
+  key, a plain key that did sign, `no-touch-required`, a missing namespace and
+  an unlisted signer. Not measured: a good signature by a real security key.
+  Henry's key goes into `firmantes_instalacion` in #48 itself, since with an
+  empty file on `main` nobody could sign its addition.

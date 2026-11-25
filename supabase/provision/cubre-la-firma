@@ -1,0 +1,11 @@
+# What Henry's signature covers besides supabase/provision/ itself (O-3, P5 §6.2;
+# scripts/huella-instalacion.mjs). One path per line. This file is under
+# supabase/provision/, so changing it needs a signature too.
+scripts/instalar-bob.sh
+scripts/aplicar-migraciones.mjs
+scripts/owner-chain-check.mjs
+scripts/huella-instalacion.mjs
+scripts/verificar-firma-instalacion.sh
+scripts/firmar-instalacion.sh
+.github/workflows/install-approval.yml
+.github/CODEOWNERS

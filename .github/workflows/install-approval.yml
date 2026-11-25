@@ -1,0 +1,47 @@
+name: Install approval
+
+# O-3 (P5 §6.2). What installs BOb on a box (supabase/provision/, and what
+# supabase/provision/cubre-la-firma lists) changes only with Henry's signature
+# over its digest, made with a security key that must be touched.
+#
+# pull_request_target: this workflow, its scripts and the signers file come from
+# main, so a PR cannot edit away the check that judges it. The PR's code is
+# never checked out or run: its files are read through the API as data, to
+# compute the digest and fetch the signature. The token is read-only.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  signed:
+    name: What installs BOb is signed by Henry (O-3)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - name: Compare with main, and verify the signature when it changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          base=$(node scripts/huella-instalacion.mjs --github "$REPO" "$BASE_SHA")
+          head=$(node scripts/huella-instalacion.mjs --github "$REPO" "$HEAD_SHA")
+          if [ "$base" = "$head" ]; then echo "nothing that installs BOb changed ($head)"; exit 0; fi
+          echo "what installs BOb changed: digest $head (main: $base)"
+          sig="$RUNNER_TEMP/firma.sig"
+          if ! node scripts/huella-instalacion.mjs --github "$REPO" "$HEAD_SHA" --file "supabase/provision/aprobaciones/$head.sig" > "$sig"; then
+            echo "::error::What installs BOb changed and supabase/provision/aprobaciones/$head.sig is not in the PR. Henry signs it with scripts/firmar-instalacion.sh after the last push (P5 §6.2)."
+            exit 1
+          fi
+          scripts/verificar-firma-instalacion.sh supabase/provision/firmantes_instalacion "$head" "$sig"

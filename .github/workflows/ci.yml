@@ -16,18 +16,17 @@ on:
 #   Chain applies as bob_migrador (O-3)
 #
 # Today main requires the first four. "Chain applies as bob_migrador (O-3)" is
-# still to be made required by Henry, in branch protection.
+# still to be made required by Henry, in branch protection. So is "What installs
+# BOb is signed by Henry (O-3)", which lives in install-approval.yml: it runs
+# from main (pull_request_target) so that a PR cannot edit it away.
 #
 # Lint and build joins this list when an application layer exists. The setting
 # lives in branch protection, not here, and is the one part of ID-12 a workflow
 # file cannot assert about itself.
 
-# Read-only token: the jobs read the code and the PR's comments and labels, and
-# write nothing to the repository (O-3 third review).
+# Read-only token: the jobs read the code and write nothing (O-3).
 permissions:
   contents: read
-  pull-requests: read
-  issues: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -149,6 +148,10 @@ jobs:
         run: supabase test db supabase/tests/database
       - name: Product naming is case-sensitive
         run: node --test --test-concurrency=1 tests/naming.test.mjs
+      # O-3: the digest Henry signs, the signature check refusing what is not a
+      # touched security key, and the approval workflow running from main.
+      - name: What installs BOb is signed (O-3)
+        run: node --test --test-concurrency=1 tests/install-approval.test.mjs
       # Asserts every test file is invoked by some job here, so the next guard
       # added cannot be orphaned from CI.
       - name: Every guard runs in CI
@@ -193,45 +196,6 @@ jobs:
         with:
           version: ${{ env.SUPABASE_CLI_VERSION }}
       - run: pnpm install --frozen-lockfile
-      # >>> install-chain guard
-      # What installs BOb on a box changes only with Henry's approval of that
-      # exact content: the install list, instalar-bob.sh, aplicar-migraciones.mjs,
-      # owner-chain-check.mjs, bob.sql and this step. The label install-chain-change
-      # must be on the PR when this runs, and a comment by INSTALL_CHAIN_APPROVER,
-      # never edited, must read "install-chain-change <sha256>", the digest this
-      # step prints. Any push that touches one of them changes the digest, so an
-      # approval never outlives what it saw. A comment, not a review: GitHub does
-      # not let an author approve their own PR. A PR could still edit this step
-      # away: .github/CODEOWNERS puts it under Henry, and requiring code-owner
-      # review is his setting.
-      - name: What installs BOb changes only with Henry's approval (O-3)
-        if: github.event_name == 'pull_request'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          APPROVER: ${{ vars.INSTALL_CHAIN_APPROVER }}
-          PR: ${{ github.event.pull_request.number }}
-          BASE: ${{ github.base_ref }}
-        run: |
-          list=supabase/provision/install-chain.sha256
-          covered="$list scripts/instalar-bob.sh scripts/aplicar-migraciones.mjs scripts/owner-chain-check.mjs supabase/provision/bob.sql"
-          block() { sed -n '/^      # >>> install-chain guard$/,/^      # <<< install-chain guard$/p'; }
-          git fetch --no-tags --depth=1 origin "$BASE"
-          if ! git cat-file -e "FETCH_HEAD:$list" 2>/dev/null; then echo "$list is not on $BASE yet"; exit 0; fi
-          changed=""
-          for f in $covered; do git diff --quiet FETCH_HEAD -- "$f" || changed="$changed $f"; done
-          [ "$(git show FETCH_HEAD:.github/workflows/ci.yml | block)" = "$(block < .github/workflows/ci.yml)" ] || changed="$changed (this step)"
-          if [ -z "$changed" ]; then echo "nothing that installs BOb changed"; exit 0; fi
-          digest=$( { for f in $covered; do printf '== %s\n' "$f"; cat "$f"; done; block < .github/workflows/ci.yml; } | sha256sum | cut -d' ' -f1)
-          want="install-chain-change $digest"
-          echo "changed:$changed"
-          fail() { echo "::error::What installs BOb changed:$changed. It passes only with the label install-chain-change on the PR and an unedited comment by the repository variable INSTALL_CHAIN_APPROVER reading: $want. $1 Re-run the job after approving."; exit 1; }
-          [ -n "$APPROVER" ] || fail "INSTALL_CHAIN_APPROVER is not set."
-          gh api "repos/$GITHUB_REPOSITORY/issues/$PR/labels" -q '.[].name' | grep -qx install-chain-change || fail "The label is not on the PR now."
-          gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
-            -q '.[] | select(.user.login == env.APPROVER and .created_at == .updated_at) | .body | gsub("\r"; "") | split("\n")[] | sub("^\\s+"; "") | sub("\\s+$"; "")' \
-            | grep -qxF "$want" || fail "No unedited comment by $APPROVER names this digest."
-          echo "changed, approved by $APPROVER for exactly this content"
-      # <<< install-chain guard
       # The box's image, supabase/postgres:17.6.1.136 (F-37), not CI's 15: the
       # alta of bzzz#450 relies on Postgres 16+.
       - name: Start Supabase on the box's Postgres image, with no migration

@@ -1,8 +1,13 @@
-# O-3 (P5 §6.2): what decides how BOb reaches a box, and the workflow that
-# checks it, change only with Henry's review. Requiring code-owner review is a
-# branch-protection setting, Henry's to turn on.
-/.github/                        @hdgarzon
-/scripts/owner-chain-check.mjs   @hdgarzon
-/scripts/instalar-bob.sh         @hdgarzon
-/scripts/aplicar-migraciones.mjs @hdgarzon
-/supabase/provision/             @hdgarzon
+# O-3 (P5 §6.2): what decides how BOb reaches a box, and the workflows that
+# check it, change only with Henry's review. Requiring code-owner review is a
+# branch-protection setting, Henry's to turn on. supabase/provision/cubre-la-firma
+# lists the paths outside supabase/provision/ that his signature covers; each
+# must be here too (tests/install-approval.test.mjs).
+/.github/                                @hdgarzon
+/supabase/provision/                     @hdgarzon
+/scripts/instalar-bob.sh                 @hdgarzon
+/scripts/aplicar-migraciones.mjs         @hdgarzon
+/scripts/owner-chain-check.mjs           @hdgarzon
+/scripts/huella-instalacion.mjs          @hdgarzon
+/scripts/verificar-firma-instalacion.sh  @hdgarzon
+/scripts/firmar-instalacion.sh           @hdgarzon

@@ -69,8 +69,8 @@
 
   El CI corre ese guion en la imagen de la caja (17.6.1.136) y revisa lo que deja. Sigue en el PR #48, sin fusionar. Sobre el USAGE en `auth`: «Nota en D77: ese grant con supabase_admin» (D77 77.21 y 77.22, bzzz#442). Faltan cuatro cosas:
   - `bob.sql` vuelve a ser idéntico al de bzzz#450 en `7429eec` (`ad9adf91…`); Bzzz no tiene que cambiar nada.
-  - Henry: poner la variable `INSTALL_CHAIN_APPROVER` (quién aprueba un cambio de lo que instala BOb), volver obligatorio el job de O-3 y exigir la revisión de CODEOWNERS en la protección de `main`.
-  - Henry decide quién firma la aprobación (B2): el `gh` de los agentes entra como su usuario, así que un agente podría escribir el comentario.
+  - Henry firma con llave que pide toque (B2, su decisión): un cambio de lo que instala BOb pasa solo con `supabase/provision/aprobaciones/<huella>.sig`, hecha con `scripts/firmar-instalacion.sh` y verificada desde `main` (`install-approval.yml`, `pull_request_target`).
+  - Henry, antes de fusionar #48: poner su llave pública `sk-` en `supabase/provision/firmantes_instalacion`, en el mismo #48 (con `main` vacío ya nadie podría firmar el alta de la llave). Después, volver obligatorios los checks «Chain applies as bob_migrador (O-3)» y «What installs BOb is signed by Henry (O-3)», y exigir la revisión de CODEOWNERS.
   - Pendiente: lo que `bob` abre a `anon`, `authenticated` o PUBLIC.
   - Tabla en P5 §6.2.
 - Sin fecha: una migración base que no salga de `bob`, para después de 0.6.
