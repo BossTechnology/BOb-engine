@@ -3,7 +3,12 @@
 Una línea por cambio entregado, en lenguaje de usuario.
 
 ## Sin publicar
-- CI aplica la cadena de migraciones como se decidió para O-3 (D77). `postgres` instala la cadena actual una vez, fijada archivo por archivo. Después se le pasa el esquema `bob` al rol dueño propio de BOb (`bob_migrador`), que aplica cada migración nueva. Falla si se edita la cadena de instalación, si una migración nueva toca algo fuera de `bob` (`public`, `auth`, la publicación) o si ese rol recibe un permiso fuera de `bob`, sea sobre un esquema, una tabla, una función o una membresía.
+- BOb se instala en una caja con `scripts/instalar-bob.sh`, como se decidió para O-3 (D77):
+  - `postgres` instala una vez la cadena actual, fijada archivo por archivo;
+  - el alta de Bzzz le pasa `bob` al rol dueño propio de BOb (`bob_migrador`);
+  - `bob_migrador` aplica cada migración nueva.
+
+  CI corre ese guion en la imagen de Postgres de la caja (17.6.1.136). Falla si cambia la lista de instalación sin la etiqueta de Henry, si una migración nueva toca algo fuera de `bob` (`public`, `auth`, la publicación) o si ese rol recibe un permiso fuera de `bob`. También falla si una función de `bob` que corre con los permisos de su dueño pierde algo que usa.
 - El chequeo de salida a la red de CI y de la caja falla cerrado: cualquier extensión fuera de una lista aprobada de cinco, cualquier servidor foráneo o cualquier lenguaje no confiable que no sea `c` o `internal` lo pone en rojo (F-27, opción c, ampliada). No revisa lo que un superusuario puede hacer sin instalar nada, ni otras bases del mismo servidor. El kit del ensayo anota todas las extensiones instaladas, y una prueba corre `box-check.mjs` entero y ve el exit 1.
 - El ensayo de P5 corrió en lab-02: 41 comprobaciones, todas como se esperaba, con la cadena aplicada y `auth.users` sin tocar. El kit compara inventarios sin depender del idioma de la caja.
 - Restaurar `bob` solo ya no se lleva las funciones de `public` que dependen de él: el procedimiento y el kit del ensayo las guardan antes de borrar `bob` y las reponen después (`scripts/bob-dependientes.sh`). `service_role` ya no puede drenar el outbox (F-47).

@@ -215,13 +215,28 @@ jobs:
           supabase start
           rmdir supabase/migrations && mv "$RUNNER_TEMP/chain" supabase/migrations
           docker ps --format '{{.Image}}' | grep -E 'supabase/postgres:' | tee /dev/stderr | grep -q ':17.6.1.136$'
-      - name: Install BOb as a box would (scripts/instalar-bob.sh)
+      - name: 1 · the install chain (scripts/instalar-bob.sh cadena)
+        env:
+          POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+        run: scripts/instalar-bob.sh cadena
+      # Step 2 on a box is Bzzz's alta (bzzz#450). Here, its stand-in, writing
+      # the same migrador.env the alta writes.
+      - name: 2 · the alta, CI stand-in for bzzz#450
         env:
           POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
           SUPABASE_ADMIN_URL: postgresql://supabase_admin:postgres@127.0.0.1:54322/postgres
-          MIGRADOR_URL: postgresql://bob_migrador:bob_migrador-local-test@127.0.0.1:54322/postgres
-          MIGRADOR_PASSWORD: bob_migrador-local-test
-        run: scripts/instalar-bob.sh todo
+        run: |
+          (cd supabase/provision && psql "$POSTGRES_URL" -X -q -v ON_ERROR_STOP=1 -f alta-ci.sql)
+          psql "$SUPABASE_ADMIN_URL" -X -q -v ON_ERROR_STOP=1 -f supabase/provision/alta-ci-supabase-admin.sql
+          psql "$SUPABASE_ADMIN_URL" -X -q -v ON_ERROR_STOP=1 -v pw=bob_migrador-local-test \
+            <<< "ALTER ROLE bob_migrador LOGIN PASSWORD :'pw';"
+          printf 'MIGRADOR_USUARIO=bob_migrador\nMIGRADOR_CLAVE=bob_migrador-local-test\nMIGRADOR_HOST=127.0.0.1\nMIGRADOR_RED=\n' > "$RUNNER_TEMP/migrador.env"
+      - name: 3 · every other migration (scripts/instalar-bob.sh resto)
+        env:
+          POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+          MIGRADOR_PUERTO: '54322'
+          SUDO: ''
+        run: MIGRADOR_ENV="$RUNNER_TEMP/migrador.env" scripts/instalar-bob.sh resto
       - name: Check what it left
         env:
           ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres

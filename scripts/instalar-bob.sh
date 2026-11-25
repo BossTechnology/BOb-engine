@@ -3,79 +3,75 @@
 # «postgres una vez, luego migrador». Run by Henry in a window, never by an
 # agent against a box. CI runs it against a disposable local stack.
 #
-#   On a box, in a window, three steps in this order:
-#     POSTGRES_URL=… scripts/instalar-bob.sh cadena      # 1, as postgres
-#     scripts/generar-secretos-vecina.sh bob             # 2, Bzzz's alta (bzzz#450)
-#     POSTGRES_URL=… MIGRADOR_URL=… scripts/instalar-bob.sh resto   # 3
-#   On lab-02, where the chain is applied, step 1 is a no-op.
-#   In CI, all three with the stand-in for step 2:
-#     POSTGRES_URL=… SUPABASE_ADMIN_URL=… MIGRADOR_URL=… MIGRADOR_PASSWORD=… \
-#     scripts/instalar-bob.sh todo
-#
-# 1. The install chain, only the files in supabase/provision/install-chain.sha256,
-#    each checked against its hash, pushed by postgres. --include-all, so a box
-#    whose history lacks one of them (lab-02, if it does) gets it; one already
-#    applied is skipped.
-# 2. The provisioning. On a box this is NOT here: it is Bzzz's alta,
-#    scripts/generar-secretos-vecina.sh bob (bzzz#450), which needs schema bob
-#    from step 1 to hand it over. `todo` runs a stand-in, for CI only, from
-#    supabase/provision/:
-#    bob-vecina.sql as postgres (roles, schema, the hand-over, in one
-#    transaction), bob-vecina-supabase-admin.sql as supabase_admin (USAGE on
-#    auth), and LOGIN and the password as supabase_admin, as #450 does.
-# 3. Every other migration not yet recorded, in order, applied by bob_migrador
-#    with psql, and recorded by postgres in supabase_migrations.schema_migrations
-#    as the CLI records it. Not `supabase db push` as bob_migrador: the CLI reads
-#    and creates that history table, shared and not bob's, and stops with 42501
-#    (measured, CI run 45630458545). A file that fails stops the script; the
-#    files before it stay applied and recorded.
+# Three steps, in this order:
+#   1. POSTGRES_URL=… scripts/instalar-bob.sh cadena
+#      The install chain: only the files in supabase/provision/install-chain.sha256,
+#      each checked against its hash, pushed by postgres with --include-all (a
+#      history that lacks one gets it; on lab-02 it is a no-op).
+#   2. Bzzz's alta: scripts/generar-secretos-vecina.sh bob (bzzz#450). Roles,
+#      schema bob, config/supabase/vecinas/bob.sql (= supabase/provision/bob.sql)
+#      and the hand-over of bob to bob_migrador; the password in
+#      /opt/bob/secrets/migrador.env. Not here: this script creates no role or
+#      schema and never touches a password.
+#   3. POSTGRES_URL=… scripts/instalar-bob.sh resto
+#      Every other migration not yet recorded, in order, applied by bob_migrador
+#      with psql, and recorded by postgres in supabase_migrations.schema_migrations
+#      as the CLI records it. Not `supabase db push` as bob_migrador: the CLI
+#      reads and creates that history table, shared and not bob's, and stops
+#      with 42501 (measured, CI run 45630458545). A file that fails stops the
+#      script; the files before it stay applied and recorded.
+#      bob_migrador's connection comes from the alta's file, MIGRADOR_ENV
+#      (default /opt/bob/secrets/migrador.env, read with sudo, keys only, never
+#      printed): MIGRADOR_USUARIO, MIGRADOR_CLAVE, MIGRADOR_HOST, MIGRADOR_RED.
+#      With MIGRADOR_RED set, psql runs in a container of the database's image
+#      on that network, the only one bob_migrador may connect from (77.13).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 : "${POSTGRES_URL:?}"
 step=${1:-}
-case "$step" in
-  cadena) ;;
-  resto) : "${MIGRADOR_URL:?}" ;;
-  todo) : "${MIGRADOR_URL:?}" "${SUPABASE_ADMIN_URL:?}" "${MIGRADOR_PASSWORD:?}" ;;
-  *) echo "Usage: $0 cadena|resto|todo" >&2; exit 2 ;;
-esac
+case "$step" in cadena|resto) ;; *) echo "Usage: $0 cadena|resto" >&2; exit 2 ;; esac
 LIST=supabase/provision/install-chain.sha256
-if command -v sha256sum >/dev/null; then SHA=(sha256sum); else SHA=(shasum -a 256); fi
 
-work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
-mkdir -p "$work/supabase/migrations"
-cp supabase/config.toml "$work/supabase/"
-
-if [ "$step" != resto ]; then
-echo "== 1 · the install chain, as postgres"
-(cd supabase/migrations && grep -v '^#' "../provision/install-chain.sha256" | "${SHA[@]}" -c --quiet -)
-grep -v '^#' "$LIST" | while read -r _ f; do cp "supabase/migrations/$f" "$work/supabase/migrations/"; done
-supabase db push --db-url "$POSTGRES_URL" --workdir "$work" --include-all --yes
-
-fi
-[ "$step" != cadena ] || exit 0
-
-if [ "$step" = todo ]; then
-  echo "== 2 · the provisioning, the CI stand-in for bzzz#450"
-  psql "$POSTGRES_URL" -X -q -v ON_ERROR_STOP=1 -f supabase/provision/bob-vecina.sql
-  psql "$SUPABASE_ADMIN_URL" -X -q -v ON_ERROR_STOP=1 -f supabase/provision/bob-vecina-supabase-admin.sql
-  psql "$SUPABASE_ADMIN_URL" -X -q -v ON_ERROR_STOP=1 -v pw="$MIGRADOR_PASSWORD" <<'SQL'
-ALTER ROLE bob_migrador LOGIN PASSWORD :'pw';
-SQL
+if [ "$step" = cadena ]; then
+  if command -v sha256sum >/dev/null; then SHA=(sha256sum); else SHA=(shasum -a 256); fi
+  work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
+  mkdir -p "$work/supabase/migrations"
+  cp supabase/config.toml "$work/supabase/"
+  echo "== 1 · the install chain, as postgres"
+  (cd supabase/migrations && grep -v '^#' "../provision/install-chain.sha256" | "${SHA[@]}" -c --quiet -)
+  grep -v '^#' "$LIST" | while read -r _ f; do cp "supabase/migrations/$f" "$work/supabase/migrations/"; done
+  supabase db push --db-url "$POSTGRES_URL" --workdir "$work" --include-all --yes
+  exit 0
 fi
 
 echo "== 3 · every other migration, as bob_migrador"
-applied=$(psql "$POSTGRES_URL" -X -A -t -q -c 'SELECT version FROM supabase_migrations.schema_migrations')
+ENVF=${MIGRADOR_ENV:-/opt/bob/secrets/migrador.env}
+SUDO=${SUDO-sudo}
+key() { $SUDO cat "$ENVF" | sed -n "s/^$1=//p" | tail -1; }
+M_USER=$(key MIGRADOR_USUARIO); M_HOST=$(key MIGRADOR_HOST); M_NET=$(key MIGRADOR_RED)
+M_PORT=${MIGRADOR_PUERTO:-5432}
+export PGPASSWORD; PGPASSWORD=$(key MIGRADOR_CLAVE)
+[ -n "$M_USER" ] && [ -n "$M_HOST" ] && [ -n "$PGPASSWORD" ] || { echo "$ENVF lacks MIGRADOR_USUARIO, MIGRADOR_HOST or MIGRADOR_CLAVE" >&2; exit 2; }
+as_migrador() {  # <file>
+  if [ -n "$M_NET" ]; then
+    img=$(docker inspect -f '{{.Config.Image}}' "$M_HOST")
+    docker run --rm -i --network "$M_NET" -e PGPASSWORD "$img" \
+      psql -h "$M_HOST" -p "$M_PORT" -U "$M_USER" -d postgres -X -q -v ON_ERROR_STOP=1 -f - < "$1"
+  else
+    psql -h "$M_HOST" -p "$M_PORT" -U "$M_USER" -d postgres -X -q -v ON_ERROR_STOP=1 -f "$1"
+  fi
+}
+applied=$(PGPASSWORD= psql "$POSTGRES_URL" -X -A -t -q -c 'SELECT version FROM supabase_migrations.schema_migrations')
 for path in $(ls supabase/migrations/*.sql | sort); do
   f=$(basename "$path")
   [[ "$f" =~ ^[0-9]+_.*\.sql$ ]] || continue
   v=${f%%_*}
   grep -qx "$v" <<<"$applied" && continue
-  if grep -q "  $f\$" "$LIST"; then echo "$f is in the install chain and not applied: run step 1 again" >&2; exit 1; fi
+  if grep -q "  $f\$" "$LIST"; then echo "$f is in the install chain and not applied: run step 1 first" >&2; exit 1; fi
   n=${f#*_}; n=${n%.sql}
   echo "Applying $f as bob_migrador"
-  psql "$MIGRADOR_URL" -X -q -v ON_ERROR_STOP=1 -f "$path"
-  psql "$POSTGRES_URL" -X -q -v ON_ERROR_STOP=1 -v v="$v" -v n="$n" -v body="$(cat "$path")" <<'SQL'
+  as_migrador "$path"
+  PGPASSWORD= psql "$POSTGRES_URL" -X -q -v ON_ERROR_STOP=1 -v v="$v" -v n="$n" -v body="$(cat "$path")" <<'SQL'
 INSERT INTO supabase_migrations.schema_migrations (version, name, statements) VALUES (:'v', :'n', ARRAY[:'body']);
 SQL
 done

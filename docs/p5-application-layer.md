@@ -396,7 +396,7 @@ asks.
 | Plan v2 §9.2 path | Credential | File **[PROPOSED]** | Read by |
 |---|---|---|---|
 | `bzzz/supabase` | `JWT_SECRET`, `SERVICE_ROLE_KEY`, the database superuser | `/opt/bzzz/secrets/supabase.env` (exists) | The database and auth containers and the operator scripts. Not the migration step (§8, objection 6) |
-| none (new) | BOb's migration owner | `/opt/bzzz/secrets/bob/migrador.env` | The migration step of §6.2, and nothing else |
+| none (new) | BOb's migration owner | `/opt/bob/secrets/migrador.env` | The migration step of §6.2, and nothing else |
 | `bzzz/supabase-ro` | `bob_ai_ro` login | `/opt/bzzz/secrets/bob/ai-ro.env` | The inference service |
 | `bzzz/apps` | `bob_app` login | `/opt/bzzz/secrets/bob/app.env` | The BOb container |
 | none (new) | `bob_feeder` login | `/opt/bzzz/secrets/bob/feeder.env` | The reference feeder first, then 3.7 (§3.1). From 2026-11-21 its container also runs the ghost reconciliation's ClickHouse read (Q6) |
@@ -501,8 +501,8 @@ The reasons:
 | Question | Proposal |
 |---|---|
 | What is applied | A BOb-engine commit on `main` with four green checks. The box pins the commit SHA, the way it pins images (D4, D9), and reports it in its manifest (task 3.11) |
-| With what | The Supabase CLI at the version CI pins (`SUPABASE_CLI_VERSION`, today 2.120.0): `supabase db push --db-url …` against `supabase-db` on `bzzz-app`. It writes `supabase_migrations.schema_migrations` exactly as CI's reset does, so the same F-15 check reads the box |
-| As whom | The migration owner, from `/opt/bzzz/secrets/bob/migrador.env`, its own file (§8, objection 6). It owns every object, which the `SECURITY DEFINER` functions and definer views need. D77 §2.8 names it `bob_migrador` (LOGIN, NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE, no CREATE on the database), with what lies outside `bob` in Bzzz `config/supabase/vecinas/bob.sql`, applied by `postgres`. **Decided 2026-11-24 (O-3), Henry: «postgres una vez, luego migrador».** `postgres` applies the install chain once, when BOb is installed on a box, supabase_admin hands `bob` to `bob_migrador`, and every other migration is applied by `bob_migrador`. See "Applied by `bob_migrador`" below |
+| With what | `scripts/instalar-bob.sh` (O-3, below): the install chain with the Supabase CLI at the version CI pins (`SUPABASE_CLI_VERSION`, today 2.120.0), `supabase db push --db-url …` as `postgres` against `supabase-db` on `bzzz-app`, the provisioning, then every later migration with `psql` as `bob_migrador`, recorded by `postgres`. Every version lands in `supabase_migrations.schema_migrations`, as with CI's reset, so the same F-15 check reads the box |
+| As whom | The migration owner, from `/opt/bob/secrets/migrador.env`, its own file (§8, objection 6). It owns every object, which the `SECURITY DEFINER` functions and definer views need. D77 §2.8 names it `bob_migrador` (LOGIN, NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE, no CREATE on the database), with what lies outside `bob` in Bzzz `config/supabase/vecinas/bob.sql`, applied by `postgres`. **Decided 2026-11-24 (O-3), Henry: «postgres una vez, luego migrador».** `postgres` applies the install chain once, when BOb is installed on a box; Bzzz's alta (bzzz#450) hands `bob` to `bob_migrador`; every other migration is applied by `bob_migrador`. See "Applied by `bob_migrador`" below |
 | From where | A step in `scripts/actualizar.sh`, after the database and before any service that uses the new schema. That follows BzzzBX's rule of migration before code, as with the centro's 009 |
 | Who runs it | Henry, in a maintenance window with notice to the company (CLAUDE.md: production is Henry's). Never an agent, and never a running service |
 | How it is tried first | Development runs on a local Supabase pinned to the box's images and to CI's CLI version (§5.1, Q3 **[DECIDED]**). Then `supabase db push --dry-run` on `bzzz-lab-02`, the real apply there, then `bzzz-model-01`, then the company boxes. lab-02 is where every chain is applied first. This is plan §3.6's `--plan` habit, and D16's rule that tests run on another machine, never on a second copy |
@@ -534,66 +534,126 @@ below. They stay as they are.
 | `CREATE ROLE bob_app …` | `20260902100300` | No. `bob.sql` creates the three roles, but `CREATE ROLE` checks CREATEROLE before it sees the role exists, and `COMMENT ON ROLE` needs it too | Change: the baseline expects the roles, made by `bob.sql` |
 | `CREATE SCHEMA IF NOT EXISTS bob` | `20261118100000` | No. `bob.sql` creates `bob` for `bob_migrador`, but the statement checks CREATE on the database first | Change: the baseline expects the schema |
 
-What `bob.sql` must hold, measured (`supabase/provision/`), applied after the
-install chain, and idempotent, since lab-02 gets it over an existing `bob`:
+**The procedure on a box.** Henry runs it in a window, in this order:
 
-- As `postgres` (`bob-vecina.sql`): `CREATE ROLE bob_migrador LOGIN
-  NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION`, if it does
-  not exist (password from the box's secret). No membership for anyone.
-- As `supabase_admin` (`bob-vecina-supabase-admin.sql`):
-  - `GRANT USAGE ON SCHEMA auth TO bob_migrador`, which every tenant policy
-    needs (they call `auth.jwt()`). `postgres` cannot make it: it holds no
-    grant option on `auth` (owner `supabase_admin`), and the GRANT only warns.
-    Henry, 2026-11-24: «Nota en D77: ese grant con supabase_admin». The note
-    is D77 77.21 and 77.22, in Bzzz (bzzz#442, merged as `b483d7b9`).
-  - The hand-over: `ALTER SCHEMA bob OWNER TO bob_migrador`, and every table,
-    view, sequence, function and type in `bob` to it (sequences owned by a
-    column, indexes and row types follow their table). `postgres` cannot do
-    this either, unless it is a superuser: giving a schema to a role needs
-    that role to hold CREATE on the database, which `bob_migrador` does not,
-    and handing objects over needs membership in `bob_migrador`. **This is one
-    more thing in the `supabase_admin` part than D77 77.21 and 77.22 say**,
-    and it is for Bzzz to add.
+1. `POSTGRES_URL=… scripts/instalar-bob.sh cadena`. Pushes, as `postgres`, only
+   the files in `install-chain.sha256`, each checked against its hash, with
+   `supabase db push --include-all` from a work directory. On lab-02, where
+   they are applied, this is a no-op. `--include-all` covers a history that
+   lacks one of them.
+2. Bzzz's alta, `scripts/generar-secretos-vecina.sh bob` with
+   `config/supabase/vecinas/bob.conf` (bzzz#450, D77 77.17 to 77.22). **What
+   counts on a box is that alta.** `supabase/provision/` in BOb-engine only
+   imitates it for CI. Measured on `supabase/postgres:17.6.1.136`, `postgres`
+   does it all in one transaction:
+   - `bob_migrador` (NOLOGIN, CONNECTION LIMIT 1, none of the other
+     attributes);
+   - the application roles with their connection limits;
+   - schema `bob`, and `bob.sql`;
+   - the hand-over of everything in `bob` that is `postgres`'s.
 
-The check asserts the footprint of `bob_migrador` outside `bob` is exactly:
-LOGIN and none of the other attributes (replication included); CONNECT and
-TEMPORARY on the database; no role it is a member of and no member of it; one
-privilege entry outside `bob`, on schema `auth`; USAGE on `auth` and on
-`public`. It reads every object, in any database, that the role owns, holds a
-privilege on, or is named in a policy of from `pg_shdepend`, so a grant of any
-kind outside `bob` shows.
+   To do this, `postgres` takes two temporary permissions, `GRANT
+   bob_migrador TO postgres WITH INHERIT FALSE, SET TRUE` and CREATE on the
+   database for `bob_migrador`, and revokes both before the COMMIT. That
+   works because on Postgres 16+ the creator of a role holds ADMIN on it.
+   `supabase_admin` only grants USAGE on `auth` (77.22) and sets LOGIN and the
+   password. The alta needs schema `bob` from step 1 to hand it over.
+3. `POSTGRES_URL=… scripts/instalar-bob.sh resto`. `bob_migrador`'s
+   connection comes from the alta's file, `/opt/bob/secrets/migrador.env`
+   (`MIGRADOR_USUARIO`, `MIGRADOR_CLAVE`, `MIGRADOR_HOST`, `MIGRADOR_RED`). The
+   script reads only those keys, with `sudo`, and never prints them. psql runs
+   in a container of the database's image on `MIGRADOR_RED`, the one network
+   `bob_migrador` may connect from (77.13). The script creates no role or
+   schema and never sets a password: the alta does. Every other
+   migration not yet recorded, in order. `bob_migrador` applies it with
+   `psql`, and `postgres` records it in
+   `supabase_migrations.schema_migrations`, as the CLI does. Not
+   `supabase db push` as `bob_migrador`: the CLI reads and creates that history
+   table, which is shared and not `bob`'s, and stops with 42501 (measured, run
+   45630458545). Giving `bob_migrador` that table would hand it every
+   neighbour's history. A file that fails stops the script; the files before
+   it stay applied and recorded. If the record fails after the apply, a second
+   run applies that file again: every migration wraps its work in
+   `BEGIN … COMMIT` and must be safe to see twice.
 
-Measured after the hand-over, in CI: nothing in `bob` is left to another owner.
-Seven functions outside `bob` name it, all `postgres`'s. One is SECURITY
-DEFINER, `public.bob_autobotz_record_verification`, and runs as `postgres`
-after the hand-over. The check fails if such a function's owner loses USAGE on
-`bob` or every privilege on a `bob` table it names.
+CI runs the same three steps. Step 2 is a stand-in for the alta:
+`supabase/provision/alta-ci.sql` as `postgres` and `alta-ci-supabase-admin.sql`
+as `supabase_admin`, then LOGIN and the password, then a `migrador.env` like
+the alta's. **`supabase/provision/bob.sql` is the content of Bzzz's
+`config/supabase/vecinas/bob.sql`, and the two are kept identical**: a change
+goes to both. Today it holds one line, the PR-4 EXECUTE below.
+`alta-ci.sql` includes it at the point where #450 reads it. The job runs on the
+box's image,
+`supabase/postgres:17.6.1.136`, pinned through `supabase/.temp/postgres-version`
+and checked from the running container, not on CI's 15. The stand-in keeps
+#450's names (`bob_migrador`, schema `bob`, `bob_app:10`, `bob_feeder:4`,
+`bob_ai_ro:0`), its order and its transaction.
 
-Not measured:
-- `supabase db push` as `bob_migrador` writes
-  `supabase_migrations.schema_migrations`, a schema it does not own. The check
-  applies files itself, not through the CLI.
-- What the hand-over changes for the SECURITY DEFINER functions in `bob`, which
-  now run as `bob_migrador`, on a box with data.
-- Postgres 17. CI runs 15 and the boxes 17.6 (F-37). On 16 and later, a
-  CREATEROLE role that creates another is granted ADMIN on it, so on a box
-  `postgres` may show as a member of `bob_migrador`, and the footprint would
-  report it.
-- What `bob` opens to `anon` or PUBLIC: nothing here watches it. Pending.
+**What `bob.sql` holds.** #450 does not have it yet; it is
+`supabase/provision/bob.sql`, one line: `GRANT EXECUTE ON FUNCTION
+public.bob_grant_projection(regclass) TO bob_migrador`.
+`bob.proj_ensure_partition` is SECURITY DEFINER and, after the hand-over, runs
+as `bob_migrador`. It calls that helper (PR-4), which is `postgres`'s, with
+EXECUTE revoked from PUBLIC. Without the grant, the feeder fails with 42501 on
+the first new month (seen red in CI). The grant goes when the helper moves into
+`bob`, with the forward migration below.
 
-The guard (`scripts/owner-chain-check.mjs`, CI job "Chain applies as
-bob_migrador (O-3)", **still to be made a required check by Henry**: today
-`main` requires the other four). It fails if:
-- a file of the install chain is missing or edited;
-- `postgres` cannot apply it;
-- any provisioning statement fails or only warns, on the first round or the
-  second;
+The footprint of `bob_migrador` outside `bob` must be exactly:
+- LOGIN and none of the other attributes, replication included;
+- CONNECT and TEMPORARY on the database;
+- no role it is a member of;
+- as members: `postgres`, with ADMIN only, neither INHERIT nor SET. On
+  Postgres 16+ the creator of a role gets that row, and #450's V14 admits it
+  in that exact form. On 15 it would be none.
+- two privilege entries outside `bob`: schema `auth`, and the PR-4 helper;
+- USAGE on `auth` and on `public`.
+
+It reads from `pg_shdepend` every object, in any database, that the role owns,
+holds a privilege on, or is named in a policy of. So a grant of any kind
+outside `bob` shows, and so does a default privilege, with or without a
+schema (measured).
+
+SECURITY DEFINER code runs as its owner. The check fails in either case:
+- a function outside `bob`, still `postgres`'s, loses USAGE on `bob` or every
+  privilege on a `bob` table it names;
+- a function in `bob`, now `bob_migrador`'s, calls a function outside `bob`
+  that `bob_migrador` cannot execute.
+
+A name counts whether it is qualified or left to the function's own
+`search_path`. Not seen: a name built at run time with `EXECUTE format(…)`.
+Measured on 17.6.1.136 (and, before the alignment with #450, on 15):
+- Nothing in `bob` is left to another owner.
+- Of the functions outside `bob` that name it, one is SECURITY DEFINER,
+  `public.bob_autobotz_record_verification`, and keeps what it reads.
+- `bob.proj_ensure_partition` creates a new month as `bob_migrador`.
+
+Not measured: what the hand-over changes for the other SECURITY DEFINER
+functions in `bob` on a box with data, beyond what they call. What `bob` opens
+to `anon`, `authenticated` or PUBLIC is still pending; nothing here watches it.
+
+The install list. `install-chain.sha256` changes only with the label
+`install-chain-change`, applied by the GitHub login in the repository variable
+`INSTALL_CHAIN_APPROVER`. That variable is for Henry to set; while it is unset,
+no change passes. A CI step diffs the list against the base branch; re-run the
+job after labelling. It cannot run red on the PR that adds the list, which is
+not on `main` yet. Until then it was seen to fail locally, against this PR's
+own earlier commit.
+
+The guard: the CI job "Chain applies as bob_migrador (O-3)", on
+`supabase/postgres:17.6.1.136`, **still to be made a required check by
+Henry**. Today `main` requires the other four. They fail if:
+- the install list changes without that label;
+- `instalar-bob.sh` stops: an install file is edited, `postgres` cannot push
+  the chain, the provisioning fails, or a later migration does not apply as
+  `bob_migrador`, whatever its date;
+- a migration file (the CLI's rule: digits, an underscore, `.sql`) is not
+  recorded as applied;
+- the provisioning, applied once more, fails or only warns;
 - after the hand-over, anything in `bob` is not `bob_migrador`'s;
-- any other migration the CLI would apply (digits, an underscore, `.sql`, the
-  CLI's own rule) does not apply as `bob_migrador` alone, whatever its date;
+- a SECURITY DEFINER function lost what it uses;
 - the footprint is not exactly the one above.
 
-Each run it also checks, as `bob_migrador`, that these are refused:
+Each run also checks, as `bob_migrador`, that these are refused:
 - creating in `public`, or a schema;
 - altering or dropping a function BOb left in `public`;
 - altering `auth`;
@@ -603,17 +663,28 @@ And that these apply:
 - creating in `bob`;
 - altering a table, adding a policy and replacing a view the install chain
   made there;
-- a REVOKE.
+- a REVOKE;
+- a new month through `bob.proj_ensure_partition`.
 
-It also checks that each of these shows in the footprint: an extra schema
-privilege, a privilege on a table or a function outside `bob`, a membership
-either way, and an attribute.
+And that each of these is seen: a definer in `bob` that lost EXECUTE outside
+it; a default privilege; an extra schema privilege; a privilege on a table or
+a function outside `bob`; a membership either way; an attribute.
 
 Seen red:
 - with the stops list empty (21 findings);
 - with one extra grant and a migration creating `public.o3_sabotage`;
 - in phase B, with a new migration altering `public.cap_alert_log()`;
-- on the real path (run 45548002703), with an install file edited, a new migration dated inside the install chain altering `public.cap_alert_log()`, and `GRANT SELECT ON auth.users` in the provisioning: exactly 3 findings, then reverted.
+- with an install file edited, a new migration dated inside the install chain
+  altering `public.cap_alert_log()`, and `GRANT SELECT ON auth.users` in the
+  provisioning (run 45548002703): exactly 3 findings;
+- with the PR-4 EXECUTE dropped from the provisioning, on 15 and 17 (run
+  45635387478): three findings, all about that grant. These are the definer
+  guard, the footprint, and the new month that cannot be created;
+- with a new migration altering `public.cap_alert_log()`, on 15 and 17 (run
+  45637041182): `instalar-bob.sh` stops with `must be owner of function
+  public.cap_alert_log`.
+
+Each sabotage was reverted.
 
 Pending, no date: a baseline migration that does not leave `bob`, reproducing
 today's end state, after 0.6. Until it exists, a new box gets the install
@@ -1040,7 +1111,7 @@ Ordered from the most damaging to the least.
        and `crear-usuario-portal.sh`.
    - **Answered** (Henry, 2026-11-19): **(a) a file of its own.**
      - The credential that applies BOb's migrations goes in
-       `/opt/bzzz/secrets/bob/migrador.env`, at mode 600.
+       `/opt/bob/secrets/migrador.env`, at mode 600.
      - Only the migration step of §6.2 reads it. No service and no other
        script does.
      - That keeps §4's rule of one credential per file and one reader per

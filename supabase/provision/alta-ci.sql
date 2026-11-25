@@ -1,4 +1,4 @@
--- A stand-in, for CI only, for what the box's real alta does: Bzzz
+-- A stand-in, for CI only, for step 2 of Bzzz's alta: Bzzz
 -- scripts/generar-secretos-vecina.sh with config/supabase/vecinas/bob.conf
 -- (BossTechnology/bzzz#450, D77 §2.8, 77.17 to 77.22). What counts on a box is
 -- that alta, not this file. Same names, same order, same transaction, measured
@@ -42,12 +42,8 @@ BEGIN
 END
 $$;
 
--- What #450 reads from config/supabase/vecinas/bob.sql, which #450 does not
--- have yet. bob.proj_ensure_partition is SECURITY DEFINER and, after the
--- hand-over, runs as bob_migrador; it calls the PR-4 helper, postgres's, with
--- EXECUTE revoked from PUBLIC. Without this the feeder fails with 42501 on the
--- first new month. It goes when the helper moves into bob.
-GRANT EXECUTE ON FUNCTION public.bob_grant_projection(regclass) TO bob_migrador;
+-- bob.sql, as #450 reads config/supabase/vecinas/bob.sql at this point.
+\ir bob.sql
 
 -- The hand-over: everything in bob that is postgres's goes to bob_migrador;
 -- anything of another role stops it. Sequences owned by a column, indexes and

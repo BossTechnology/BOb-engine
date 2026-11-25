@@ -39,8 +39,8 @@ export const INSTALL_CHAIN = Object.fromEntries(readFileSync(INSTALL_LIST, 'utf8
 const adminUrl = process.env.ADMIN_URL
 const dir = process.env.CHAIN_DIR
 if (!adminUrl || !dir) { console.error('ADMIN_URL and CHAIN_DIR are required'); process.exit(2) }
-const PROVISION = 'supabase/provision/bob-vecina.sql'
-const PROVISION_SA = 'supabase/provision/bob-vecina-supabase-admin.sql'
+const PROVISION = 'supabase/provision/alta-ci.sql'
+const PROVISION_SA = 'supabase/provision/alta-ci-supabase-admin.sql'
 const PASSWORD = process.env.MIGRADOR_PASSWORD
 if (!PASSWORD) { console.error('MIGRADOR_PASSWORD is required'); process.exit(2) }
 const findings = []
@@ -73,7 +73,12 @@ console.log(`     ${files.length} migration file(s), ${Object.keys(INSTALL_CHAIN
 // One statement at a time; a semicolon at a line end splits, except inside $$.
 function statements(file) {
   const out = []; let cur = []; let inBody = false
-  for (const line of readFileSync(file, 'utf8').split('\n')) {
+  // \ir <file> is inlined, as psql does, relative to the including file.
+  const lines = readFileSync(file, 'utf8').split('\n').flatMap((l) => {
+    const m = l.match(/^\\ir\s+(\S+)/)
+    return m ? readFileSync(`${file.replace(/[^/]*$/, '')}${m[1]}`, 'utf8').split('\n') : [l]
+  })
+  for (const line of lines) {
     if (!inBody && /^\s*--/.test(line)) continue
     cur.push(line)
     if ((line.match(/\$\$/g) ?? []).length % 2) inBody = !inBody
@@ -176,7 +181,7 @@ const EXPECTED_FOOTPRINT = [
 // postgres administers bob_migrador, and sets its password, without acting as
 // it. Measured on 17 in CI. Anything more is a finding.
 EXPECTED_FOOTPRINT.push(PG16 ? 'members: postgres (admin only)' : 'members: (none)')
-// bob-vecina.sql's EXECUTE on the PR-4 helper, named as the catalog names it.
+// bob.sql's EXECUTE on the PR-4 helper, named as the catalog names it.
 const { rows: [helper] } = await admin.query(`
   SELECT (pg_identify_object('pg_proc'::regclass, 'public.bob_grant_projection(regclass)'::regprocedure, 0)).identity AS id`)
 EXPECTED_FOOTPRINT.push(`privilege on function ${helper.id}`)

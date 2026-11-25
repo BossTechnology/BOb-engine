@@ -62,7 +62,16 @@
   - CHASS1S (repo `CHS`): 137 de producción. jszip tiene doble licencia (MIT o GPL), duck declara solo «BSD» y Chromium se descarga en tiempo de ejecución.
 
 ## Pendiente
-- O-3 (D77): decidido por Henry el 24 nov en el chat de Relevo: «postgres una vez, luego migrador». `postgres` aplica una sola vez, al instalar, la cadena de instalación (33 archivos fijados por sha256). Después `supabase_admin` le pasa `bob` y todo lo que contiene a `bob_migrador`, y cada migración nueva la aplica `bob_migrador`. El guard del PR #48 (sin fusionar) reproduce ese camino. Falla si se edita un archivo de la instalación, si una migración nueva toca `public`, `auth` o la publicación, o si `bob_migrador` tiene un permiso de más (todo visto en rojo). Sobre el USAGE en `auth`: «Nota en D77: ese grant con supabase_admin». La nota está en D77 77.21 y 77.22 (bzzz#442, `b483d7b9`). El traspaso de `bob` también lo hace `supabase_admin`, algo que D77 todavía no dice: va a Bzzz. Que el job de O-3 sea un check obligatorio en `main` lo decide Henry. Sin medir: Postgres 17 y lo que `bob` abre a `anon` o PUBLIC. Tabla en P5 §6.2.
+- O-3 (D77): decidido por Henry el 24 nov en el chat de Relevo: «postgres una vez, luego migrador». El procedimiento de la caja es `scripts/instalar-bob.sh`:
+  1. `postgres` aplica la cadena de instalación (33 archivos fijados por sha256);
+  2. el alta de Bzzz (`generar-secretos-vecina.sh bob`, bzzz#450) le pasa `bob` a `bob_migrador`. Lo hace `postgres` en una transacción, medido en 17.6.1.136. `supabase/provision/` solo la imita en CI;
+  3. `bob_migrador` aplica cada migración nueva con `psql`, y `postgres` la anota en el historial. La CLI no puede hacerlo como `bob_migrador`.
+
+  El CI corre ese guion en la imagen de la caja (17.6.1.136) y revisa lo que deja. Sigue en el PR #48, sin fusionar. Sobre el USAGE en `auth`: «Nota en D77: ese grant con supabase_admin» (D77 77.21 y 77.22, bzzz#442). Faltan cuatro cosas:
+  - Bzzz: falta `config/supabase/vecinas/bob.sql` en #450, con el `GRANT EXECUTE` sobre `public.bob_grant_projection` a `bob_migrador`. Sin él, el alimentador falla en el primer mes nuevo.
+  - Henry: poner la variable `INSTALL_CHAIN_APPROVER` (quién puede cambiar la lista de instalación) y volver obligatorio el job de O-3.
+  - Pendiente: lo que `bob` abre a `anon`, `authenticated` o PUBLIC.
+  - Tabla en P5 §6.2.
 - Sin fecha: una migración base que no salga de `bob`, para después de 0.6.
 - Slice 3: que Federico acepte F-28 a F-34, F-38 y F-39 (0.6) y diga cuáles son las «nueve reglas» y los «siete consumidores». El aviso y su corrección están publicados en la tarea 6. La implementación está en el PR #40 (abierto, con las funciones de la celda en `bob` desde F-47) y se fusiona cuando Federico acepte la 0.6.
 - Abiertos del Slice 3 (spec §10): ceros por actor en el drill-down (se decide con el Slice 7), materializar `bob_cell_state` solo si el `EXPLAIN` lo pide, ceros de `hallucinations` cuando el alimentador pueda ver el ground truth, y F-34 (resolución de referencias AREP).
