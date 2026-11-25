@@ -3275,16 +3275,44 @@ publication, `CREATE ROLE` and `CREATE SCHEMA IF NOT EXISTS`. And the one grant
 that is needed outside `bob`, USAGE on `auth`, only `supabase_admin` can give,
 not `postgres`. The table, `bob.sql`'s measured content and the guard are in
 P5 §6.2, "Applied by `bob_migrador`". The guard is
-`scripts/owner-chain-check.mjs`, a required check, seen red twice before green.
+`scripts/owner-chain-check.mjs`, a CI job that Henry has still to make a required check.
 
 Decided by Henry on 2026-11-24, in the Relevo chat: «postgres una vez, luego
-migrador». `postgres` applies the chain to `20261121190000` once, at install;
-every later migration is applied by `bob_migrador` and must apply as it. The
-check now runs in two phases: the install chain against its 21 pinned stops,
-then what it left outside `bob` back to `postgres`, then every later migration
-as `bob_migrador` alone, a stop being a finding. Phase B seen red with a
-migration altering `public.cap_alert_log()`. On the USAGE grant on `auth`:
-«Nota en D77: ese grant con supabase_admin»; the note is D77 77.21 and 77.22 (bzzz#442, `b483d7b9`).
+migrador». On the USAGE grant on `auth`: «Nota en D77: ese grant con
+supabase_admin»; the note is D77 77.21 and 77.22 (bzzz#442, `b483d7b9`).
 Pending, no date: a baseline migration that does not leave `bob`, after 0.6.
-The migrations of PR #40 and PR #43 are dated after `20261121190000`, so once
-merged they fall in phase B and must apply as `bob_migrador`.
+
+### O-3 · independent review of PR #48, applied
+
+A review at `89e6f78` found that the check measured a state no box will have.
+Each point was verified first:
+- The O-3 job is not a required check: `main` requires four. The text now says
+  it is still to be made one by Henry.
+- Phase B ran over a `bob` the fallback had given to `bob_migrador`. On a box,
+  `postgres` applies the install chain and owns all of `bob`, so the
+  migrations of PR #40 and PR #43 would have stopped with 42501. Nothing said
+  how ownership passes.
+- A new migration dated before the cut-off fell in phase A, past every check.
+- An edited install file passed, since only names were compared.
+- The file regex was narrower than the CLI's.
+- The footprint missed privileges on objects, `rolreplication`, members of
+  the role, and other databases.
+- `GRANT bob_migrador TO postgres` was permanent.
+- The warning regex missed «not all privileges were granted».
+
+Now:
+- `postgres` applies the install chain, a closed list with sha256 hashes
+  (`supabase/provision/install-chain.sha256`).
+- `supabase_admin` hands `bob` and everything in it to `bob_migrador`,
+  idempotently. This adds to what D77 77.21 and 77.22 put in the
+  `supabase_admin` part.
+- Every other migration the CLI would apply runs as `bob_migrador` alone,
+  whatever its date.
+- The footprint reads `pg_shdepend`, with memberships both ways. Nobody is
+  granted membership.
+
+Not measured:
+- Postgres 17 (F-37). On 16 and later the creator of a role gets ADMIN on it.
+- What `bob` opens to `anon` or PUBLIC. Pending.
+
+P5 §6.2 has the detail and the red runs.
