@@ -311,6 +311,7 @@ jobs:
           bad 99990101000009 "END WORK;" "SELECT 1;\nEND WORK;\nCREATE TABLE bob.ci_after_99990101000009 (id int);\n"
           bad 99990101000010 "ROLLBACK;" "SELECT 1;\nROLLBACK;\nCREATE TABLE bob.ci_after_99990101000010 (id int);\n"
           bad 99990101000011 "a COMMIT as the file's last statement" "CREATE TABLE bob.ci_before_11 (id int);\nCOMMIT;\n"
+          bad 99990101000012 "a NUL byte" "CREATE TABLE bob.ci_after_99990101000012 (id int);\n-- \\0\nSELECT 1;\n"
           # psql -c sends its argument to the server as it is: no metacommand.
           if psql "$MIG_URL" -X -q -c "SELECT 1; \\! touch $shell" 2>/dev/null; then echo "::error::psql -c took a metacommand line as SQL and succeeded"; exit 1; fi
           [ ! -e "$shell" ] || { echo "::error::psql -c ran a shell"; exit 1; }

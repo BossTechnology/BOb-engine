@@ -3,13 +3,14 @@
 # «postgres una vez, luego migrador». Run by Henry in a window, never by an
 # agent against a box. CI runs it against a disposable local stack.
 #
-# On a box it runs only after Henry's signature is checked, by
-# /opt/bob/bin/firma-instalacion (root's copy of scripts/firma-instalacion.sh):
-#   /opt/bob/bin/firma-instalacion caja <checkout> cadena|resto
-# That check requires the checkout to be exactly a commit whose digest Henry
-# signed, from the state this box stands at, and then runs this script. Run
-# directly, this script hands itself to that check first. Only CI skips it
-# (INSTALAR_SIN_FIRMA=ci under GitHub Actions), on a stack it throws away.
+# On a box it runs only from root's copy of the commit Henry signed, never
+# from a checkout:
+#   sudo POSTGRES_ENV=… /opt/bob/bin/firma-instalacion caja <repo> <commit> cadena|resto
+# That copy of scripts/firma-instalacion.sh writes the commit's tree, from git
+# objects, into a directory of root's, checks that Henry signed its digest from
+# the state this box stands at, and runs this script from there, as root, with
+# a clean environment. Run any other way, this script refuses. Only CI skips
+# that (INSTALAR_SIN_FIRMA=ci under GitHub Actions), on a stack it throws away.
 #
 # Three steps, in this order:
 #   1. cadena: the install chain, only the files in
@@ -40,8 +41,8 @@
 #      history table, shared and not bob's, and stops with 42501 (measured, CI
 #      run 45630458545).
 #
-# What runs: bash, git, psql, the supabase CLI and docker from the box, and
-# from the checkout only what the digest covers. No node, no pnpm install.
+# What runs: bash, psql, the supabase CLI (the version CI pins, checked) and
+# docker from the box, and from the signed tree only. No node, no pnpm.
 #
 # Connections. No password is ever on a command line, in the environment of a
 # process or a container, or printed. Each is read, with sudo, from a file of
@@ -68,9 +69,9 @@ if [ -z "${BOB_FIRMA_VERIFICADA:-}" ]; then
   if [ "${INSTALAR_SIN_FIRMA:-}" = ci ] && [ "${GITHUB_ACTIONS:-}" = true ]; then
     echo "CI: Henry's signature is not checked here (a disposable stack)"
   else
-    v=/opt/bob/bin/firma-instalacion
-    [ -x "$v" ] || { echo "$v is missing: install it as root from a signed checkout (P5 §6.2). Nothing installed." >&2; exit 2; }
-    exec "$v" caja "$PWD" "$step"
+    echo "Not run from a signed tree: nothing installed. On a box, as Henry (P5 §6.2):" >&2
+    echo "  sudo POSTGRES_ENV=… /opt/bob/bin/firma-instalacion caja <repo> <commit> $step" >&2
+    exit 2
   fi
 fi
 
@@ -170,6 +171,7 @@ for path in $(ls supabase/migrations/*.sql | sort); do
   if grep -q '\\' "$path"; then
     echo "$f refused, nothing applied: line $(grep -n '\\' "$path" | head -1 | cut -d: -f1) holds a backslash. None is allowed, not even in a string; write E'\\n' as chr(10)." >&2; exit 1
   fi
+  [ "$(tr -d '\000' < "$path" | wc -c)" -eq "$(wc -c < "$path")" ] || { echo "$f refused, nothing applied: it holds a NUL byte" >&2; exit 1; }
   [ "$(wc -c < "$path")" -le 120000 ] || { echo "$f refused, nothing applied: over 120 000 bytes, split it" >&2; exit 1; }
   text=$(cat "$path"; printf x); text=${text%x}
   # A file written BEGIN; … COMMIT; on its first and last lines has those two

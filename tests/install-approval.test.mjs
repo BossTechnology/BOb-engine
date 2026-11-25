@@ -1,68 +1,93 @@
 // O-3 (P5 §6.2): what installs BOb on a box changes only with Henry's
 // signature, made with a security key that must be touched, over the pair
-// base → new of a digest; and a box installs only what that signature covers.
-// scripts/firma-instalacion.sh does all of it; this runs it with no database.
+// base → new of the digest of the whole tree; and a box installs only that
+// tree, written from git objects into a directory of root's. Everything is in
+// scripts/firma-instalacion.sh; this runs it with no database.
 //
-//   - the digest moves with the content, mode or presence of every covered
-//     file and with nothing else; an approval does not move it; a symlink, a
-//     submodule or a directory listed in cubre-la-firma is refused;
+//   - the digest moves with the content, mode or presence of any file, a new
+//     migration included, and with nothing else: not an approval, not the
+//     working tree, the index or .gitattributes; symlinks, submodules and odd
+//     paths are refused anywhere;
 //   - the verifier refuses: no key, a key that is not a security key (even one
-//     that did sign), no-touch-required, no namespace, an unlisted signer;
-//   - on a box: a checkout that is not exactly a commit, one with no approval,
-//     an approval for another digest, signers not root's, are all refused
-//     before anything runs;
-//   - the repository: no key yet (Henry adds his), every covered path under
-//     CODEOWNERS, the approval workflow running from main on the right events.
-// Not measured here: a good signature by a real security key (it needs the key
-// and a touch; Henry's first signature is the measurement).
+//     that did sign), no verify-required, no-touch-required, cert-authority,
+//     no namespace, an unlisted signer;
+//   - the box (caja-prueba: the same code, not as root, any listed key, a
+//     directory for /opt/bob) runs the committed tree and nothing of the
+//     checkout (not a modified file, a skip-worktree file, a corrupt index or
+//     an fsmonitor hook), with a clean environment, and moves its state only
+//     after an install that ends well and only from where it stands: a new
+//     unsigned migration, a replayed approval, a missing state, signers or a
+//     root writable by others are refused before anything runs;
+//   - the repository: no key yet (Henry adds his), CODEOWNERS over all of it,
+//     the approval workflow running from main on the right events.
+// Not measured here: a good signature by a real security key, and caja as
+// root on a box (Henry's first signature and install are those measurements).
 
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync, chmodSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync, chmodSync, existsSync, readdirSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { REPO_ROOT } from './helpers/db.mjs'
 
 const F = join(REPO_ROOT, 'scripts/firma-instalacion.sh')
-const EXTRA = 'supabase/provision/cubre-la-firma'
+const A = 'supabase/provision/aprobaciones'
 const run = (args, opts = {}) => spawnSync('bash', [F, ...args], { encoding: 'utf8', ...opts })
+const sha256 = (b) => createHash('sha256').update(b).digest('hex')
+const tmp = (p) => realpathSync(mkdtempSync(join(tmpdir(), p)))
+
+const STUB = [
+  '#!/bin/sh',
+  '# test stub: records where it ran, with what',
+  '[ -n "$BOB_FIRMA_VERIFICADA" ] || exit 9',
+  'printf "%s\\n%s\\n%s\\n%s\\n" "$(pwd)" "$BOB_FIRMA_VERIFICADA" "${FOO-unset}" "$(cat marca.txt)" > "$HOME/ran"',
+  '[ ! -f falla ] || exit 3',
+  '',
+].join('\n')
 
 function repo() {
-  const d = mkdtempSync(join(tmpdir(), 'huella-'))
+  const d = tmp('huella-')
   const git = (...a) => execFileSync('git', a, { cwd: d, stdio: 'pipe' }).toString().trim()
   git('init', '-q'); git('config', 'user.email', 'ci@example.com'); git('config', 'user.name', 'CI')
   const put = (p, c) => { mkdirSync(join(d, p, '..'), { recursive: true }); writeFileSync(join(d, p), c) }
   put('supabase/provision/bob.sql', 'select 1;\n')
-  put(EXTRA, '# covered\nscripts/instalar.sh\npackage.json\n')
-  put('scripts/instalar.sh', 'echo a\n')
-  put('scripts/other.sh', 'echo b\n')
+  put('supabase/migrations/20250101000000_a.sql', 'select 1;\n')
+  put('scripts/instalar-bob.sh', STUB)
+  put('marca.txt', 'committed\n')
   const commit = (add = true) => { if (add) git('add', '-A'); git('commit', '-q', '-m', 'x', '--allow-empty'); return git('rev-parse', 'HEAD') }
-  const huella = (rev) => { const r = run(['huella', rev, d]); assert.equal(r.status, 0, r.stderr); return r.stdout.trim() }
+  const huella = (rev = 'HEAD') => { const r = run(['huella', rev, d]); assert.equal(r.status, 0, r.stderr); return r.stdout.trim() }
   return { d, git, put, rm: (p) => rmSync(join(d, p), { recursive: true }), commit, huella }
 }
 
 describe('the digest', () => {
-  test('moves with every covered file and nothing else', () => {
+  test('moves with every file of the tree and nothing else', () => {
     const r = repo()
     const d0 = r.huella(r.commit())
     assert.match(d0, /^[0-9a-f]{64}$/)
-    assert.equal(r.huella('HEAD'), d0, 'deterministic')
+    assert.equal(r.huella(), d0, 'deterministic')
+    const same = (what) => { r.commit(); assert.equal(r.huella(), d0, what) }
+    const moves = (what) => { const before = r.huella(); r.commit(); assert.notEqual(r.huella(), before, what) }
+    r.put(`${A}/x.aprobacion`, 'a'); same('an approval does not change what it approves')
+    r.put('supabase/migrations/29990101000000_atk.sql', 'GRANT ALL ON ALL TABLES IN SCHEMA bob TO anon;\n')
+    moves('a new migration counts (sixth review)')
+    r.put('README.md', 'x\n'); moves('any file counts')
+    chmodSync(join(r.d, 'marca.txt'), 0o755); moves('the mode counts')
+    r.rm('README.md'); moves('a removed file counts')
+    rmSync(r.d, { recursive: true })
+  })
+
+  test('reads git objects only: not the working tree, the index or .gitattributes', () => {
+    const r = repo(); r.put('crlf.sql', 'a\nb\n'); r.commit()
+    const d0 = r.huella()
+    r.put('.gitattributes', '* text eol=crlf\n'); r.git('config', 'core.autocrlf', 'true'); r.commit()
     const lista = run(['huella', 'HEAD', r.d, '--lista']).stdout
-    assert.match(lista, /^absent package\.json -$/m, 'a listed file that does not exist counts as absent')
-
-    const same = (what) => { r.commit(); assert.equal(r.huella('HEAD'), d0, what) }
-    const moves = (what) => { const before = r.huella('HEAD'); r.commit(); assert.notEqual(r.huella('HEAD'), before, what) }
-    r.put('supabase/provision/aprobaciones/x.aprobacion', 'a'); same('an approval does not change what it approves')
-    r.put('scripts/other.sh', 'echo c\n'); same('a file outside the cover does not count')
-
-    r.put('scripts/instalar.sh', 'echo z\n'); moves('a listed script counts')
-    r.put('package.json', '{}\n'); moves('a listed file appearing counts')
-    chmodSync(join(r.d, 'scripts/instalar.sh'), 0o755); moves('the mode counts')
-    r.put('supabase/provision/new.sql', '\n'); moves('a new file under supabase/provision/ counts')
-    r.put('lib/node_modules/pg/index.js', 'x\n'); moves('a tracked node_modules/ file anywhere counts')
-    r.rm('scripts/instalar.sh'); moves('a removed listed file counts')
-    r.put(EXTRA, '# covered\npackage.json\n'); moves('dropping a path from the list counts')
+    assert.match(lista, new RegExp(`^100644 crlf\\.sql ${sha256('a\nb\n')}$`, 'm'), 'the bytes are the blob\'s, not converted')
+    assert.notEqual(r.huella(), d0, '.gitattributes itself is a file of the tree')
+    const d1 = r.huella()
+    r.put('marca.txt', 'evil\n'); assert.equal(r.huella(), d1, 'a modified working file is not read')
+    writeFileSync(join(r.d, '.git/index'), 'garbage'); assert.equal(r.huella(), d1, 'a corrupt index is not read')
     rmSync(r.d, { recursive: true })
   })
 
@@ -72,10 +97,9 @@ describe('the digest', () => {
     assert.equal(out.status, 1, out.stdout); assert.match(out.stderr, why)
     rmSync(r.d, { recursive: true })
   })
-  refused('a symlink under supabase/provision/', (r) => symlinkSync('/etc/passwd', join(r.d, 'supabase/provision/l.sql')), /mode 120000/)
-  refused('a submodule under supabase/provision/', (r) => { r.git('update-index', '--add', '--cacheinfo', `160000,${r.git('rev-parse', 'HEAD')},supabase/provision/sub`); return 'staged' }, /mode 160000/)
-  refused('a directory listed in cubre-la-firma', (r) => { r.put('scripts/x/a.sh', '\n'); r.put(EXTRA, 'scripts/x\n') }, /lists a directory/)
-  refused('a symlink listed in cubre-la-firma', (r) => { symlinkSync('instalar.sh', join(r.d, 'scripts/l.sh')); r.put(EXTRA, 'scripts/l.sh\n') }, /mode 120000/)
+  refused('a symlink anywhere', (r) => symlinkSync('/etc/passwd', join(r.d, 'docs-link')), /mode 120000/)
+  refused('a submodule anywhere', (r) => { r.git('update-index', '--add', '--cacheinfo', `160000,${r.git('rev-parse', 'HEAD')},vendor/sub`); return 'staged' }, /mode 160000/)
+  refused('a path outside [A-Za-z0-9_./-]', (r) => r.put('a b.sql', '\n'), /outside/)
 })
 
 describe('the signed text', () => {
@@ -86,12 +110,14 @@ describe('the signed text', () => {
   })
 })
 
+const keys = tmp('llave-')
+execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-C', 'ci', '-f', join(keys, 'k')])
+const PUB = readFileSync(join(keys, 'k.pub'), 'utf8').trim().split(' ').slice(0, 2).join(' ')
+const sign = (file) => execFileSync('ssh-keygen', ['-q', '-Y', 'sign', '-f', join(keys, 'k'), '-n', 'bob-install-chain', file])
+
 describe('the verifier refuses', () => {
-  const d = mkdtempSync(join(tmpdir(), 'firma-'))
-  execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-C', 'ci', '-f', join(d, 'k')])
-  const pub = readFileSync(join(d, 'k.pub'), 'utf8').trim().split(' ').slice(0, 2).join(' ')
-  writeFileSync(join(d, 'm'), run(['mensaje', 'a'.repeat(64), 'b'.repeat(64)]).stdout)
-  execFileSync('ssh-keygen', ['-q', '-Y', 'sign', '-f', join(d, 'k'), '-n', 'bob-install-chain', join(d, 'm')])
+  const d = tmp('firma-')
+  writeFileSync(join(d, 'm'), run(['mensaje', 'a'.repeat(64), 'b'.repeat(64)]).stdout); sign(join(d, 'm'))
   const sk = 'sk-ssh-ed25519@openssh.com AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29t'
   const refused = (name, signers, why) => test(name, () => {
     writeFileSync(join(d, 'signers'), signers)
@@ -99,55 +125,139 @@ describe('the verifier refuses', () => {
     assert.equal(r.status, 1, r.stdout + r.stderr); assert.match(r.stderr, why)
   })
   refused('a signers file with no key', '# empty\n', /holds no key/)
-  refused('a key that is not a security key, even when it signed', `henry namespaces="bob-install-chain" ${pub}\n`, /not a security key/)
-  refused('a security key marked no-touch-required', `henry namespaces="bob-install-chain",no-touch-required ${sk}\n`, /no-touch-required/)
+  refused('a key that is not a security key, even when it signed', `henry namespaces="bob-install-chain",verify-required ${PUB}\n`, /not a security key/)
+  refused('a security key without verify-required', `henry namespaces="bob-install-chain" ${sk}\n`, /verify-required/)
+  refused('a security key marked no-touch-required', `henry namespaces="bob-install-chain",verify-required,no-touch-required ${sk}\n`, /no-touch-required/)
+  refused('a cert-authority', `henry cert-authority,namespaces="bob-install-chain",verify-required ${sk}\n`, /cert-authority/)
   refused('a security key not bound to the namespace', `henry ${sk}\n`, /namespaces/)
-  refused('a signature by a key that is not listed', `henry namespaces="bob-install-chain" ${sk}\n`, /no key|does not verify/)
+  refused('a signature by a key that is not listed', `henry namespaces="bob-install-chain",verify-required ${sk}\n`, /no key|does not verify/)
 })
 
-describe('on a box, nothing runs without the approval', () => {
-  const box = (prep) => {
-    const r = repo(); r.put('scripts/instalar-bob.sh', '#!/bin/sh\ntouch "$(dirname "$0")/../RAN"\n'); r.commit(); prep(r)
-    const out = run(['caja', r.d, 'resto'], { env: { ...process.env, SUDO: 'false' } })
-    const ran = spawnSync('test', ['-e', join(r.d, 'RAN')]).status === 0
-    rmSync(r.d, { recursive: true })
-    return { out, ran }
+describe('on a box', () => {
+  // A box: <raiz> stands for /opt/bob. Its state is `prev`; the repository
+  // holds an approval prev → digest, signed by the test key.
+  const box = ({ prev = 'a'.repeat(64), signers = `ci namespaces="bob-install-chain" ${PUB}\n` } = {}) => {
+    const r = repo(); r.commit()
+    const raiz = tmp('raiz-'); chmodSync(raiz, 0o755)
+    writeFileSync(join(raiz, 'firmantes_instalacion'), signers); chmodSync(join(raiz, 'firmantes_instalacion'), 0o644)
+    if (prev) { writeFileSync(join(raiz, 'instalacion-firmada'), prev + '\n'); chmodSync(join(raiz, 'instalacion-firmada'), 0o644) }
+    const approve = (base, nueva = r.huella()) => {
+      const a = `${A}/${base}-${nueva}.aprobacion`
+      r.put(a, run(['mensaje', base, nueva]).stdout); sign(join(r.d, a)); return r.commit()
+    }
+    const caja = (commit = r.git('rev-parse', 'HEAD'), env = {}) => {
+      rmSync(join(raiz, 'ran'), { force: true })
+      const out = run(['caja-prueba', raiz, r.d, commit, 'resto'], { env: { ...process.env, FOO: '1', ...env } })
+      const ran = existsSync(join(raiz, 'ran')) ? readFileSync(join(raiz, 'ran'), 'utf8').split('\n') : null
+      return { out, ran, state: existsSync(join(raiz, 'instalacion-firmada')) ? readFileSync(join(raiz, 'instalacion-firmada'), 'utf8').trim() : null }
+    }
+    const done = () => { rmSync(r.d, { recursive: true }); rmSync(raiz, { recursive: true }) }
+    return { r, raiz, approve, caja, done }
   }
-  const refused = (name, prep, why) => test(name, () => {
-    const { out, ran } = box(prep)
-    assert.equal(out.status, 1, out.stdout + out.stderr); assert.match(out.stderr, why); assert.equal(ran, false)
+  const refusedBefore = (res, why) => {
+    assert.equal(res.out.status, 1, res.out.stdout + res.out.stderr); assert.match(res.out.stderr, why)
+    assert.equal(res.ran, null, 'nothing ran')
+  }
+
+  test('runs the signed tree from a directory of its own, with a clean environment, then moves its state', () => {
+    const b = box(); const d = b.r.huella(); b.approve('a'.repeat(64))
+    const res = b.caja()
+    assert.equal(res.out.status, 0, res.out.stdout + res.out.stderr)
+    assert.ok(res.ran[0].startsWith(join(b.raiz, 'trabajo.')), `ran from ${res.ran[0]}, not from the checkout`)
+    assert.equal(res.ran[1], d); assert.equal(res.ran[2], 'unset', 'the caller\'s environment does not reach it'); assert.equal(res.ran[3], 'committed')
+    assert.equal(res.state, d, 'the box now stands at the new digest')
+    assert.deepEqual(readdirSync(b.raiz).filter((f) => f.startsWith('trabajo.')), [], 'the directory is removed')
+    const again = b.caja(); assert.equal(again.out.status, 0, again.out.stderr); assert.equal(again.state, d, 'running it again is accepted')
+    b.done()
   })
-  refused('a checkout with a file not committed', (r) => r.put('node_modules/pg/index.js', 'x'), /not exactly a commit/)
-  refused('a checkout with a modified file', (r) => r.put('scripts/instalar.sh', 'echo evil\n'), /not exactly a commit/)
-  refused('a commit with no approval', () => {}, /no approval/)
-  refused('an approval for another digest', (r) => {
-    r.put(`supabase/provision/aprobaciones/${r.huella('HEAD')}.aprobacion`, run(['mensaje', 'a'.repeat(64), 'b'.repeat(64)]).stdout)
-    r.put(`supabase/provision/aprobaciones/${r.huella('HEAD')}.aprobacion.sig`, 'x'); r.commit()
-  }, /not for digest/)
-  refused('signers that are not root\'s', (r) => {
-    const h = r.huella('HEAD')
-    r.put(`supabase/provision/aprobaciones/${h}.aprobacion`, run(['mensaje', 'a'.repeat(64), h]).stdout)
-    r.put(`supabase/provision/aprobaciones/${h}.aprobacion.sig`, 'x'); r.commit()
-  }, /not root's|does not exist/)
+
+  test('a new migration with no new approval is refused (sixth review)', () => {
+    const b = box(); const d = b.r.huella(); b.approve('a'.repeat(64))
+    assert.equal(b.caja().state, d)
+    b.r.put('supabase/migrations/29990101000000_atk.sql', 'GRANT ALL ON ALL TABLES IN SCHEMA bob TO anon;\n'); b.r.commit()
+    const res = b.caja(); refusedBefore(res, /no approval from/); assert.equal(res.state, d)
+    b.done()
+  })
+
+  test('nothing of the checkout runs: a modified file, skip-worktree, a corrupt index, an fsmonitor hook', () => {
+    const b = box(); const c = b.approve('a'.repeat(64))
+    b.r.put('marca.txt', 'evil\n')
+    b.r.put('scripts/instalar-bob.sh', '#!/bin/sh\necho evil > "$HOME/ran"\n')
+    b.r.git('update-index', '--skip-worktree', 'scripts/instalar-bob.sh')
+    writeFileSync(join(b.r.d, 'hook.sh'), `#!/bin/sh\ntouch ${join(b.raiz, 'fsmonitor-ran')}\n`); chmodSync(join(b.r.d, 'hook.sh'), 0o755)
+    b.r.git('config', 'core.fsmonitor', join(b.r.d, 'hook.sh'))
+    writeFileSync(join(b.r.d, '.git/index'), 'garbage')
+    const res = b.caja(c)
+    assert.equal(res.out.status, 0, res.out.stdout + res.out.stderr)
+    assert.equal(res.ran[3], 'committed', 'the committed tree ran')
+    assert.equal(existsSync(join(b.raiz, 'fsmonitor-ran')), false, 'the fsmonitor hook never ran')
+    b.done()
+  })
+
+  test('a failed install leaves the state where it was', () => {
+    const b = box(); b.r.put('falla', '1'); b.r.commit(); b.approve('a'.repeat(64))
+    const res = b.caja()
+    assert.equal(res.out.status, 1); assert.match(res.out.stderr, /stays at a{64}/); assert.equal(res.state, 'a'.repeat(64))
+    b.done()
+  })
+
+  test('an approval from another state is refused (replay)', () => {
+    const b = box({ prev: 'c'.repeat(64) }); b.approve('a'.repeat(64))
+    const res = b.caja(); refusedBefore(res, /no approval from c{64}/); assert.equal(res.state, 'c'.repeat(64))
+    b.done()
+  })
+
+  test('an approval whose text is not its pair is refused', () => {
+    const b = box(); const d = b.r.huella()
+    const a = `${A}/${'a'.repeat(64)}-${d}.aprobacion`
+    b.r.put(a, run(['mensaje', 'b'.repeat(64), d]).stdout); sign(join(b.r.d, a)); b.r.commit()
+    refusedBefore(b.caja(), /is not the text of/)
+    b.done()
+  })
+
+  test('a signature by a key that is not listed is refused', () => {
+    const b = box({ signers: `ci namespaces="bob-install-chain" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGq5k0Bz3VnFz7Xb1pZtXv9P3k5Q2wTn3hQyJ0c8bQ7d\n` })
+    b.approve('a'.repeat(64)); refusedBefore(b.caja(), /no key|does not verify/)
+    b.done()
+  })
+
+  test('no state file: refused, Henry writes it first', () => {
+    const b = box({ prev: null }); b.approve('a'.repeat(64)); refusedBefore(b.caja(), /instalacion-firmada does not exist/); b.done()
+  })
+  test('signers writable by others: refused', () => {
+    const b = box(); b.approve('a'.repeat(64)); chmodSync(join(b.raiz, 'firmantes_instalacion'), 0o664)
+    refusedBefore(b.caja(), /writable by others/); b.done()
+  })
+  test('a root directory writable by others: refused', () => {
+    const b = box(); b.approve('a'.repeat(64)); chmodSync(b.raiz, 0o777)
+    refusedBefore(b.caja(), /writable by others/); b.done()
+  })
+  test('a connection variable that is not a plain value: refused', () => {
+    const b = box(); b.approve('a'.repeat(64))
+    refusedBefore(b.caja(undefined, { POSTGRES_HOST: 'x;touch /tmp/p' }), /POSTGRES_HOST refused/); b.done()
+  })
+  test('a commit that is not a full sha: refused', () => {
+    const b = box(); b.approve('a'.repeat(64)); refusedBefore(b.caja('HEAD'), /full sha/); b.done()
+  })
+  test('caja proper needs root', () => {
+    const r = run(['caja', '/x', '0'.repeat(40), 'resto'])
+    assert.equal(r.status, 1); assert.match(r.stderr, /run as root/)
+  })
 })
 
 describe('the repository', () => {
-  test('the signers file holds no key until Henry adds his, and only security keys', () => {
+  test('the signers file holds no key until Henry adds his, and only security keys with verify-required', () => {
     const lines = readFileSync(join(REPO_ROOT, 'supabase/provision/firmantes_instalacion'), 'utf8')
       .split('\n').filter((l) => l.trim() && !l.trim().startsWith('#'))
-    for (const l of lines) assert.match(l, /^\S+ namespaces="bob-install-chain"\S* sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh\.com \S+/, l)
+    for (const l of lines) assert.match(l, /^\S+ namespaces="bob-install-chain",verify-required sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh\.com \S+/, l)
   })
-  test('the digest of this commit is computable, and every covered path is under CODEOWNERS', () => {
+  test('the digest of this commit is computable, and CODEOWNERS covers all of it', () => {
     const r = run(['huella', 'HEAD', REPO_ROOT, '--lista'])
     assert.equal(r.status, 0, r.stderr)
-    const owners = readFileSync(join(REPO_ROOT, '.github/CODEOWNERS'), 'utf8').split('\n')
-      .filter((l) => l.startsWith('/')).map((l) => l.split(/\s+/)[0].slice(1))
-    for (const p of r.stdout.trim().split('\n').map((l) => l.split(' ')[1])) {
-      assert.ok(owners.some((o) => o.endsWith('/') ? p.startsWith(o) : p === o), `${p} is covered by the signature and not by CODEOWNERS`)
+    for (const p of ['scripts/instalar-bob.sh', 'scripts/firma-instalacion.sh', 'supabase/config.toml', 'package.json', 'supabase/migrations/']) {
+      assert.ok(r.stdout.includes(` ${p}`), `${p} is not covered`)
     }
-    for (const p of ['scripts/instalar-bob.sh', 'scripts/firma-instalacion.sh', 'supabase/config.toml', 'package.json', 'pnpm-lock.yaml']) {
-      assert.match(r.stdout, new RegExp(` ${p.replace('.', '\\.')} `), `${p} is not covered`)
-    }
+    assert.match(readFileSync(join(REPO_ROOT, '.github/CODEOWNERS'), 'utf8'), /^\*\s+@hdgarzon$/m)
   })
   test('the approval workflow runs from main, on base changes too, and never checks out the PR', () => {
     const w = readFileSync(join(REPO_ROOT, '.github/workflows/install-approval.yml'), 'utf8')
@@ -157,6 +267,7 @@ describe('the repository', () => {
     assert.doesNotMatch(w, /pull_request\.head\.(ref|repo)|github\.head_ref|actions\/setup-node|pnpm|npm /)
     assert.match(w, /permissions:\n {2}contents: read\n {2}pull-requests: read\n\n/)
     assert.match(w, /f=scripts\/firma-instalacion\.sh\n/)
+    assert.match(w, /aprobaciones\/\$base-\$new\.aprobacion/)
     assert.match(w, /"\$f" verificar supabase\/provision\/firmantes_instalacion /)
   })
 })

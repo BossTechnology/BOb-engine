@@ -1,67 +1,73 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Henry's signature over what installs BOb on a box (O-3, P5 §6.2). One
-# self-contained file, so that the copy that protects a box can live outside
-# the repository: /opt/bob/bin/firma-instalacion, root's, installed once.
+# self-contained file, so that the copy that protects a box lives outside the
+# repository: /opt/bob/bin/firma-instalacion, root's, installed once.
 #
 #   firma-instalacion.sh huella <rev> [<repo>] [--lista]
-#       The digest of what installs BOb at <rev>, read from git objects (never
-#       the working tree). --lista prints what it covers, one line each.
+#       The digest of the whole tree at <rev>, read from git objects (never the
+#       working tree, the index or .gitattributes). --lista prints one line per
+#       file: mode, path, sha256 of the bytes.
 #   firma-instalacion.sh mensaje <digest-base> <digest-nuevo>
 #       The exact text Henry signs: the pair, so an old signature cannot bring
 #       back a state already signed once.
 #   firma-instalacion.sh verificar <firmantes> <mensaje> <firma>
 #       Checks the signature against an allowed_signers file.
-#   firma-instalacion.sh caja <checkout> cadena|resto
-#       On a box, before anything: the checkout is exactly a commit, its digest
-#       has a valid approval whose base is where this box stands, and only then
-#       runs <checkout>/scripts/instalar-bob.sh. Signers in
-#       /opt/bob/firmantes_instalacion, state in /opt/bob/instalacion-firmada,
-#       both root's.
+#   sudo [POSTGRES_ENV=… …] /opt/bob/bin/firma-instalacion caja <repo> <commit> cadena|resto
+#       On a box, as root. See caja() below.
+#   firma-instalacion.sh caja-prueba <raiz> <repo> <commit> cadena|resto
+#       The same, never as root, with <raiz> for /opt/bob and any listed key
+#       accepted: only for tests/install-approval.test.mjs.
 #
-# What the digest covers, by mode, path and sha256 of the content:
-#   - every file under supabase/provision/, except supabase/provision/aprobaciones/
-#     where approvals go (adding one does not change what it approves);
-#   - every path supabase/provision/cubre-la-firma lists (absent ones count as
-#     absent); a directory listed there is refused;
-#   - every tracked file under a node_modules/ directory, anywhere.
-# A symlink (120000) or a submodule (160000) among them is refused, and so is a
-# path git has to quote.
+# The digest covers every file of the tree, by mode, path and sha256, except
+# supabase/provision/aprobaciones/, where approvals go (adding one does not
+# change what it approves). A symlink (120000), a submodule (160000) or a path
+# outside [A-Za-z0-9_./-] anywhere in the tree is refused.
 set -euo pipefail
 NS=bob-install-chain
+EXCLUIDO=supabase/provision/aprobaciones/
+PATH_FIJO=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+PASAN="POSTGRES_ENV POSTGRES_HOST POSTGRES_PORT MIGRADOR_ENV MIGRADOR_PUERTO"
 fail() { echo "firma-instalacion: $1" >&2; exit 1; }
-WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
+WORK=""; trap '[ -z "$WORK" ] || rm -rf "$WORK"' EXIT
+# git, with nothing from a repository's config or hooks that runs code.
+G() { git -c core.fsmonitor= -c core.hooksPath=/dev/null -c core.untrackedCache=false \
+          -c safe.directory='*' -c protocol.file.allow=always "$@"; }
 if command -v sha256sum >/dev/null; then sha() { sha256sum | cut -d' ' -f1; }; else sha() { shasum -a 256 | cut -d' ' -f1; }; fi
 
-huella() {
-  local rev=$1 repo=${2:-.} lista=${3:-} tmp line meta path mode sha1 extra
-  tmp=$(mktemp -d "$WORK/h.XXXXXX")
-  git -C "$repo" rev-parse -q --verify "$rev^{commit}" >/dev/null || fail "no commit $rev"
-  git -C "$repo" ls-tree -r --full-tree "$rev" > "$tmp/tree"
-  extra=$(git -C "$repo" show "$rev:supabase/provision/cubre-la-firma" 2>/dev/null \
-    | sed -e 's/#.*//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | grep -v '^$' || true)
-  : > "$tmp/covered"
-  while IFS= read -r line; do
-    meta=${line%%$'\t'*}; path=${line#*$'\t'}
-    case "$path" in supabase/provision/aprobaciones/*) continue ;; esac
-    case "$path" in
-      \"*) fail "a path git quotes, refused: $path" ;;
-      supabase/provision/*|node_modules/*|*/node_modules/*) printf '%s\t%s\n' "$path" "$meta" >> "$tmp/covered" ;;
-    esac
-  done < "$tmp/tree"
-  while IFS= read -r path; do
-    [ -n "$path" ] || continue
-    line=$(awk -F'\t' -v p="$path" '$2 == p' "$tmp/tree")
-    if [ -n "$line" ]; then printf '%s\t%s\n' "$path" "${line%%$'\t'*}" >> "$tmp/covered"
-    elif [ "$(git -C "$repo" cat-file -t "$rev:$path" 2>/dev/null)" = tree ]; then fail "cubre-la-firma lists a directory, refused: $path"
-    else printf '%s\tabsent\n' "$path" >> "$tmp/covered"; fi
-  done <<<"$extra"
-  LC_ALL=C sort -u "$tmp/covered" | while IFS=$'\t' read -r path meta; do
-    if [ "$meta" = absent ]; then printf 'absent %s -\n' "$path"; continue; fi
-    read -r mode _ sha1 <<<"$meta"
+# extraer <git-dir> <rev> <dir> <lista>: writes every covered file of <rev>
+# into <dir>, byte for byte from its blob, and <lista> with one line per file,
+# sorted. The bytes hashed are the bytes written.
+extraer() {
+  local gd=$1 rev=$2 dir=$3 lista=$4 commit rec meta path mode type obj n=0 h
+  local re='^[A-Za-z0-9_.][A-Za-z0-9_./-]*$'
+  commit=$(G --git-dir="$gd" rev-parse -q --verify "$rev^{commit}") || fail "no commit $rev"
+  G --git-dir="$gd" ls-tree -r -z --full-tree "$commit" > "$dir.tree" || fail "cannot read the tree of $rev"
+  mkdir -p "$dir"; : > "$lista.u"
+  while IFS= read -r -d '' rec; do
+    meta=${rec%%$'\t'*}; path=${rec#*$'\t'}
+    case "$path" in "$EXCLUIDO"*) continue ;; esac
+    [[ "$path" =~ $re ]] || fail "a path outside [A-Za-z0-9_./-], refused: $path"
+    case "/$path/" in */../*|*/./*|*//*|*/.git/*) fail "path refused: $path" ;; esac
+    read -r mode type obj <<<"$meta"
     case "$mode" in 100644|100755) ;; *) fail "mode $mode refused (symlink or submodule): $path" ;; esac
-    printf '%s %s %s\n' "$mode" "$path" "$(git -C "$repo" cat-file blob "$sha1" | sha)"
-  done > "$tmp/lines"
-  if [ "$lista" = --lista ]; then cat "$tmp/lines"; else sha < "$tmp/lines"; fi
+    [ "$type" = blob ] || fail "not a file, refused: $path"
+    mkdir -p "$dir/$(dirname "$path")"
+    G --git-dir="$gd" cat-file blob "$obj" > "$dir/$path" || fail "cannot read $path"
+    if [ "$mode" = 100755 ]; then chmod 755 "$dir/$path"; else chmod 644 "$dir/$path"; fi
+    h=$(sha < "$dir/$path") || fail "cannot hash $path"
+    printf '%s %s %s\n' "$mode" "$path" "$h" >> "$lista.u"
+    n=$((n + 1))
+  done < "$dir.tree"
+  [ "$n" -gt 0 ] || fail "the tree of $rev is empty"
+  LC_ALL=C sort "$lista.u" > "$lista"
+}
+
+huella() {
+  local rev=$1 repo=${2:-.} lista=${3:-} gd t
+  gd=$(G -C "$repo" rev-parse --absolute-git-dir) || fail "$repo is not a git repository"
+  WORK=$(mktemp -d); t=$WORK
+  extraer "$gd" "$rev" "$t/arbol" "$t/lista"
+  if [ "$lista" = --lista ]; then cat "$t/lista"; else sha < "$t/lista"; fi
 }
 
 mensaje() {
@@ -69,8 +75,10 @@ mensaje() {
   printf '%s 1\nbase %s\nnueva %s\n' "$NS" "$1" "$2"
 }
 
+# verificar <firmantes> <mensaje> <firma> [relajado]: relajado (caja-prueba
+# only) accepts a key that is not a security key, so tests can sign.
 verificar() {
-  local signers=$1 msg=$2 sig=$3 keys=0 line principal options keytype key principals out p
+  local signers=$1 msg=$2 sig=$3 relajado=${4:-} keys=0 line principal options keytype key principals out p
   [ -f "$signers" ] || fail "$signers does not exist: nobody can sign yet"
   [ -s "$sig" ] || fail "no signature"
   while IFS= read -r line; do
@@ -78,60 +86,128 @@ verificar() {
     read -r principal options keytype key _ <<<"$line"
     # Options are optional in allowed_signers: a line without them has the key type second.
     if [[ "$options" =~ ^(sk-|ssh-|ecdsa-) ]]; then key=$keytype; keytype=$options; options=""; fi
-    case "$keytype" in sk-ssh-ed25519@openssh.com|sk-ecdsa-sha2-nistp256@openssh.com) ;;
-      *) fail "the key of $principal in $signers is $keytype, not a security key that must be touched: refused" ;; esac
+    [[ "$options" != *cert-authority* ]] || fail "the key of $principal is a cert-authority: refused"
     [[ "$options" == *"namespaces=\"$NS\""* ]] || fail "the key of $principal is not restricted to namespaces=\"$NS\": refused"
     [[ "$options" != *no-touch-required* ]] || fail "the key of $principal is marked no-touch-required: refused"
     [ -n "$key" ] || fail "the line of $principal has no key"
+    if [ "$relajado" != relajado ]; then
+      case "$keytype" in sk-ssh-ed25519@openssh.com|sk-ecdsa-sha2-nistp256@openssh.com) ;;
+        *) fail "the key of $principal in $signers is $keytype, not a security key that must be touched: refused" ;; esac
+      [[ ",$options," == *,verify-required,* ]] || fail "the key of $principal lacks verify-required (a PIN or biometric with the touch): refused"
+    fi
     keys=$((keys + 1))
   done < "$signers"
   [ "$keys" -gt 0 ] || fail "$signers holds no key: until Henry adds his, nothing that installs BOb can change"
   principals=$(ssh-keygen -Y find-principals -s "$sig" -f "$signers" 2>/dev/null) || fail "the signature is by no key in $signers"
   while IFS= read -r p; do
-    if out=$(ssh-keygen -Y verify -f "$signers" -I "$p" -n "$NS" -s "$sig" < "$msg" 2>&1) && grep -q -- '-SK key' <<<"$out"; then
+    if out=$(ssh-keygen -Y verify -f "$signers" -I "$p" -n "$NS" -s "$sig" < "$msg" 2>&1) \
+       && { [ "$relajado" = relajado ] || grep -q -- '-SK key' <<<"$out"; }; then
       echo "$out"; return 0
     fi
   done <<<"$principals"
   fail "the signature does not verify with a touched security key in $signers"
 }
 
-root_only() {  # <file>: owned by root, writable by nobody else
+propio() {  # <path> <uid>: owned by <uid>, writable by nobody else
   local o m
+  [ -e "$1" ] || fail "$1 does not exist: refused"
   o=$(stat -c '%u' "$1" 2>/dev/null || stat -f '%u' "$1"); m=$(stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1")
-  [ "$o" = 0 ] || fail "$1 is not root's: refused"
-  (( (8#$m & 8#022) == 0 )) || fail "$1 is writable by others than root: refused"
+  [ "$o" = "$2" ] || fail "$1 is not owned by uid $2: refused"
+  (( (8#$m & 8#022) == 0 )) || fail "$1 is writable by others than its owner: refused"
 }
 
+# caja: on a box, as root. Henry names the commit he reviewed. Nothing of the
+# checkout runs, and nothing of it is read but its git objects:
+#   1. a clean environment (env -i, a fixed PATH, only the five connection
+#      variables, each checked);
+#   2. root's own files, root's and writable by nobody else: /opt/bob,
+#      /opt/bob/bin, this script, /opt/bob/firmantes_instalacion and
+#      /opt/bob/instalacion-firmada (the digest this box stands at; Henry
+#      writes it once, by hand, P5 §6.2);
+#   3. the commit is fetched into a new repository of root's, which checks
+#      every object, and its tree written byte for byte from the blobs into a
+#      directory of root's, 700: no working tree, no index, no attributes, no
+#      filter, no hook, no fsmonitor;
+#   4. the digest of that directory must have an approval from where this box
+#      stands (aprobaciones/<prev>-<digest>.aprobacion, or any approval of the
+#      digest when the box is already there), signed by a listed security key;
+#   5. for cadena, the supabase CLI must be the version CI pins;
+#   6. instalar-bob.sh runs from that directory, and only if it ends well is
+#      the new digest written as this box's state. The directory is removed.
 caja() {
-  local checkout step d msg base nueva prev tmp
-  checkout=$(cd "$1" && pwd); step=$2
+  local raiz=$1 uid=$2 relajado=$3 repo=$4 commit=$5 step=$6 v gd d prev cand ok c base pin have rc n
   case "$step" in cadena|resto) ;; *) fail "step: cadena or resto" ;; esac
-  local FIRMANTES=/opt/bob/firmantes_instalacion ESTADO=/opt/bob/instalacion-firmada SUDO=${SUDO-sudo}
-  # Exactly a commit: nothing modified, untracked or ignored (no node_modules,
-  # no .env), so what runs is what the digest covers.
-  [ -z "$(git -C "$checkout" status --porcelain --ignored --untracked-files=all)" ] \
-    || fail "$checkout is not exactly a commit (modified, untracked or ignored files): refused"
-  d=$(huella HEAD "$checkout")
-  tmp=$(mktemp -d "$WORK/c.XXXXXX")
-  git -C "$checkout" show "HEAD:supabase/provision/aprobaciones/$d.aprobacion" > "$tmp/msg" 2>/dev/null \
-    || fail "no approval for digest $d in supabase/provision/aprobaciones/: nothing installed"
-  git -C "$checkout" show "HEAD:supabase/provision/aprobaciones/$d.aprobacion.sig" > "$tmp/sig" 2>/dev/null \
-    || fail "no signature for digest $d: nothing installed"
-  base=$(sed -n 's/^base \([0-9a-f]\{64\}\)$/\1/p' "$tmp/msg"); nueva=$(sed -n 's/^nueva \([0-9a-f]\{64\}\)$/\1/p' "$tmp/msg")
-  [ -n "$base" ] && [ "$nueva" = "$d" ] && cmp -s "$tmp/msg" <(mensaje "$base" "$nueva") \
-    || fail "the approval is not for digest $d: refused"
-  root_only "$0"; root_only "$FIRMANTES"
-  verificar "$FIRMANTES" "$tmp/msg" "$tmp/sig"
-  prev=""; [ -f "$ESTADO" ] && { root_only "$ESTADO"; prev=$(cat "$ESTADO"); }
-  # The box goes from where it stands: a signed pair whose base is not this
-  # box's last signed state (an old signature, replayed) is refused.
-  if [ -n "$prev" ] && [ "$prev" != "$d" ] && [ "$prev" != "$base" ]; then
-    fail "this box stands at $prev; this approval goes from $base: install the steps between, or have Henry sign $prev → $d"
+  [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || fail "the commit: its full sha, as Henry read it (git rev-parse HEAD)"
+  [[ "$repo" =~ ^/[A-Za-z0-9_./-]+$ ]] || fail "the repository: an absolute path in [A-Za-z0-9_./-]"
+  # The environment is exactly what the re-exec set.
+  for v in $(compgen -e); do
+    case " FIRMA_ENV_LIMPIO PATH HOME LANG PWD OLDPWD SHLVL _ $PASAN " in *" $v "*) ;; *) fail "unexpected variable in the environment: $v" ;; esac
+  done
+  [ "$PATH" = "$PATH_FIJO" ] || fail "PATH is not the fixed one"
+  propio "$raiz" "$uid"
+  if [ "$relajado" != relajado ]; then
+    propio /opt "$uid"; propio "$raiz/bin" "$uid"
+    [ "$0" = "$raiz/bin/firma-instalacion" ] || fail "run $raiz/bin/firma-instalacion, not $0"
+    propio "$0" "$uid"
   fi
-  [ "$prev" = "$d" ] || printf '%s\n' "$d" | $SUDO tee "$ESTADO" >/dev/null
-  echo "approved by Henry: $d (from $base); running $step"
-  rm -rf "$WORK"
-  exec env BOB_FIRMA_VERIFICADA="$d" "$checkout/scripts/instalar-bob.sh" "$step"
+  propio "$raiz/firmantes_instalacion" "$uid"
+  propio "$raiz/instalacion-firmada" "$uid"
+  prev=$(cat "$raiz/instalacion-firmada")
+  [[ "$prev" =~ ^[0-9a-f]{64}$ ]] || fail "$raiz/instalacion-firmada does not hold one digest"
+
+  WORK=$(mktemp -d "$raiz/trabajo.XXXXXX"); chmod 700 "$WORK"
+  gd=$WORK/git
+  G init -q --bare "$gd" || fail "cannot make root's repository"
+  G --git-dir="$gd" fetch -q --no-tags --no-write-fetch-head "file://$repo" "$commit" || fail "cannot fetch $commit from $repo"
+  [ "$(G --git-dir="$gd" cat-file -t "$commit")" = commit ] || fail "$commit is not a commit"
+  extraer "$gd" "$commit" "$WORK/arbol" "$WORK/lista"
+  d=$(sha < "$WORK/lista")
+  [ -f "$WORK/arbol/scripts/instalar-bob.sh" ] || fail "$commit has no scripts/instalar-bob.sh"
+
+  if [ "$prev" = "$d" ]; then
+    cand=$(G --git-dir="$gd" ls-tree --name-only "$commit" "$EXCLUIDO" | sed -n "s#^$EXCLUIDO\([0-9a-f]\{64\}\)-$d\.aprobacion\$#\1#p")
+  else
+    cand=$prev
+  fi
+  ok=""
+  for base in $cand; do
+    c=$EXCLUIDO$base-$d.aprobacion
+    G --git-dir="$gd" cat-file blob "$commit:$c" > "$WORK/msg" 2>/dev/null || continue
+    G --git-dir="$gd" cat-file blob "$commit:$c.sig" > "$WORK/sig" 2>/dev/null || continue
+    cmp -s "$WORK/msg" <(mensaje "$base" "$d") || fail "$c is not the text of $base → $d: refused"
+    verificar "$raiz/firmantes_instalacion" "$WORK/msg" "$WORK/sig" "$relajado"
+    ok=$base; break
+  done
+  [ -n "$ok" ] || fail "no approval from $prev (this box) to $d ($commit): nothing installed"
+
+  if [ "$step" = cadena ]; then
+    pin=$(sed -n 's/^  SUPABASE_CLI_VERSION: *\([0-9][0-9.]*\)$/\1/p' "$WORK/arbol/.github/workflows/ci.yml" 2>/dev/null | head -1)
+    have=$(supabase --version 2>/dev/null || true)
+    [ -n "$pin" ] && [ "$have" = "$pin" ] || fail "the supabase CLI here is '${have:-none}', CI pins '${pin:-none}': nothing installed"
+  fi
+
+  echo "approved by Henry: $d (from $ok); running $step from $WORK/arbol"
+  set +e
+  (cd "$WORK/arbol" && BOB_FIRMA_VERIFICADA=$d SUDO="" /bin/bash scripts/instalar-bob.sh "$step")
+  rc=$?
+  set -e
+  [ "$rc" = 0 ] || fail "$step failed (exit $rc): this box stays at $prev"
+  n=$raiz/instalacion-firmada.nuevo
+  printf '%s\n' "$d" > "$n"; chmod 644 "$n"; mv -f "$n" "$raiz/instalacion-firmada"
+  echo "this box now stands at $d"
+}
+
+# Re-exec with nothing of the caller's environment but the checked variables.
+limpio() {
+  local home=$1; shift
+  local v val re pass=()
+  for v in $PASAN; do
+    val=${!v:-}; [ -n "$val" ] || continue
+    case "$v" in *_ENV) re='^/[A-Za-z0-9_./-]+$' ;; *_HOST) re='^[A-Za-z0-9_.:-]+$' ;; *) re='^[0-9]{1,5}$' ;; esac
+    [[ "$val" =~ $re ]] || fail "$v refused: not a plain value"
+    pass+=("$v=$val")
+  done
+  exec /usr/bin/env -i FIRMA_ENV_LIMPIO=1 PATH="$PATH_FIJO" HOME="$home" LANG=C ${pass[@]+"${pass[@]}"} /bin/bash "$0" "$@"
 }
 
 cmd=${1:-}; shift || true
@@ -139,6 +215,14 @@ case "$cmd" in
   huella) huella "${1:?rev}" "${2:-.}" "${3:-}" ;;
   mensaje) mensaje "${1:?}" "${2:?}" ;;
   verificar) verificar "${1:?}" "${2:?}" "${3:?}" ;;
-  caja) caja "${1:?checkout}" "${2:?step}" ;;
-  *) echo "Usage: $0 huella|mensaje|verificar|caja …" >&2; exit 2 ;;
+  caja)
+    [ "$(id -u)" = 0 ] || fail "run as root: sudo /opt/bob/bin/firma-instalacion caja <repo> <commit> cadena|resto"
+    [ "${FIRMA_ENV_LIMPIO:-}" = 1 ] || limpio /root caja "$@"
+    caja /opt/bob 0 "" "${1:?repo}" "${2:?commit}" "${3:?step}" ;;
+  caja-prueba)
+    [ "$(id -u)" != 0 ] || fail "caja-prueba never runs as root"
+    [[ "${1:?raiz}" =~ ^/[A-Za-z0-9_./-]+$ ]] || fail "raiz: an absolute path"
+    [ "${FIRMA_ENV_LIMPIO:-}" = 1 ] || limpio "$1" caja-prueba "$@"
+    caja "$1" "$(id -u)" relajado "${2:?repo}" "${3:?commit}" "${4:?step}" ;;
+  *) echo "Usage: $0 huella|mensaje|verificar|caja|caja-prueba …" >&2; exit 2 ;;
 esac

@@ -2,11 +2,12 @@ name: Install approval
 
 # O-3 (P5 §6.2). What installs BOb on a box changes only with Henry's signature,
 # made with a security key that must be touched, over the pair base → new of
-# the digest scripts/firma-instalacion.sh computes.
+# the digest scripts/firma-instalacion.sh computes over the whole tree.
 #
-# This is the early warning. What protects a box is the box: instalar-bob.sh
-# runs only after root's copy of firma-instalacion.sh has checked the same
-# signature there, against signers kept outside the repository. A check here
+# This is the early warning. What protects a box is the box: root's copy of
+# firma-instalacion.sh writes the signed commit's tree into a directory of
+# root's, checks the same signature there against signers kept outside the
+# repository, and runs instalar-bob.sh from that directory. A check here
 # can be dodged (another workflow with a job of the same name, an admin merge),
 # a box cannot.
 #
@@ -47,7 +48,7 @@ jobs:
           if [ "$base" = "$new" ]; then echo "nothing that installs BOb changed ($new)"; exit 0; fi
           echo "what installs BOb changed: $base → $new"
           "$f" huella "$HEAD_SHA" . --lista
-          a="supabase/provision/aprobaciones/$new.aprobacion"
+          a="supabase/provision/aprobaciones/$base-$new.aprobacion"
           git show "$HEAD_SHA:$a" > "$RUNNER_TEMP/msg" 2>/dev/null && git show "$HEAD_SHA:$a.sig" > "$RUNNER_TEMP/sig" 2>/dev/null \
             || { echo "::error::$a and its .sig are not in the PR. Henry signs with scripts/firmar-instalacion.sh, from main, after the last push (P5 §6.2)."; exit 1; }
           cmp -s "$RUNNER_TEMP/msg" <("$f" mensaje "$base" "$new") \

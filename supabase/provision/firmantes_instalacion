@@ -3,8 +3,9 @@
 # as Bzzz's config/bob/firmantes_imagen, ONE PUBLIC KEY per line, never a
 # private one. Only a security key that must be touched to sign is accepted:
 #   henry namespaces="bob-install-chain",verify-required sk-ssh-ed25519@openssh.com AAAA...
-# (or sk-ecdsa-sha2-nistp256@openssh.com, Secure Enclave included; drop
-# verify-required only if the key has no PIN or biometric). CI reads this file
+# (or sk-ecdsa-sha2-nistp256@openssh.com, Secure Enclave included).
+# verify-required is required: the key must ask for a PIN or biometric too.
+# cert-authority is refused. CI reads this file
 # from main, never from the PR. A box reads its own copy,
 # /opt/bob/firmantes_instalacion (root's, 644), never the checkout's. The key is
 # this file's alone, not the one in firmantes_imagen.

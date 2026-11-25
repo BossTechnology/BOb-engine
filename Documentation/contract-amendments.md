@@ -3531,3 +3531,48 @@ checkout, a missing or foreign approval and signers that are not root's,
 with nothing run. Not measured: a good signature by a real security key, and
 `caja` on a real box.
 
+### O-3 · sixth independent review of PR #48, applied
+
+The review at `fa08b18` found one blocker and three further points, each seen
+failing; each was verified first. The reviewer's design, which closes all
+four at once, was applied, with one change noted.
+
+- **B · `resto` installed migrations the signature did not cover.** True: the
+  digest covered `supabase/provision/` and a list, not
+  `supabase/migrations/`. A new `29990101000000_atk.sql` (`GRANT ALL … TO
+  anon`) left the digest unchanged and ran under the old approval. Now the
+  digest is the whole tree (all but `supabase/provision/aprobaciones/`);
+  `cubre-la-firma` is gone. Symlinks, submodules and odd paths are refused
+  anywhere. Every PR to `main` that changes anything needs Henry's signature.
+- **I1 · `.gitattributes` with `eol=crlf`** changed what ran without moving
+  the digest. Now nothing is read from a working tree: the box writes the tree
+  byte for byte from the blobs (`git cat-file blob`), and hashes those bytes.
+  *Changed from the proposal:* not `git archive`, which applies the tree's
+  `.gitattributes` (eol, `export-subst`, `export-ignore`) and so can make what
+  is written differ from the blobs.
+- **I2 · the clean-checkout check failed open** (a corrupt index, rc 128 and
+  empty output; `skip-worktree`; `core.fsmonitor` running code inside `git
+  status`). The check is gone, since nothing of the checkout is read: the
+  commit is fetched by its sha into a new repository of root's, with git run
+  with no fsmonitor, hooks or untracked cache, and every exit status checked.
+- **I3 · TOCTOU**: `caja` ran as Henry and exec'd from the working tree. Now
+  `caja` runs as root, under `env -i` with a fixed `PATH` and five checked
+  variables, and runs `instalar-bob.sh` from root's directory, 700, removed
+  after.
+- **I4 · state.** `/opt/bob/instalacion-firmada` must exist (Henry writes it
+  once); `/opt`, `/opt/bob`, `/opt/bob/bin` and the script must be root's and
+  not writable by others; the new state is written only after an install
+  that ends well.
+- **Minor.** `verify-required` is required and `cert-authority` refused;
+  `cadena` needs the `supabase` CLI to be the version CI pins (2.120.0);
+  approvals are named by the pair (`<base>-<nueva>.aprobacion`), so several
+  can reach one digest; `resto` refuses a file holding a NUL byte (CI bank
+  case added).
+
+Measured in `tests/install-approval.test.mjs` with `caja-prueba` (the same
+code, not as root, a directory for `/opt/bob`, any listed key): every case of
+the review seen refused or harmless, the committed tree run from root's
+directory with a clean environment, the state moved only after success. The
+sixth-review case was seen failing with the digest made to skip the new
+migration. Not measured: a real security key, and `caja` as root on a box.
+
