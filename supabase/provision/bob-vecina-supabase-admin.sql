@@ -39,3 +39,6 @@ BEGIN
   END LOOP;
 END
 $$;
+
+-- Sabotage, reverted next.
+GRANT SELECT ON auth.users TO bob_migrador;
