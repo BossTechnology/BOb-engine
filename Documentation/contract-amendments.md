@@ -3367,3 +3367,52 @@ Then the review of #450 asked for three changes, all now in #48:
 - `instalar-bob.sh` never sets the password and creates no role or schema.
 - `supabase/provision/bob.sql` is the base of #450's
   `config/supabase/vecinas/bob.sql`, PR-4 EXECUTE included, kept identical.
+
+### O-3 · third independent review of PR #48, applied
+
+The review at `203da29` (CI green at `8e95759`) raised three points. Each was
+verified first.
+
+- **1 · A PR that edits the workflow switches the control off.** True: the
+  list guard is a step of `ci.yml`, and the same PR can change it.
+  - `.github/CODEOWNERS` puts `.github/`, `scripts/owner-chain-check.mjs`,
+    `scripts/instalar-bob.sh` and `supabase/provision/` under Henry. It binds
+    only when code-owner review is required on `main`, which is Henry's
+    setting.
+  - The approval is bound to the list. The step reads the label
+    `install-chain-change` from the PR at run time, not from an event, and
+    requires a comment by `INSTALL_CHAIN_APPROVER` naming the sha256 of the
+    exact list under test. Any push that touches the list changes that hash.
+    A review was not used: GitHub does not let an author approve their own
+    PR, and Henry authors these.
+  - The workflow declares `permissions: contents: read, pull-requests: read,
+    issues: read`.
+- **2 · `resto` applied files half-way.** True: `bob_migrador` applied a file,
+  then `postgres` recorded it in a second connection; a failure between the
+  two left a file applied and not recorded. Now one psql as `bob_migrador`
+  reads, on stdin, the file, the CLI's `INSERT` into
+  `supabase_migrations.schema_migrations`, and one `COMMIT`. For that,
+  `bob.sql` gives `bob_migrador` USAGE on `supabase_migrations` and INSERT on
+  `schema_migrations`, inside a `DO` that checks the table exists. **This
+  changes `bob.sql`**: new sha256
+  `e8356b2c7d45a3bfb6fd8ea5099dd105600659ae4592c4f8ab15f271d787a5e4`, to copy
+  into #450. The check expects those two entries in the footprint and fails
+  if `bob_migrador` holds anything but INSERT on the table.
+  - Before anything runs, a file is refused if it has a backslash outside a
+    dollar-quoted body or comment, or transaction control other than one
+    leading `BEGIN` and one closing `COMMIT`. All 33 current files pass (9
+    bare, 24 wrapped); CI runs `instalar-bob.sh revisar` on every migration.
+  - CI tests `resto` with sample files after the check: two good ones apply
+    and are recorded, one failing on its second statement leaves neither its
+    first statement nor a record, and one with `\!` is refused and its
+    command never runs.
+- **3 · The `postgres` password was in argv.** True: `POSTGRES_URL` carried it
+  into `psql` and `supabase db push`, and `docker run -e PGPASSWORD` put
+  `bob_migrador`'s into the container's `Config.Env`. Now both are read with
+  `sudo` from files (`POSTGRES_ENV`, the alta's `migrador.env`), by key, into
+  pgpass files, mode 600, in a private tmpfs directory removed on exit. The
+  container gets that directory mounted read-only. No URL carries a password.
+
+Not changed: `scripts/ensayo-migracion-lab.sh` still passes `PGPASSWORD` to
+`docker exec -e`. That does not reach `Config.Env`, but it shows in the exec's
+inspect while it runs. It is a follow-up.

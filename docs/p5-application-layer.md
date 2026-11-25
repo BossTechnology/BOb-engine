@@ -536,7 +536,15 @@ below. They stay as they are.
 
 **The procedure on a box.** Henry runs it in a window, in this order:
 
-1. `POSTGRES_URL=… scripts/instalar-bob.sh cadena`. Pushes, as `postgres`, only
+No password goes on a command line, into shell history, or into a container's
+environment. `instalar-bob.sh` reads `postgres`'s from the file named by
+`POSTGRES_ENV` (key `POSTGRES_PASSWORD`) and `bob_migrador`'s from the alta's
+file, each with `sudo` and by key, never sourced. It writes each to a pgpass
+file, mode 600, in a private directory in tmpfs (`$XDG_RUNTIME_DIR` or
+`/dev/shm`) that is removed on exit. `POSTGRES_HOST` and `POSTGRES_PORT` say
+where; the URL given to the CLI carries no password.
+
+1. `POSTGRES_ENV=… scripts/instalar-bob.sh cadena`. Pushes, as `postgres`, only
    the files in `install-chain.sha256`, each checked against its hash, with
    `supabase db push --include-all` from a work directory. On lab-02, where
    they are applied, this is a no-op. `--include-all` covers a history that
@@ -558,30 +566,45 @@ below. They stay as they are.
    works because on Postgres 16+ the creator of a role holds ADMIN on it.
    `supabase_admin` only grants USAGE on `auth` (77.22) and sets LOGIN and the
    password. The alta needs schema `bob` from step 1 to hand it over.
-3. `POSTGRES_URL=… scripts/instalar-bob.sh resto`. `bob_migrador`'s
+3. `POSTGRES_ENV=… scripts/instalar-bob.sh resto`. `bob_migrador`'s
    connection comes from the alta's file, `/opt/bob/secrets/migrador.env`
    (`MIGRADOR_USUARIO`, `MIGRADOR_CLAVE`, `MIGRADOR_HOST`, `MIGRADOR_RED`). The
    script reads only those keys, with `sudo`, and never prints them. psql runs
    in a container of the database's image on `MIGRADOR_RED`, the one network
-   `bob_migrador` may connect from (77.13). The script creates no role or
-   schema and never sets a password: the alta does. Every other
-   migration not yet recorded, in order. `bob_migrador` applies it with
-   `psql`, and `postgres` records it in
-   `supabase_migrations.schema_migrations`, as the CLI does. Not
-   `supabase db push` as `bob_migrador`: the CLI reads and creates that history
+   `bob_migrador` may connect from (77.13), with the pgpass file mounted
+   read-only: `docker run -e PGPASSWORD` would leave the password in the
+   container's `Config.Env`. The script creates no role or schema and never
+   sets a password: the alta does.
+
+   Every other migration not yet recorded, in order. **Each file is one
+   transaction, with its record.** One `psql` as `bob_migrador` reads, on
+   stdin (never argv, so no 128 KiB limit), the file and then the `INSERT`
+   into `supabase_migrations.schema_migrations` that the CLI would write, and
+   a single `COMMIT`. A file that fails leaves nothing applied and nothing
+   recorded, and stops the script; the files before it stay applied and
+   recorded. For that, `bob.sql` gives `bob_migrador` USAGE on
+   `supabase_migrations` and INSERT on `schema_migrations`, nothing more: it
+   can record, not read, rewrite or erase anyone's history. Not
+   `supabase db push` as `bob_migrador`: the CLI creates and alters that
    table, which is shared and not `bob`'s, and stops with 42501 (measured, run
-   45630458545). Giving `bob_migrador` that table would hand it every
-   neighbour's history. A file that fails stops the script; the files before
-   it stay applied and recorded. If the record fails after the apply, a second
-   run applies that file again: every migration wraps its work in
-   `BEGIN … COMMIT` and must be safe to see twice.
+   45630458545).
+
+   Before anything runs, the script refuses a file with a backslash outside a
+   dollar-quoted body or a comment (psql would read it as a metacommand, `\!`
+   or `\i` among them, anywhere on a line), or with transaction control other
+   than one `BEGIN` opening it and one `COMMIT` closing it. `instalar-bob.sh
+   revisar <file>` says the same with no database; CI runs it on every
+   migration. CI also feeds `resto` sample files after the check: a bare one
+   and a wrapped one apply and are recorded, one that fails on its second
+   statement leaves neither its first statement nor a record, and one with
+   `\!` is refused and its command never runs.
 
 CI runs the same three steps. Step 2 is a stand-in for the alta:
 `supabase/provision/alta-ci.sql` as `postgres` and `alta-ci-supabase-admin.sql`
 as `supabase_admin`, then LOGIN and the password, then a `migrador.env` like
 the alta's. **`supabase/provision/bob.sql` is the content of Bzzz's
 `config/supabase/vecinas/bob.sql`, and the two are kept identical**: a change
-goes to both. Today it holds one line, the PR-4 EXECUTE below.
+goes to both. Today it holds two grants, below.
 `alta-ci.sql` includes it at the point where #450 reads it. The job runs on the
 box's image,
 `supabase/postgres:17.6.1.136`, pinned through `supabase/.temp/postgres-version`
@@ -590,9 +613,13 @@ and checked from the running container, not on CI's 15. The stand-in keeps
 `bob_ai_ro:0`), its order and its transaction.
 
 **What `bob.sql` holds.** It is Bzzz's `config/supabase/vecinas/bob.sql`
-(bzzz#450 at `7429eec`), and `supabase/provision/bob.sql` is a byte-for-byte
-copy. The O-3 check pins its sha256 and fails if the copy changes. A change
-goes to both and to the pinned hash. It holds one grant: `GRANT EXECUTE ON
+(bzzz#450; at `7429eec` it held the first grant only, and #450 takes the
+second next), and `supabase/provision/bob.sql` is a byte-for-byte copy. The O-3
+check pins its sha256 and fails if the copy changes. A change goes to both and
+to the pinned hash. The second grant, USAGE on `supabase_migrations` and INSERT
+on `schema_migrations`, is the one step 3 records with; it sits in a `DO` that
+checks `to_regclass`, because on a new box the table appears only with the
+first push. The first: `GRANT EXECUTE ON
 FUNCTION public.bob_grant_projection(regclass) TO bob_migrador`, inside a
 `DO` that checks `to_regprocedure` first, because on a new box the function
 does not exist until the chain is applied. `bob.conf` declares it as
@@ -613,8 +640,10 @@ The footprint of `bob_migrador` outside `bob` must be exactly:
 - as members: `postgres`, with ADMIN only, neither INHERIT nor SET. On
   Postgres 16+ the creator of a role gets that row, and #450's V14 admits it
   in that exact form. On 15 it would be none.
-- two privilege entries outside `bob`: schema `auth`, and the PR-4 helper;
-- USAGE on `auth` and on `public`.
+- four privilege entries outside `bob`: schema `auth`, the PR-4 helper,
+  schema `supabase_migrations` and its table `schema_migrations`;
+- USAGE on `auth`, `public` and `supabase_migrations`;
+- on `schema_migrations`, INSERT and no other privilege.
 
 It reads from `pg_shdepend` every object, in any database, that the role owns,
 holds a privilege on, or is named in a policy of. So a grant of any kind
@@ -639,18 +668,28 @@ Not measured: what the hand-over changes for the other SECURITY DEFINER
 functions in `bob` on a box with data, beyond what they call. What `bob` opens
 to `anon`, `authenticated` or PUBLIC is still pending; nothing here watches it.
 
-The install list. `install-chain.sha256` changes only with the label
-`install-chain-change`, applied by the GitHub login in the repository variable
-`INSTALL_CHAIN_APPROVER`. That variable is for Henry to set; while it is unset,
-no change passes. A CI step diffs the list against the base branch; re-run the
-job after labelling. It cannot run red on the PR that adds the list, which is
-not on `main` yet. Until then it was seen to fail locally, against this PR's
-own earlier commit.
+The install list. `install-chain.sha256` changes only with Henry's approval of
+that exact list: the label `install-chain-change` on the PR, read at run time,
+and a comment by the GitHub login in the repository variable
+`INSTALL_CHAIN_APPROVER` reading `install-chain-change <sha256 of the list>`.
+A later push that touches the list changes its hash, so the approval does not
+carry over. A comment rather than a review, because GitHub does not let an
+author approve their own PR. That variable is for Henry to set; while it is
+unset, no change passes. A CI step diffs the list against the base branch;
+re-run the job after approving. It cannot run red on the PR that adds the
+list, which is not on `main` yet.
+
+The guard lives in the workflow, so a PR could edit it away.
+`.github/CODEOWNERS` puts `.github/`, `scripts/owner-chain-check.mjs`,
+`scripts/instalar-bob.sh` and `supabase/provision/` under Henry. **Making
+code-owner review required is Henry's setting in branch protection**; until
+then CODEOWNERS only requests his review. The workflow's token is read-only
+(`contents`, `pull-requests`, `issues`).
 
 The guard: the CI job "Chain applies as bob_migrador (O-3)", on
 `supabase/postgres:17.6.1.136`, **still to be made a required check by
 Henry**. Today `main` requires the other four. They fail if:
-- the install list changes without that label;
+- the install list changes without that approval;
 - `instalar-bob.sh` stops: an install file is edited, `postgres` cannot push
   the chain, the provisioning fails, or a later migration does not apply as
   `bob_migrador`, whatever its date;

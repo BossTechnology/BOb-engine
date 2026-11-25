@@ -22,6 +22,13 @@ on:
 # lives in branch protection, not here, and is the one part of ID-12 a workflow
 # file cannot assert about itself.
 
+# Read-only token: the jobs read the code and the PR's comments and labels, and
+# write nothing to the repository (O-3 third review).
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -186,7 +193,14 @@ jobs:
         with:
           version: ${{ env.SUPABASE_CLI_VERSION }}
       - run: pnpm install --frozen-lockfile
-      - name: The install chain list changes only with Henry's label (O-3)
+      # The approval names the list it approves: Henry's comment carries the
+      # sha256 of the exact install-chain.sha256 under test, and the PR carries
+      # the label now. Any later push that touches the list changes that hash,
+      # so an approval never outlives the list it saw. A comment, not a review:
+      # GitHub does not let an author approve their own PR. The guard lives in
+      # this workflow, so a PR could edit it away: .github/CODEOWNERS puts the
+      # workflow under Henry, and requiring code-owner review is his setting.
+      - name: The install chain list changes only with Henry's approval (O-3)
         if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -198,12 +212,14 @@ jobs:
           git fetch --no-tags --depth=1 origin "$BASE"
           if ! git cat-file -e "FETCH_HEAD:$list" 2>/dev/null; then echo "$list is not on $BASE yet"; exit 0; fi
           if git diff --quiet FETCH_HEAD -- "$list"; then echo "$list unchanged"; exit 0; fi
-          who=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/events" --paginate \
-            -q '.[] | select(.event == "labeled" and .label.name == "install-chain-change") | .actor.login' | tail -n1)
-          if [ -n "$APPROVER" ] && [ "$who" = "$APPROVER" ]; then echo "changed, labelled by $who"; exit 0; fi
           git diff FETCH_HEAD -- "$list"
-          echo "::error::$list changed. The install chain is frozen (O-3, P5 §6.2); only the label install-chain-change, put by the repository variable INSTALL_CHAIN_APPROVER, lets it through. Re-run the job after labelling."
-          exit 1
+          want="install-chain-change $(sha256sum "$list" | cut -d' ' -f1)"
+          fail() { echo "::error::$list changed. The install chain is frozen (O-3, P5 §6.2). It passes only with the label install-chain-change on the PR and a comment by the repository variable INSTALL_CHAIN_APPROVER reading: $want. $1 Re-run the job after approving."; exit 1; }
+          [ -n "$APPROVER" ] || fail "INSTALL_CHAIN_APPROVER is not set."
+          gh api "repos/$GITHUB_REPOSITORY/issues/$PR/labels" -q '.[].name' | grep -qx install-chain-change || fail "The label is not on the PR now."
+          gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
+            -q ".[] | select(.user.login == \"$APPROVER\") | .body" | grep -qxF "$want" || fail "No comment by $APPROVER names this list."
+          echo "changed, approved by $APPROVER for this exact list"
       # The box's image, supabase/postgres:17.6.1.136 (F-37), not CI's 15: the
       # alta of bzzz#450 relies on Postgres 16+.
       - name: Start Supabase on the box's Postgres image, with no migration
@@ -215,10 +231,16 @@ jobs:
           supabase start
           rmdir supabase/migrations && mv "$RUNNER_TEMP/chain" supabase/migrations
           docker ps --format '{{.Image}}' | grep -E 'supabase/postgres:' | tee /dev/stderr | grep -q ':17.6.1.136$'
+      # No password on a command line: instalar-bob.sh reads it from a file, as
+      # on a box (CI's local stack has the default one).
       - name: 1 · the install chain (scripts/instalar-bob.sh cadena)
         env:
-          POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
-        run: scripts/instalar-bob.sh cadena
+          POSTGRES_ENV: ${{ runner.temp }}/postgres.env
+          POSTGRES_PORT: '54322'
+          SUDO: ''
+        run: |
+          (umask 077; echo POSTGRES_PASSWORD=postgres > "$POSTGRES_ENV")
+          scripts/instalar-bob.sh cadena
       # Step 2 on a box is Bzzz's alta (bzzz#450). Here, its stand-in, writing
       # the same migrador.env the alta writes.
       - name: 2 · the alta, CI stand-in for bzzz#450
@@ -233,13 +255,64 @@ jobs:
           printf 'MIGRADOR_USUARIO=bob_migrador\nMIGRADOR_CLAVE=bob_migrador-local-test\nMIGRADOR_HOST=127.0.0.1\nMIGRADOR_RED=\n' > "$RUNNER_TEMP/migrador.env"
       - name: 3 · every other migration (scripts/instalar-bob.sh resto)
         env:
-          POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+          POSTGRES_ENV: ${{ runner.temp }}/postgres.env
+          POSTGRES_PORT: '54322'
+          MIGRADOR_ENV: ${{ runner.temp }}/migrador.env
           MIGRADOR_PUERTO: '54322'
           SUDO: ''
-        run: MIGRADOR_ENV="$RUNNER_TEMP/migrador.env" scripts/instalar-bob.sh resto
+        run: |
+          scripts/instalar-bob.sh revisar supabase/migrations/*.sql
+          scripts/instalar-bob.sh resto
       - name: Check what it left
         env:
           ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
           MIGRADOR_PASSWORD: bob_migrador-local-test
         run: CHAIN_DIR=supabase/migrations node scripts/owner-chain-check.mjs
+      # Today every migration is in the install chain, so step 3 applies nothing.
+      # Sample migrations show what it does with one: a good file applies and is
+      # recorded in one transaction, a failing one leaves neither, and a file
+      # with a psql metacommand is refused before anything runs. After the
+      # check, so the samples never reach it.
+      - name: resto applies a file whole or not at all
+        env:
+          POSTGRES_ENV: ${{ runner.temp }}/postgres.env
+          POSTGRES_PORT: '54322'
+          MIGRADOR_ENV: ${{ runner.temp }}/migrador.env
+          MIGRADOR_PUERTO: '54322'
+          SUDO: ''
+          ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+        run: |
+          m=supabase/migrations
+          q() { psql "$ADMIN_URL" -X -A -t -q -v ON_ERROR_STOP=1 "$@"; }
+          recorded() { q -c "SELECT count(*) FROM supabase_migrations.schema_migrations WHERE version = '$1'"; }
+          ok() { local sql=$1 msg=$2; shift 2; [ "$(q "$@" <<< "$sql")" = t ] || { echo "::error::$msg"; exit 1; }; }
+          cat > $m/99990101000001_ci_resto_bare.sql <<'SQL'
+          CREATE TABLE bob.ci_resto_bare (id int);
+          SQL
+          cat > $m/99990101000002_ci_resto_wrapped.sql <<'SQL'
+          BEGIN;
+          CREATE TABLE bob.ci_resto_wrapped (id int);
+          CREATE FUNCTION bob.ci_resto_f() RETURNS text LANGUAGE sql AS $$ SELECT E'a\\b' $$;
+          COMMIT;
+          SQL
+          cat > $m/99990101000003_ci_resto_fails.sql <<'SQL'
+          CREATE TABLE bob.ci_resto_half (id int);
+          CREATE TABLE public.ci_resto_denied (id int);
+          SQL
+          if scripts/instalar-bob.sh resto; then echo "::error::resto applied a file that must fail"; exit 1; fi
+          [ "$(recorded 99990101000001)$(recorded 99990101000002)$(recorded 99990101000003)" = 110 ] \
+            || { echo "::error::recorded: 1 and 2, not 3"; exit 1; }
+          ok "SELECT to_regclass('bob.ci_resto_bare') IS NOT NULL AND to_regclass('bob.ci_resto_wrapped') IS NOT NULL" "the good samples did not apply"
+          ok "SELECT to_regclass('bob.ci_resto_half') IS NULL" "the failing sample left its first statement applied"
+          ok "SELECT rtrim(statements[1], E'\n') = rtrim(:'body', E'\n') FROM supabase_migrations.schema_migrations WHERE version = '99990101000002'" \
+            "the record does not hold the file" -v body="$(cat $m/99990101000002_ci_resto_wrapped.sql)"
+          rm $m/99990101000003_ci_resto_fails.sql
+          printf 'CREATE TABLE bob.ci_resto_meta (id int);\n\\! touch %s/resto-ran-a-shell\n' "$RUNNER_TEMP" > $m/99990101000004_ci_resto_meta.sql
+          if scripts/instalar-bob.sh resto; then echo "::error::resto applied a file with a metacommand"; exit 1; fi
+          [ ! -e "$RUNNER_TEMP/resto-ran-a-shell" ] && [ "$(recorded 99990101000004)" = 0 ] \
+            || { echo "::error::the metacommand sample ran or was recorded"; exit 1; }
+          ok "SELECT to_regclass('bob.ci_resto_meta') IS NULL" "the metacommand sample applied its first statement"
+          rm $m/99990101000004_ci_resto_meta.sql
+          scripts/instalar-bob.sh resto
+          echo "resto: whole or nothing, measured"
 

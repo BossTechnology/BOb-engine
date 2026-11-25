@@ -83,8 +83,10 @@ What is never done because of BOb:
      that is already right. *Not rehearsed.*
 4. **Apply with the same step**: `scripts/instalar-bob.sh resto` (O-3, P5
    §6.2), which applies every unrecorded file as `bob_migrador` whatever its
-   date, from the alta's credential in `/opt/bob/secrets/migrador.env`. The
-   CLI's `supabase db push` cannot run as `bob_migrador`.
+   date, from the alta's credential in `/opt/bob/secrets/migrador.env`. Each
+   file goes in one transaction with its history record, so a file that fails
+   leaves nothing applied and nothing recorded. The CLI's `supabase db push`
+   cannot run as `bob_migrador`.
 5. **Check after**: `schema_migrations` holds exactly the pinned commit's
    versions (F-15), and the read-only role guards of P5 §6.3 that need no
    fixture.

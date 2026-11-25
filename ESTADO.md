@@ -65,11 +65,11 @@
 - O-3 (D77): decidido por Henry el 24 nov en el chat de Relevo: «postgres una vez, luego migrador». El procedimiento de la caja es `scripts/instalar-bob.sh`:
   1. `postgres` aplica la cadena de instalación (33 archivos fijados por sha256);
   2. el alta de Bzzz (`generar-secretos-vecina.sh bob`, bzzz#450) le pasa `bob` a `bob_migrador`. Lo hace `postgres` en una transacción, medido en 17.6.1.136. `supabase/provision/` solo la imita en CI;
-  3. `bob_migrador` aplica cada migración nueva con `psql`, y `postgres` la anota en el historial. La CLI no puede hacerlo como `bob_migrador`.
+  3. `bob_migrador` aplica cada migración nueva con `psql`, y la anota en el historial en la misma transacción: si falla, no queda ni aplicada ni anotada. La CLI no puede hacerlo como `bob_migrador`. Ninguna clave va en la línea de comandos: salen de archivos, con `sudo`, a un pgpass en tmpfs.
 
   El CI corre ese guion en la imagen de la caja (17.6.1.136) y revisa lo que deja. Sigue en el PR #48, sin fusionar. Sobre el USAGE en `auth`: «Nota en D77: ese grant con supabase_admin» (D77 77.21 y 77.22, bzzz#442). Faltan cuatro cosas:
-  - Bzzz: falta `config/supabase/vecinas/bob.sql` en #450, con el `GRANT EXECUTE` sobre `public.bob_grant_projection` a `bob_migrador`. Sin él, el alimentador falla en el primer mes nuevo.
-  - Henry: poner la variable `INSTALL_CHAIN_APPROVER` (quién puede cambiar la lista de instalación) y volver obligatorio el job de O-3.
+  - Bzzz: copiar a #450 el `bob.sql` nuevo (sha256 `e8356b2c…`). Además del `GRANT EXECUTE` sobre `public.bob_grant_projection`, ahora da a `bob_migrador` USAGE en `supabase_migrations` e INSERT en `schema_migrations`.
+  - Henry: poner la variable `INSTALL_CHAIN_APPROVER` (quién aprueba un cambio de la lista de instalación), volver obligatorio el job de O-3 y exigir la revisión de CODEOWNERS en la protección de `main`.
   - Pendiente: lo que `bob` abre a `anon`, `authenticated` o PUBLIC.
   - Tabla en P5 §6.2.
 - Sin fecha: una migración base que no salga de `bob`, para después de 0.6.

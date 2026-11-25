@@ -56,8 +56,9 @@ const files = readdirSync(dir).filter((f) => /^[0-9]+_.*\.sql$/.test(f)).sort()
 const sha = (f) => createHash('sha256').update(readFileSync(`${dir}/${f}`)).digest('hex')
 
 // supabase/provision/bob.sql is Bzzz's config/supabase/vecinas/bob.sql, byte for
-// byte (bzzz#450 at 7429eec, P5 §6.2). A change goes to both, and here.
-const BZZZ_BOB_SQL = { commit: '7429eec', sha256: 'ad9adf91d370fc008b4134c9a7d60646310f4b4560433655e677c1892b3f2605' }
+// byte (bzzz#450, P5 §6.2). A change goes to both, and here. This version adds
+// the history grants of BOb-engine#48's third review; bzzz#450 takes it next.
+const BZZZ_BOB_SQL = { commit: 'bzzz#450, after 7429eec', sha256: 'e8356b2c7d45a3bfb6fd8ea5099dd105600659ae4592c4f8ab15f271d787a5e4' }
 {
   const h = createHash('sha256').update(readFileSync('supabase/provision/bob.sql')).digest('hex')
   if (h !== BZZZ_BOB_SQL.sha256) findings.push(`supabase/provision/bob.sql (sha256 ${h}) is not Bzzz's config/supabase/vecinas/bob.sql at ${BZZZ_BOB_SQL.commit}: keep the two identical`)
@@ -193,6 +194,12 @@ EXPECTED_FOOTPRINT.push(PG16 ? 'members: postgres (admin only)' : 'members: (non
 const { rows: [helper] } = await admin.query(`
   SELECT (pg_identify_object('pg_proc'::regclass, 'public.bob_grant_projection(regclass)'::regprocedure, 0)).identity AS id`)
 EXPECTED_FOOTPRINT.push(`privilege on function ${helper.id}`)
+// bob.sql's grants on the CLI's history table, so resto records each migration in
+// the transaction that applies it: USAGE on the schema, INSERT on the table.
+if ((await admin.query(`SELECT to_regclass('supabase_migrations.schema_migrations') IS NOT NULL AS t`)).rows[0].t) {
+  EXPECTED_FOOTPRINT.push('privilege on schema supabase_migrations', 'privilege on table supabase_migrations.schema_migrations',
+    'schema supabase_migrations: USAGE')
+}
 EXPECTED_FOOTPRINT.sort()
 async function footprint(client) {
   const { rows: [r] } = await client.query(`
@@ -246,6 +253,15 @@ const actual = await footprint(admin)
 for (const l of actual) console.log(`     ${l}`)
 for (const l of actual.filter((l) => !EXPECTED_FOOTPRINT.includes(l))) findings.push(`bob_migrador holds what D77 does not give it: ${l}`)
 for (const l of EXPECTED_FOOTPRINT.filter((l) => !actual.includes(l))) findings.push(`bob_migrador lacks what the provisioning gives it: ${l}`)
+{
+  // On the history table, INSERT and nothing else: it can record, not read, rewrite or erase.
+  const { rows: [h] } = await admin.query(`
+    SELECT string_agg(p, ', ' ORDER BY p) FILTER (WHERE has_table_privilege('bob_migrador', 'supabase_migrations.schema_migrations', p)) AS privs
+      FROM unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) p
+     WHERE to_regclass('supabase_migrations.schema_migrations') IS NOT NULL`)
+  console.log(`     supabase_migrations.schema_migrations: ${h.privs ?? '(none)'}`)
+  if (h.privs && h.privs !== 'INSERT') findings.push(`bob_migrador holds ${h.privs} on supabase_migrations.schema_migrations; INSERT only`)
+}
 
 // ── S · self-checks ────────────────────────────────────────────────────────
 console.log('== S · self-checks')
