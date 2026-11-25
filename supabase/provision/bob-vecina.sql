@@ -19,12 +19,5 @@ CREATE ROLE bob_app NOLOGIN;
 CREATE ROLE bob_feeder NOLOGIN;
 CREATE ROLE bob_ai_ro NOLOGIN;
 
--- Reads the chain makes of Supabase's own objects.
-GRANT USAGE ON SCHEMA auth TO bob_migrador;
-
 -- probe: the chain's first twenty migrations build in public.
 GRANT USAGE, CREATE ON SCHEMA public TO bob_migrador WITH GRANT OPTION;
--- probe: 20260606120002 adds tables to the publication.
-ALTER PUBLICATION supabase_realtime OWNER TO bob_migrador;
--- probe: 20260606120000 puts a trigger on auth.users.
-GRANT TRIGGER ON auth.users TO bob_migrador;

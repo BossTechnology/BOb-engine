@@ -45,19 +45,25 @@ console.log(`owners: schema auth ${own.auth}, schema public ${own.public}, auth.
 // A GRANT without the grant option only warns; it is reported as a failure here.
 const warnings = []
 admin.on('notice', (n) => warnings.push(n.message))
-console.log('== provisioning, as postgres')
-// Statements end at a semicolon closing a line; the file holds no bodies.
-const statements = readFileSync(prov, 'utf8').replace(/--.*$/gm, '').split(/;\s*$/m)
-  .map((s) => s.trim()).filter(Boolean)
-for (const s of statements) {
-  try {
-    warnings.length = 0
-    await admin.query(s)
-    const w = warnings.filter((m) => /privileges? (were|was) (not )?granted|no privileges/i.test(m))
-    if (w.length) { failed = true; console.log(`FAIL ${s.split('\n')[0]}\n    warning: ${w.join('; ')}`) }
-    else console.log(`ok   ${s.split('\n')[0]}`)
+const saUrl = new URL(adminUrl); saUrl.username = 'supabase_admin'
+const sa = new pg.Client({ connectionString: saUrl.toString() })
+await sa.connect()
+sa.on('notice', (n) => warnings.push(n.message))
+for (const [who, client, file] of [['postgres', admin, prov], ['supabase_admin', sa, process.env.PROVISION_SA]]) {
+  if (!file) continue
+  console.log(`== provisioning, as ${who} (${file})`)
+  // Statements end at a semicolon closing a line; the files hold no bodies.
+  const statements = readFileSync(file, 'utf8').replace(/--.*$/gm, '').split(/;\s*$/m)
+    .map((s) => s.trim()).filter(Boolean)
+  for (const s of statements) {
+    try {
+      warnings.length = 0
+      await client.query(s)
+      const w = warnings.filter((m) => /privileges? (were|was) (not )?granted|no privileges/i.test(m))
+      if (w.length) { failed = true; console.log(`FAIL ${s.split('\n')[0]}\n    warning: ${w.join('; ')}`) }
+      else console.log(`ok   ${s.split('\n')[0]}`)
+    } catch (e) { failed = true; console.log(`FAIL ${s.split('\n')[0]}\n    ${e.code} ${e.message}`) }
   }
-  catch (e) { failed = true; console.log(`FAIL ${s.split('\n')[0]}\n    ${e.code} ${e.message}`) }
 }
 await admin.query(`ALTER ROLE bob_migrador PASSWORD '${PASSWORD}'`)
 
@@ -67,18 +73,51 @@ url.password = PASSWORD
 const owner = new pg.Client({ connectionString: url.toString() })
 await owner.connect()
 console.log('== the chain, as bob_migrador')
+// What supabase_admin owns outside the system schemas, to hand over what a
+// fallback creates, as a run that had passed would have left it.
+const OWNED = `
+  SELECT CASE c.relkind WHEN 'v' THEN 'VIEW' WHEN 'm' THEN 'MATERIALIZED VIEW' ELSE 'TABLE' END AS kind,
+         format('%I.%I', n.nspname, c.relname) AS name
+    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+   WHERE c.relowner = 'supabase_admin'::regrole AND c.relkind IN ('r','p','v','m')
+     AND n.nspname IN ('public','bob')
+  UNION ALL
+  SELECT CASE p.prokind WHEN 'p' THEN 'PROCEDURE' ELSE 'FUNCTION' END, p.oid::regprocedure::text
+    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+   WHERE p.proowner = 'supabase_admin'::regrole AND n.nspname IN ('public','bob')
+  UNION ALL
+  SELECT 'TYPE', format('%I.%I', n.nspname, t.typname) FROM pg_type t
+    JOIN pg_namespace n ON n.oid = t.typnamespace
+   WHERE t.typowner = 'supabase_admin'::regrole AND t.typtype IN ('e','d') AND n.nspname IN ('public','bob')
+  UNION ALL
+  SELECT 'SCHEMA', quote_ident(nspname) FROM pg_namespace
+   WHERE nspowner = 'supabase_admin'::regrole AND nspname = 'bob'`
+const stops = []
 for (const f of readdirSync(dir).filter((f) => /^\d{14}_.*\.sql$/.test(f)).sort()) {
+  const sql = readFileSync(`${dir}/${f}`, 'utf8')
   try {
-    await owner.query(readFileSync(`${dir}/${f}`, 'utf8'))
+    await owner.query(sql)
     await owner.query('ROLLBACK').catch(() => {}) // a file that left a transaction open
     console.log(`ok   ${f}`)
   } catch (e) {
     failed = true
     await owner.query('ROLLBACK').catch(() => {})
+    stops.push(f)
     console.log(`STOP ${f}\n    ${e.code} ${e.message}${e.where ? `\n    at ${e.where.split('\n')[0]}` : ''}`)
-    break
+    // Go on: supabase_admin applies it, and what it made goes to bob_migrador.
+    const before = new Set((await sa.query(OWNED)).rows.map((r) => `${r.kind} ${r.name}`))
+    try { await sa.query(sql) } catch (err) {
+      await sa.query('ROLLBACK').catch(() => {})
+      console.log(`    and supabase_admin cannot apply it either: ${err.code} ${err.message}; the probe ends here`)
+      break
+    }
+    for (const r of (await sa.query(OWNED)).rows.filter((r) => !before.has(`${r.kind} ${r.name}`))) {
+      await sa.query(`ALTER ${r.kind} ${r.name} OWNER TO bob_migrador`)
+        .catch((err) => console.log(`    cannot hand ${r.kind} ${r.name} over: ${err.message}`))
+    }
   }
 }
+console.log(`stopped at ${stops.length} migration(s): ${stops.join(', ') || 'none'}`)
 await owner.end()
 
 console.log('== what bob_migrador holds outside bob')
@@ -101,5 +140,6 @@ const { rows: privs } = await admin.query(`
      AND has_schema_privilege('bob_migrador', n.oid, p)
    GROUP BY 1 ORDER BY 1`)
 for (const r of privs) console.log(`may  ${r.privs} on schema ${r.nspname}`)
+await sa.end()
 await admin.end()
 process.exit(failed ? 1 : 0)
