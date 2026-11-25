@@ -159,18 +159,23 @@ for (const r of await definerCallsOut(admin)) {
 }
 
 const owner = new pg.Client({ connectionString: as('bob_migrador', PASSWORD) }); await owner.connect()
+const PG16 = Number((await admin.query('SHOW server_version_num')).rows[0].server_version_num) >= 160000
 
 // ── F · the footprint ──────────────────────────────────────────────────────
 const EXPECTED_FOOTPRINT = [
   'attributes: login, nosuperuser, nobypassrls, nocreatedb, nocreaterole, noreplication',
   'database postgres: CONNECT, TEMPORARY',
   'member of: (none)',
-  'members: (none)',
   'privilege on schema auth',
   'schema auth: USAGE',
   'schema bob: owner',
   'schema public: USAGE',
 ]
+// On Postgres 16 and later, a CREATEROLE role that creates another is granted
+// ADMIN on it, with neither INHERIT nor SET (createrole_self_grant unset): so
+// postgres administers bob_migrador, and sets its password, without acting as
+// it. Measured on 17 in CI. Anything more is a finding.
+EXPECTED_FOOTPRINT.push(PG16 ? 'members: postgres (admin only)' : 'members: (none)')
 // bob-vecina.sql's EXECUTE on the PR-4 helper, named as the catalog names it.
 const { rows: [helper] } = await admin.query(`
   SELECT (pg_identify_object('pg_proc'::regclass, 'public.bob_grant_projection(regclass)'::regprocedure, 0)).identity AS id`)
@@ -186,9 +191,12 @@ async function footprint(client) {
     SELECT string_agg(p, ', ' ORDER BY p) AS privs FROM unnest(ARRAY['CONNECT','CREATE','TEMPORARY']) p
      WHERE has_database_privilege('bob_migrador', current_database(), p)`)
   out.push(`database ${(await client.query('SELECT current_database() AS db')).rows[0].db}: ${d.privs ?? '(none)'}`)
+  // From Postgres 16 a membership carries ADMIN, INHERIT and SET apart.
+  const opts = PG16 ? `|| CASE WHEN admin_option AND NOT inherit_option AND NOT set_option THEN ' (admin only)'
+                              ELSE format(' (admin %s, inherit %s, set %s)', admin_option, inherit_option, set_option) END` : ''
   const { rows: [m] } = await client.query(`
-    SELECT (SELECT string_agg(pg_get_userbyid(roleid), ', ' ORDER BY 1) FROM pg_auth_members WHERE member = 'bob_migrador'::regrole) AS of,
-           (SELECT string_agg(pg_get_userbyid(member), ', ' ORDER BY 1) FROM pg_auth_members WHERE roleid = 'bob_migrador'::regrole) AS members`)
+    SELECT (SELECT string_agg(pg_get_userbyid(roleid) ${opts}, ', ' ORDER BY 1) FROM pg_auth_members WHERE member = 'bob_migrador'::regrole) AS of,
+           (SELECT string_agg(pg_get_userbyid(member) ${opts}, ', ' ORDER BY 1) FROM pg_auth_members WHERE roleid = 'bob_migrador'::regrole) AS members`)
   out.push(`member of: ${m.of ?? '(none)'}`, `members: ${m.members ?? '(none)'}`)
   // Every object, in any database, that bob_migrador owns, holds a privilege
   // on, or is named in a policy of: pg_shdepend records them all.
