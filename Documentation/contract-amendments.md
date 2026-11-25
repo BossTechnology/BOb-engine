@@ -3284,7 +3284,7 @@ check now runs in two phases: the install chain against its 21 pinned stops,
 then what it left outside `bob` back to `postgres`, then every later migration
 as `bob_migrador` alone, a stop being a finding. Phase B seen red with a
 migration altering `public.cap_alert_log()`. On the USAGE grant on `auth`:
-«Nota en D77: ese grant con supabase_admin»; the note goes in D77, in Bzzz.
+«Nota en D77: ese grant con supabase_admin»; the note is D77 77.21 and 77.22 (bzzz#442, `b483d7b9`).
 Pending, no date: a baseline migration that does not leave `bob`, after 0.6.
 The migrations of PR #40 and PR #43 are dated after `20261121190000`, so once
 merged they fall in phase B and must apply as `bob_migrador`.

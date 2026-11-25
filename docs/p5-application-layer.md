@@ -550,7 +550,8 @@ What `bob.sql` must hold, measured (`supabase/provision/`):
   needs (they call `auth.jwt()`). **`postgres` cannot make this grant**: it
   holds no grant option on `auth` (owner `supabase_admin`), and the GRANT only
   warns. Only `supabase_admin` can. Henry, 2026-11-24: «Nota en D77: ese
-  grant con supabase_admin». The note goes in D77, in Bzzz; the grant is in
+  grant con supabase_admin». The note is D77 77.21 and 77.22, in Bzzz
+  (bzzz#442, merged as `b483d7b9`); the grant is in
   `supabase/provision/bob-vecina-supabase-admin.sql`.
 - Nothing else. The check asserts `bob_migrador`'s footprint outside `bob` is
   exactly: LOGIN and none of the other attributes, CONNECT and TEMPORARY on
