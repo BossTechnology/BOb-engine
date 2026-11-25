@@ -1,4 +1,4 @@
-# The install chain (O-3, P5 §6.2): applied once by postgres, frozen. sha256sum format.
+# The install chain (O-3, P5 §6.2): applied once by postgres, frozen. sha256sum format. (sabotage)
 2392e5cc516d955d6894d498c4542abeddffe3365e20dfd3d72e6d5f7b57391e  20260606115900_drop_legacy_singletenant.sql
 0f69c0e804c0a21becf248c229362eee03cfe17989c5c82b8852212e62a40456  20260606120000_initial_schema.sql
 d40ff5f337bee36cab99a7099a4d29b06dcb8299635b56165c2daedfe1e39a4b  20260606120001_auth_custom_claims.sql

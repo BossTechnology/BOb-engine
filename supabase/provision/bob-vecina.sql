@@ -18,4 +18,3 @@ $$;
 -- runs as bob_migrador. It calls public.bob_grant_projection (PR-4), postgres's,
 -- with EXECUTE revoked from PUBLIC. Without this the feeder fails with 42501 on
 -- the first new month. It goes when the helper moves into bob.
-GRANT EXECUTE ON FUNCTION public.bob_grant_projection(regclass) TO bob_migrador;
