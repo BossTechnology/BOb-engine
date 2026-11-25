@@ -6,7 +6,7 @@
 // Run by the operator with the migration owner's credential, never with the
 // service role:
 //
-//   set -a; . /opt/bzzz/secrets/bob/migrador.env; set +a
+//   set -a; . /opt/bob/secrets/migrador.env; set +a
 //   BOX_DB_URL=… node scripts/provision-user.mjs --tenant <bzzz.tenant> \
 //     --email person@example.com --role analyst            # dry: says what it would do
 //   … the same with --ejecutar                              # does it

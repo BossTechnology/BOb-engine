@@ -397,9 +397,9 @@ asks.
 |---|---|---|---|
 | `bzzz/supabase` | `JWT_SECRET`, `SERVICE_ROLE_KEY`, the database superuser | `/opt/bzzz/secrets/supabase.env` (exists) | The database and auth containers and the operator scripts. Not the migration step (§8, objection 6) |
 | none (new) | BOb's migration owner | `/opt/bob/secrets/migrador.env` | The migration step of §6.2, and nothing else |
-| `bzzz/supabase-ro` | `bob_ai_ro` login | `/opt/bzzz/secrets/bob/ai-ro.env` | The inference service |
-| `bzzz/apps` | `bob_app` login | `/opt/bzzz/secrets/bob/app.env` | The BOb container |
-| none (new) | `bob_feeder` login | `/opt/bzzz/secrets/bob/feeder.env` | The reference feeder first, then 3.7 (§3.1). From 2026-11-21 its container also runs the ghost reconciliation's ClickHouse read (Q6) |
+| `bzzz/supabase-ro` | `bob_ai_ro` login | `/opt/bob/secrets/ai-ro.env` | The inference service |
+| `bzzz/apps` | `bob_app` login | `/opt/bob/secrets/app.env` | The BOb container |
+| none (new) | `bob_feeder` login | `/opt/bob/secrets/feeder.env` | The reference feeder first, then 3.7 (§3.1). From 2026-11-21 its container also runs the ghost reconciliation's ClickHouse read (Q6) |
 
 - *2026-11-21 (Q6):* Henry moved the ghost reconciliation to the feeder
   container («El feeder»), and chose option (a) of §7, Q6, so the feeder
@@ -589,14 +589,22 @@ and checked from the running container, not on CI's 15. The stand-in keeps
 #450's names (`bob_migrador`, schema `bob`, `bob_app:10`, `bob_feeder:4`,
 `bob_ai_ro:0`), its order and its transaction.
 
-**What `bob.sql` holds.** #450 does not have it yet; it is
-`supabase/provision/bob.sql`, one line: `GRANT EXECUTE ON FUNCTION
-public.bob_grant_projection(regclass) TO bob_migrador`.
-`bob.proj_ensure_partition` is SECURITY DEFINER and, after the hand-over, runs
-as `bob_migrador`. It calls that helper (PR-4), which is `postgres`'s, with
-EXECUTE revoked from PUBLIC. Without the grant, the feeder fails with 42501 on
-the first new month (seen red in CI). The grant goes when the helper moves into
-`bob`, with the forward migration below.
+**What `bob.sql` holds.** It is Bzzz's `config/supabase/vecinas/bob.sql`
+(bzzz#450 at `7429eec`), and `supabase/provision/bob.sql` is a byte-for-byte
+copy. The O-3 check pins its sha256 and fails if the copy changes. A change
+goes to both and to the pinned hash. It holds one grant: `GRANT EXECUTE ON
+FUNCTION public.bob_grant_projection(regclass) TO bob_migrador`, inside a
+`DO` that checks `to_regprocedure` first, because on a new box the function
+does not exist until the chain is applied. `bob.conf` declares it as
+`FUERA=bob_migrador|function|public.bob_grant_projection(pg_catalog.regclass)|EXECUTE`.
+The alta applies it as `postgres`, after the two temporary permissions are
+revoked, and so does the stand-in.
+
+Why the grant is needed: `bob.proj_ensure_partition` is SECURITY DEFINER and,
+after the hand-over, runs as `bob_migrador`. It calls that helper (PR-4), which
+is `postgres`'s, with EXECUTE revoked from PUBLIC. Without the grant, the
+feeder fails with 42501 on the first new month (seen red in CI). The grant
+goes when the helper moves into `bob`, with the forward migration below.
 
 The footprint of `bob_migrador` outside `bob` must be exactly:
 - LOGIN and none of the other attributes, replication included;

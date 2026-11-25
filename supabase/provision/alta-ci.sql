@@ -42,9 +42,6 @@ BEGIN
 END
 $$;
 
--- bob.sql, as #450 reads config/supabase/vecinas/bob.sql at this point.
-\ir bob.sql
-
 -- The hand-over: everything in bob that is postgres's goes to bob_migrador;
 -- anything of another role stops it. Sequences owned by a column, indexes and
 -- row types follow their table.
@@ -86,4 +83,8 @@ $$;
 
 REVOKE CREATE ON DATABASE postgres FROM bob_migrador;
 REVOKE bob_migrador FROM postgres GRANTED BY postgres;
+
+-- bob.sql, where #450 reads config/supabase/vecinas/bob.sql: after the two
+-- temporary permissions are revoked.
+\ir bob.sql
 COMMIT;

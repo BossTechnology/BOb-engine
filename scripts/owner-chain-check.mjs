@@ -55,6 +55,14 @@ for (const c of [admin, sa]) c.on('notice', (n) => warnings.push(n.message))
 const files = readdirSync(dir).filter((f) => /^[0-9]+_.*\.sql$/.test(f)).sort()
 const sha = (f) => createHash('sha256').update(readFileSync(`${dir}/${f}`)).digest('hex')
 
+// supabase/provision/bob.sql is Bzzz's config/supabase/vecinas/bob.sql, byte for
+// byte (bzzz#450 at 7429eec, P5 §6.2). A change goes to both, and here.
+const BZZZ_BOB_SQL = { commit: '7429eec', sha256: 'ad9adf91d370fc008b4134c9a7d60646310f4b4560433655e677c1892b3f2605' }
+{
+  const h = createHash('sha256').update(readFileSync('supabase/provision/bob.sql')).digest('hex')
+  if (h !== BZZZ_BOB_SQL.sha256) findings.push(`supabase/provision/bob.sql (sha256 ${h}) is not Bzzz's config/supabase/vecinas/bob.sql at ${BZZZ_BOB_SQL.commit}: keep the two identical`)
+}
+
 // ── A · the install chain, and what was applied ────────────────────────────
 console.log('== A · the install chain')
 for (const [f, h] of Object.entries(INSTALL_CHAIN)) {
