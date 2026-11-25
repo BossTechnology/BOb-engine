@@ -32,6 +32,48 @@ import { readFileSync, readdirSync } from 'node:fs'
 // Measured on CI, run of 746cf98 onwards (see P5 §6.2). The remedy for each is
 // in the same section: none is a grant D77 allows.
 export const KNOWN_STOPS = {
+  '20260606120000_initial_schema.sql':
+    'creates in public, before the move to bob; also a trigger on auth.users, owned by supabase_auth_admin',
+  '20260606120001_auth_custom_claims.sql':
+    'creates in public, before the move to bob (custom_access_token_hook, which GoTrue calls by that name)',
+  '20260606120002_realtime.sql':
+    'adds tables to supabase_realtime, a publication postgres owns and the neighbours share',
+  '20260729130000_v3_config_persistence.sql':
+    'creates in public, before the move to bob',
+  '20260729150000_text_rule_responses.sql':
+    'creates in public, before the move to bob',
+  '20260829120000_fix_reserved_role_claim.sql':
+    'replaces public.custom_access_token_hook',
+  '20260830100000_autobotz_bindings.sql':
+    'creates in public, before the move to bob',
+  '20260902100000_autobotz_rename_and_align.sql':
+    'creates in public, before the move to bob',
+  '20260902100100_organizations_slug_shape.sql':
+    'creates in public, before the move to bob',
+  '20260902100200_channels_source_key.sql':
+    'creates in public, before the move to bob',
+  '20260902100300_roles_and_grants.sql':
+    'CREATE ROLE, which checks CREATEROLE before it sees the role already exists',
+  '20260903100000_actors.sql':
+    'creates in public, before the move to bob',
+  '20260903100100_channel_actor_mix.sql':
+    'creates in public, before the move to bob',
+  '20260903100200_actor_skills_and_shifts.sql':
+    'creates in public, before the move to bob',
+  '20260903100300_availability.sql':
+    'creates in public, before the move to bob',
+  '20261118100000_bob_schema.sql':
+    'CREATE SCHEMA IF NOT EXISTS bob, which checks CREATE on the database before it sees the schema',
+  '20261121100100_registry_verification_and_scope.sql':
+    'creates functions in public (public.bob_autobotz_*)',
+  '20261121100200_outbound_queue.sql':
+    'creates functions in public (public.bob_outbox_*)',
+  '20261121100300_outbox_admission_needs_verification.sql':
+    'replaces public.bob_outbox_admit',
+  '20261121130000_users_bob_app_access.sql':
+    'drops a trigger on auth.users, which only its owner may',
+  '20261121140000_member_refs_seen.sql':
+    'creates a function in public (public.bob_grant_feeder_staging)',
 }
 
 const adminUrl = process.env.ADMIN_URL
@@ -73,8 +115,6 @@ const EXPECTED_FOOTPRINT = [
   'member of: (none)',
   'schema auth: USAGE',
   'schema bob: owner',
-  'schema extensions: USAGE',
-  'schema graphql_public: USAGE',
   'schema public: USAGE',
 ]
 async function footprint(client) {
