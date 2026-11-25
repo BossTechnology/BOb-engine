@@ -3576,3 +3576,35 @@ directory with a clean environment, the state moved only after success. The
 sixth-review case was seen failing with the digest made to skip the new
 migration. Not measured: a real security key, and `caja` as root on a box.
 
+### O-3 · seventh independent review of PR #48, applied
+
+The review at `434d528` found nothing blocking. Henry decided when he signs:
+«Al instalar en la caja». The box always demands the signature; the CI check
+is informative («Install signature, informative (O-3)», never failing, never
+required); the only required O-3 check is «Chain applies as bob_migrador
+(O-3)». `firmar-instalacion.sh <commit> --base <commit>` now writes the
+approval for the box's `/opt/bob/aprobaciones/` and commits nothing.
+
+- **I1 · an approval cannot be revoked.** True. `caja` now shows the commit,
+  the pair and the log (non-printing characters removed) and installs only if
+  Henry types `instalo` at a terminal; and it refuses an approval of a digest
+  or pair listed in `/opt/bob/aprobaciones-revocadas` (root's, required).
+- **I2 · programs run as root from a PATH starting at `/usr/local`.** True
+  (on the reviewer's machine `/usr/local/bin` is not root's). The PATH now
+  puts system directories first, and every program `caja` or
+  `instalar-bob.sh` runs, where found, must be root's and not writable by
+  others along its whole path and through every link.
+- **I3.** `#!/bin/bash -p`, `bash -p` on every re-exec, and P5 says never
+  `SETENV` or `env_keep` in sudoers for this command: the connection settings
+  now go as `VAR=value` arguments, not through sudo's environment.
+- **Minor, all applied.** `transfer.fsckObjects` on the fetch, and
+  `git-upload-pack` as the caller through `setpriv` (`SUDO_UID`); the
+  connection files must be root's and not writable by others; a host starting
+  with `-` is refused; `flock` on `/opt/bob/.instalando` and old `trabajo.*`
+  removed; `instalar-bob.sh` checks it is root, in `/opt/bob/trabajo.*/arbol`,
+  root's, not only that a variable is set.
+
+Measured in `tests/install-approval.test.mjs` with `caja-prueba`. Not
+measured: `setpriv`, `flock` and `caja` as root on a box, and a real security
+key; ESTADO lists them as follow-ups.
+

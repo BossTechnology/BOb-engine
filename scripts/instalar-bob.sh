@@ -5,11 +5,12 @@
 #
 # On a box it runs only from root's copy of the commit Henry signed, never
 # from a checkout:
-#   sudo POSTGRES_ENV=… /opt/bob/bin/firma-instalacion caja <repo> <commit> cadena|resto
+#   sudo /opt/bob/bin/firma-instalacion caja <repo> <commit> cadena|resto POSTGRES_ENV=…
 # That copy of scripts/firma-instalacion.sh writes the commit's tree, from git
 # objects, into a directory of root's, checks that Henry signed its digest from
 # the state this box stands at, and runs this script from there, as root, with
-# a clean environment. Run any other way, this script refuses. Only CI skips
+# a clean environment, after Henry types «instalo». Run any other way (not
+# root, not in /opt/bob/trabajo.*/arbol), this script refuses. Only CI skips
 # that (INSTALAR_SIN_FIRMA=ci under GitHub Actions), on a stack it throws away.
 #
 # Three steps, in this order:
@@ -45,7 +46,7 @@
 # docker from the box, and from the signed tree only. No node, no pnpm.
 #
 # Connections. No password is ever on a command line, in the environment of a
-# process or a container, or printed. Each is read, with sudo, from a file of
+# process or a container, or printed. Each is read (as root, on a box) from a file of
 # KEY=value lines, by key (never sourced), into a pgpass file in a private
 # directory on tmpfs ($XDG_RUNTIME_DIR or /dev/shm; with neither, the script
 # stops), removed on exit:
@@ -65,14 +66,19 @@ case "$step" in cadena|resto) ;; *) echo "Usage: $0 cadena|resto" >&2; exit 2 ;;
 LIST=supabase/provision/install-chain.sha256
 SUDO=${SUDO-sudo}
 
-if [ -z "${BOB_FIRMA_VERIFICADA:-}" ]; then
-  if [ "${INSTALAR_SIN_FIRMA:-}" = ci ] && [ "${GITHUB_ACTIONS:-}" = true ]; then
-    echo "CI: Henry's signature is not checked here (a disposable stack)"
-  else
-    echo "Not run from a signed tree: nothing installed. On a box, as Henry (P5 §6.2):" >&2
-    echo "  sudo POSTGRES_ENV=… /opt/bob/bin/firma-instalacion caja <repo> <commit> $step" >&2
-    exit 2
-  fi
+# BOB_FIRMA_VERIFICADA alone proves nothing: on a box this must also be root,
+# in a tree caja wrote (/opt/bob/trabajo.*/arbol, root's).
+signed_tree() {
+  [ -n "${BOB_FIRMA_VERIFICADA:-}" ] && [ "$(id -u)" = 0 ] || return 1
+  case "$PWD" in /opt/bob/trabajo.*/arbol) ;; *) return 1 ;; esac
+  [ "$(stat -c '%u' . 2>/dev/null || stat -f '%u' .)" = 0 ]
+}
+if [ "${INSTALAR_SIN_FIRMA:-}" = ci ] && [ "${GITHUB_ACTIONS:-}" = true ]; then
+  echo "CI: Henry's signature is not checked here (a disposable stack)"
+elif ! signed_tree; then
+  echo "Not run from a signed tree: nothing installed. On a box, as Henry (P5 §6.2):" >&2
+  echo "  sudo /opt/bob/bin/firma-instalacion caja <repo> <commit> $step POSTGRES_ENV=…" >&2
+  exit 2
 fi
 
 priv=""

@@ -42,7 +42,7 @@ const STUB = [
   '#!/bin/sh',
   '# test stub: records where it ran, with what',
   '[ -n "$BOB_FIRMA_VERIFICADA" ] || exit 9',
-  'printf "%s\\n%s\\n%s\\n%s\\n" "$(pwd)" "$BOB_FIRMA_VERIFICADA" "${FOO-unset}" "$(cat marca.txt)" > "$HOME/ran"',
+  'printf "%s\\n%s\\n%s\\n%s\\n%s\\n" "$(pwd)" "$BOB_FIRMA_VERIFICADA" "${FOO-unset}" "$(cat marca.txt)" "${POSTGRES_HOST-unset}" > "$HOME/ran"',
   '[ ! -f falla ] || exit 3',
   '',
 ].join('\n')
@@ -136,18 +136,19 @@ describe('the verifier refuses', () => {
 describe('on a box', () => {
   // A box: <raiz> stands for /opt/bob. Its state is `prev`; the repository
   // holds an approval prev → digest, signed by the test key.
-  const box = ({ prev = 'a'.repeat(64), signers = `ci namespaces="bob-install-chain" ${PUB}\n` } = {}) => {
+  const box = ({ prev = 'a'.repeat(64), signers = `ci namespaces="bob-install-chain" ${PUB}\n`, revocadas = '# none\n' } = {}) => {
     const r = repo(); r.commit()
     const raiz = tmp('raiz-'); chmodSync(raiz, 0o755)
     writeFileSync(join(raiz, 'firmantes_instalacion'), signers); chmodSync(join(raiz, 'firmantes_instalacion'), 0o644)
     if (prev) { writeFileSync(join(raiz, 'instalacion-firmada'), prev + '\n'); chmodSync(join(raiz, 'instalacion-firmada'), 0o644) }
+    if (revocadas !== null) { writeFileSync(join(raiz, 'aprobaciones-revocadas'), revocadas); chmodSync(join(raiz, 'aprobaciones-revocadas'), 0o644) }
     const approve = (base, nueva = r.huella()) => {
       const a = `${A}/${base}-${nueva}.aprobacion`
       r.put(a, run(['mensaje', base, nueva]).stdout); sign(join(r.d, a)); return r.commit()
     }
-    const caja = (commit = r.git('rev-parse', 'HEAD'), env = {}) => {
+    const caja = (commit = r.git('rev-parse', 'HEAD'), { env = {}, args = [], input = 'instalo\n' } = {}) => {
       rmSync(join(raiz, 'ran'), { force: true })
-      const out = run(['caja-prueba', raiz, r.d, commit, 'resto'], { env: { ...process.env, FOO: '1', ...env } })
+      const out = run(['caja-prueba', raiz, r.d, commit, 'resto', ...args], { env: { ...process.env, FOO: '1', POSTGRES_HOST: 'from-env', ...env }, input })
       const ran = existsSync(join(raiz, 'ran')) ? readFileSync(join(raiz, 'ran'), 'utf8').split('\n') : null
       return { out, ran, state: existsSync(join(raiz, 'instalacion-firmada')) ? readFileSync(join(raiz, 'instalacion-firmada'), 'utf8').trim() : null }
     }
@@ -165,6 +166,8 @@ describe('on a box', () => {
     assert.equal(res.out.status, 0, res.out.stdout + res.out.stderr)
     assert.ok(res.ran[0].startsWith(join(b.raiz, 'trabajo.')), `ran from ${res.ran[0]}, not from the checkout`)
     assert.equal(res.ran[1], d); assert.equal(res.ran[2], 'unset', 'the caller\'s environment does not reach it'); assert.equal(res.ran[3], 'committed')
+    assert.equal(res.ran[4], 'unset', 'a connection setting in the environment does not reach it either')
+    assert.match(res.out.stdout, new RegExp(`commit ${b.r.git('rev-parse', 'HEAD')}\\nbase   a{64} \\(this box\\)\\nnueva  ${d}`), 'Henry sees the commit and the pair')
     assert.equal(res.state, d, 'the box now stands at the new digest')
     assert.deepEqual(readdirSync(b.raiz).filter((f) => f.startsWith('trabajo.')), [], 'the directory is removed')
     const again = b.caja(); assert.equal(again.out.status, 0, again.out.stderr); assert.equal(again.state, d, 'running it again is accepted')
@@ -232,12 +235,51 @@ describe('on a box', () => {
     const b = box(); b.approve('a'.repeat(64)); chmodSync(b.raiz, 0o777)
     refusedBefore(b.caja(), /writable by others/); b.done()
   })
-  test('a connection variable that is not a plain value: refused', () => {
+  test('connection settings go as arguments, each checked', () => {
     const b = box(); b.approve('a'.repeat(64))
-    refusedBefore(b.caja(undefined, { POSTGRES_HOST: 'x;touch /tmp/p' }), /POSTGRES_HOST refused/); b.done()
+    const okr = b.caja(undefined, { args: ['POSTGRES_HOST=db.example.com'] })
+    assert.equal(okr.out.status, 0, okr.out.stderr); assert.equal(okr.ran[4], 'db.example.com')
+    refusedBefore(b.caja(undefined, { args: ['POSTGRES_HOST=x;touch /tmp/p'] }), /POSTGRES_HOST refused/)
+    refusedBefore(b.caja(undefined, { args: ['POSTGRES_HOST=-oProxyCommand'] }), /POSTGRES_HOST refused/)
+    refusedBefore(b.caja(undefined, { args: ['BASH_ENV=/tmp/x'] }), /unknown setting/)
+    const env = join(b.raiz, 'pg.env'); writeFileSync(env, 'POSTGRES_PASSWORD=x\n'); chmodSync(env, 0o666)
+    refusedBefore(b.caja(undefined, { args: [`POSTGRES_ENV=${env}`] }), /writable by others/)
+    b.done()
+  })
+  test('not confirmed with «instalo»: nothing runs', () => {
+    const b = box(); b.approve('a'.repeat(64))
+    const res = b.caja(undefined, { input: 'yes\n' }); refusedBefore(res, /not confirmed/); assert.equal(res.state, 'a'.repeat(64))
+    b.done()
+  })
+  test('a revoked digest or pair: refused', () => {
+    const b1 = box(); const d1 = b1.r.huella(); b1.approve('a'.repeat(64))
+    writeFileSync(join(b1.raiz, 'aprobaciones-revocadas'), `${d1}  # PR rejected\n`)
+    refusedBefore(b1.caja(), /revoked/); b1.done()
+    const b2 = box(); const d2 = b2.r.huella(); b2.approve('a'.repeat(64))
+    writeFileSync(join(b2.raiz, 'aprobaciones-revocadas'), `${'a'.repeat(64)}-${d2}\n`)
+    refusedBefore(b2.caja(), /revoked/); b2.done()
+  })
+  test('no revocation list: refused, Henry makes it (empty) first', () => {
+    const b = box({ revocadas: null }); b.approve('a'.repeat(64)); refusedBefore(b.caja(), /aprobaciones-revocadas does not exist/); b.done()
+  })
+  test('an approval kept on the box, outside the tree, is accepted; one writable by others is not', () => {
+    const b = box(); const d = b.r.huella()
+    const dir = join(b.raiz, 'aprobaciones'); mkdirSync(dir, { mode: 0o755 })
+    const a = join(dir, `${'a'.repeat(64)}-${d}.aprobacion`)
+    writeFileSync(a, run(['mensaje', 'a'.repeat(64), d]).stdout); sign(a); chmodSync(a, 0o644); chmodSync(a + '.sig', 0o644)
+    const res = b.caja(); assert.equal(res.out.status, 0, res.out.stderr); assert.match(res.out.stdout, /approval in .*aprobaciones/)
+    writeFileSync(join(b.raiz, 'instalacion-firmada'), 'a'.repeat(64) + '\n')
+    chmodSync(a, 0o666); refusedBefore(b.caja(), /writable by others/)
+    b.done()
   })
   test('a commit that is not a full sha: refused', () => {
     const b = box(); b.approve('a'.repeat(64)); refusedBefore(b.caja('HEAD'), /full sha/); b.done()
+  })
+  test('a program not root\'s along its whole path: refused', () => {
+    const d = tmp('prog-'); writeFileSync(join(d, 'psql'), '#!/bin/sh\n'); chmodSync(join(d, 'psql'), 0o755)
+    const r = run(['herramienta', join(d, 'psql')]); assert.equal(r.status, 1); assert.match(r.stderr, /not owned by uid 0/)
+    assert.equal(run(['herramienta', '/bin/sh']).status, 0, 'a system program is accepted')
+    rmSync(d, { recursive: true })
   })
   test('caja proper needs root', () => {
     const r = run(['caja', '/x', '0'.repeat(40), 'resto'])
@@ -259,11 +301,12 @@ describe('the repository', () => {
     }
     assert.match(readFileSync(join(REPO_ROOT, '.github/CODEOWNERS'), 'utf8'), /^\*\s+@hdgarzon$/m)
   })
-  test('the approval workflow runs from main, on base changes too, and never checks out the PR', () => {
+  test('the signature workflow is informative: it runs from main, never checks out the PR, never fails', () => {
     const w = readFileSync(join(REPO_ROOT, '.github/workflows/install-approval.yml'), 'utf8')
     assert.match(w, /^on:\n {2}pull_request_target:\n {4}types: \[opened, synchronize, reopened, edited\]/m)
     assert.match(w, /ref: \$\{\{ github\.event\.pull_request\.base\.sha \}\}/)
-    assert.match(w, /\[ "\$BASE_REF" = main \]/)
+    assert.match(w, /name: Install signature, informative \(O-3\)/)
+    assert.doesNotMatch(w, /exit 1/)
     assert.doesNotMatch(w, /pull_request\.head\.(ref|repo)|github\.head_ref|actions\/setup-node|pnpm|npm /)
     assert.match(w, /permissions:\n {2}contents: read\n {2}pull-requests: read\n\n/)
     assert.match(w, /f=scripts\/firma-instalacion\.sh\n/)

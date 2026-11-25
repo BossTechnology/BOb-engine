@@ -548,7 +548,7 @@ file, mode 600, in a private directory on tmpfs (`$XDG_RUNTIME_DIR` or
 a password to disk. `POSTGRES_HOST` and `POSTGRES_PORT` say
 where; the URL given to the CLI carries no password.
 
-1. `sudo POSTGRES_ENV=… /opt/bob/bin/firma-instalacion caja <repo> <commit> cadena`. Pushes, as `postgres`, only
+1. `sudo /opt/bob/bin/firma-instalacion caja <repo> <commit> cadena POSTGRES_ENV=…`. Pushes, as `postgres`, only
    the files in `install-chain.sha256`, each checked against its hash, with
    `supabase db push --include-all` from a work directory. On lab-02, where
    they are applied, this is a no-op. `--include-all` covers a history that
@@ -570,7 +570,7 @@ where; the URL given to the CLI carries no password.
    works because on Postgres 16+ the creator of a role holds ADMIN on it.
    `supabase_admin` only grants USAGE on `auth` (77.22) and sets LOGIN and the
    password. The alta needs schema `bob` from step 1 to hand it over.
-3. `sudo POSTGRES_ENV=… /opt/bob/bin/firma-instalacion caja <repo> <commit> resto`. `bob_migrador`'s
+3. `sudo /opt/bob/bin/firma-instalacion caja <repo> <commit> resto POSTGRES_ENV=…`. `bob_migrador`'s
    connection comes from the alta's file, `/opt/bob/secrets/migrador.env`
    (`MIGRADOR_USUARIO`, `MIGRADOR_CLAVE`, `MIGRADOR_HOST`, `MIGRADOR_RED`). The
    script reads only those keys and never prints them. With
@@ -692,162 +692,157 @@ Not measured: what the hand-over changes for the other SECURITY DEFINER
 functions in `bob` on a box with data, beyond what they call. What `bob` opens
 to `anon`, `authenticated` or PUBLIC is still pending; nothing here watches it.
 
-What installs BOb changes only with Henry's signature (B2; Henry, «Firma con
-llave que pide toque»), and **a box installs only the tree that signature
-covers, read from git objects, never from a checkout**. Everything is in one
-self-contained script, `scripts/firma-instalacion.sh` (`huella`, `mensaje`,
-`verificar`, `caja`).
+A box installs only what Henry signed (B2; Henry, «Firma con llave que pide
+toque»). **He signs when he installs on the box** (Henry, «Al instalar en la
+caja»), not on each PR: the box always demands the signature, and the CI check
+is informative only. Everything is in one self-contained script,
+`scripts/firma-instalacion.sh` (`huella`, `mensaje`, `verificar`, `caja`).
 
 **What the signature covers: the whole tree.** A digest computed from git
 objects, never the working tree, the index or `.gitattributes`: one line per
 file, `mode path sha256` of the blob's bytes, sorted, then the sha256 of the
 lines. Every file of the commit counts except
-`supabase/provision/aprobaciones/`, where approvals go: migrations, scripts,
-`supabase/config.toml`, `package.json`, docs, everything. There is no list of
-what counts (sixth review: a list left `supabase/migrations/` out, and a new
-migration installed under an old approval). A symlink (120000), a submodule
-(160000), a path outside `[A-Za-z0-9_./-]` or with a `..`, `.` or `.git`
-component, anywhere in the tree, is refused. So every PR to `main` that
-changes anything needs Henry's signature.
+`supabase/provision/aprobaciones/`: migrations, scripts,
+`supabase/config.toml`, `package.json`, docs, everything (sixth review: a list
+left `supabase/migrations/` out). A symlink, a submodule, or a path outside
+`[A-Za-z0-9_./-]` or with a `..`, `.` or `.git` component is refused.
 
-**What Henry signs: the pair.** The text is
+**What Henry signs: the pair.**
 
 ```
 bob-install-chain 1
-base <digest of main>
-nueva <digest of the PR>
+base <digest of what the box runs>
+nueva <digest of what it will run>
 ```
 
-in `supabase/provision/aprobaciones/<base>-<nueva>.aprobacion`, with its
-signature in `<base>-<nueva>.aprobacion.sig`. Several approvals can reach one
-digest from different bases. Signing the pair means an old signature cannot
-bring back a state already signed once: a box only moves from where it stands.
+as `<base>-<nueva>.aprobacion` and its `.sig`. Signing the pair means an old
+signature cannot bring back a state already left: a box only moves from where
+it stands.
 
-**How Henry signs.** From a clean checkout of `main`, with the security key
-at hand:
+**How Henry signs, at install time.** On his machine, from a clean checkout
+of `main`, with the key at hand:
 
 ```
-scripts/firmar-instalacion.sh <pr-branch>    # FIRMA_LLAVE=~/.ssh/id_ed25519_sk by default
+scripts/firmar-instalacion.sh <commit-to-install> --base <commit-the-box-runs>
 ```
 
-It runs `main`'s copy of `firma-instalacion.sh` against the PR's ref, so the
-PR cannot change what computes the digest it is signed with. It shows the
-whole diff between `main` and the PR (no external diff, no textconv), and asks
-for `firmo` before the key is touched. Then it writes the `.aprobacion` in a
-temporary worktree of the PR branch, signs it with `ssh-keygen -Y sign -n
-bob-install-chain` (the touch and the PIN), commits both files and prints the
-push. The namespace is its own: **this key is not the one in Bzzz's
-`config/bob/firmantes_imagen`**, and a signature for one never verifies for
-the other. A later push, or `main` moving under the PR, needs a new signature.
+It runs `main`'s `firma-instalacion.sh` on both commits as git objects, shows
+the log and the whole diff between them (no external diff, no textconv), asks
+for `firmo`, and signs the pair with `ssh-keygen -Y sign -n bob-install-chain`
+(the touch and the PIN). It writes the two files into `./aprobacion/` and
+commits nothing. Henry copies them to the box's `/opt/bob/aprobaciones/`, as
+root. An approval may also be committed under `supabase/provision/aprobaciones/`;
+the box reads either. The namespace is its own: **this key is not the one in
+Bzzz's `config/bob/firmantes_imagen`**.
 
 **On the box: the protection.** Once, as root, from a commit Henry has
-reviewed (the state file holds the digest of what the box already runs; for
-the first install with this, the `base` of the approval Henry means to
-install, which he reads in that `.aprobacion`):
+reviewed:
 
 ```
-sudo install -d -o root -g root -m 755 /opt/bob /opt/bob/bin
+sudo install -d -o root -g root -m 755 /opt/bob /opt/bob/bin /opt/bob/aprobaciones
 sudo install -o root -g root -m 755 scripts/firma-instalacion.sh /opt/bob/bin/firma-instalacion
 sudo install -o root -g root -m 644 supabase/provision/firmantes_instalacion /opt/bob/firmantes_instalacion
+sudo install -o root -g root -m 644 /dev/null /opt/bob/aprobaciones-revocadas
 echo <digest> | sudo tee /opt/bob/instalacion-firmada && sudo chmod 644 /opt/bob/instalacion-firmada
 ```
 
-Then every install goes, as root, through that copy, with the commit Henry
-reviewed (`git rev-parse HEAD` in his checkout):
+`instalacion-firmada` holds the digest of what the box runs today
+(`scripts/firma-instalacion.sh huella <that commit>`). **Never give this
+command `SETENV` or `env_keep` in sudoers**: the connection settings go as
+arguments. Every install:
 
 ```
-sudo POSTGRES_ENV=… /opt/bob/bin/firma-instalacion caja <repo> <commit> cadena
-sudo POSTGRES_ENV=… /opt/bob/bin/firma-instalacion caja <repo> <commit> resto
+sudo /opt/bob/bin/firma-instalacion caja <repo> <commit> cadena POSTGRES_ENV=/opt/bob/secrets/postgres.env
+sudo /opt/bob/bin/firma-instalacion caja <repo> <commit> resto  POSTGRES_ENV=/opt/bob/secrets/postgres.env
 ```
 
 It:
-1. re-runs itself under `env -i` with a fixed `PATH`, `HOME=/root` and only
-   `POSTGRES_ENV`, `POSTGRES_HOST`, `POSTGRES_PORT`, `MIGRADOR_ENV` and
-   `MIGRADOR_PUERTO`, each checked to be a plain path, host or port, and
-   refuses any other variable it finds;
-2. refuses unless `/opt`, `/opt/bob`, `/opt/bob/bin`, itself, the signers
-   file and the state file are root's and writable by nobody else, and the
-   state file holds one digest. A missing state file is refused: Henry
-   writes it;
-3. fetches the commit, by its sha, into a new repository of root's (index-pack
-   checks every object) and writes its tree, byte for byte from the blobs,
-   into a directory of root's, 700. git runs with no fsmonitor, no hooks, no
-   untracked cache, and every exit status checked. Nothing reads the
-   checkout's working tree, index or attributes, so a modified file, a
-   `skip-worktree` file, a corrupt index, `eol=crlf` or a `core.fsmonitor`
-   hook change nothing (sixth review, each measured);
-4. needs `aprobaciones/<this box's state>-<digest>.aprobacion` (or, when the
-   box already stands at the digest, any approval of it) holding exactly that
-   pair, signed by a key in `/opt/bob/firmantes_instalacion`;
-5. for `cadena`, needs the `supabase` CLI to be the version CI pins
-   (`SUPABASE_CLI_VERSION`, 2.120.0 today, read from the signed tree);
-6. runs `instalar-bob.sh` from that directory, as root, and only if it ends
+1. re-runs itself under `env -i` and `bash -p`, with a fixed `PATH` (system
+   directories first) and `HOME=/root`, and only `POSTGRES_ENV`,
+   `POSTGRES_HOST`, `POSTGRES_PORT`, `MIGRADOR_ENV` and `MIGRADOR_PUERTO`,
+   given as `VAR=value` arguments, each checked (a path, a host not starting
+   with `-`, a port); any other is refused;
+2. refuses unless these are root's and writable by nobody else: `/opt`,
+   `/opt/bob`, `/opt/bob/bin`, itself, the signers file, the revocation list,
+   the state file, `/opt/bob/aprobaciones/` and each approval in it, the
+   connection files, and every program it or `instalar-bob.sh` runs (`git`,
+   `ssh-keygen`, `psql`, `docker`, `supabase` and the rest), along its whole
+   path and through every link;
+3. takes a lock (`flock` on `/opt/bob/.instalando`) and removes work
+   directories an interrupted run left;
+4. fetches the commit by its sha into a new repository of root's, with
+   `transfer.fsckObjects` and `git-upload-pack` running as the caller
+   (`setpriv`, from `SUDO_UID`), and writes its tree byte for byte from the
+   blobs into a directory of root's, 700. Nothing reads the checkout's working
+   tree, index, attributes, hooks or fsmonitor;
+5. needs `<this box's state>-<digest>.aprobacion` (or, when the box already
+   stands at the digest, any approval of it) holding exactly that pair, not
+   revoked, signed by a key in `/opt/bob/firmantes_instalacion`;
+6. for `cadena`, needs the `supabase` CLI to be the version CI pins
+   (`SUPABASE_CLI_VERSION`, read from the signed tree);
+7. shows the commit, the pair and the commit's log (non-printing characters
+   removed), and installs only if Henry, at a terminal, types `instalo`;
+8. runs `instalar-bob.sh` from that directory, as root, and only if it ends
    well writes the new digest as the box's state. The directory is removed.
 
-Run any other way, `instalar-bob.sh` refuses. Changing the signers on a box is
-root's step, outside the repository.
+`instalar-bob.sh` refuses unless it runs as root in `/opt/bob/trabajo.*/arbol`,
+root's, with `BOB_FIRMA_VERIFICADA` set; only CI skips that, on a stack it
+throws away.
+
+**Withdrawing an approval.** A signed approval cannot be taken back from
+wherever it was copied. Two stops: Henry types `instalo` only after reading
+what is shown, and `/opt/bob/aprobaciones-revocadas` (root's) lists digests or
+`<base>-<nueva>` pairs, one per line, `#` for comments; an approval of a listed
+digest or pair is refused. When a signed change is abandoned, Henry adds it
+there on every box.
 
 **The verifier**, the same in CI and on the box, accepts only
 `sk-ssh-ed25519@openssh.com` or `sk-ecdsa-sha2-nistp256@openssh.com` keys
 bound to `namespaces="bob-install-chain"`, with `verify-required`, never
 `no-touch-required` and never `cert-authority`; the verify output must name an
-`-SK` key. No key, or any doubt, fails. `sk-` says the key claims a security
-key; it does not prove hardware. FIDO attestation is not verified here. To
-keep that proof, generate the key with `ssh-keygen -t ed25519-sk -O
-verify-required -O write-attestation=<file>` and keep the attestation with
-the key's record.
+`-SK` key. No key, or any doubt, fails. `sk-` does not prove hardware, and
+FIDO attestation is not verified here; to keep that proof, generate the key
+with `ssh-keygen -t ed25519-sk -O verify-required -O write-attestation=<file>`.
 
-**How CI checks it: the early warning.**
-`.github/workflows/install-approval.yml`, job "What installs BOb is signed by
-Henry (O-3)", runs on `pull_request_target` for `opened`, `synchronize`,
-`reopened` and `edited` (a base change), and fails if the base is not `main`.
-The workflow, the script and the signers file come from `main`; the PR is
-fetched as git objects, checked against the head sha, and read as data,
-never checked out or run. It compares digests, and when they differ it needs
-`<base>-<new>.aprobacion` to hold that pair and its `.sig` to verify. The token
-is read-only. A CI check can be spoofed (another workflow with a job of the
-same name, a base swap between runs, an admin merge); that is why the box
-checks again.
+**CI: informative.** `.github/workflows/install-approval.yml`, job "Install
+signature, informative (O-3)", runs from `main` on `pull_request_target`,
+reads the PR as git objects only, and says whether the PR's tree carries an
+approval from `main`'s digest and whether it verifies. It always passes and is
+never required: ordinary PRs need no key.
 
 **Bootstrap: Henry's key.** Henry's public key goes in
-`supabase/provision/firmantes_instalacion` **in #48 itself**, as one line,
-from his own machine:
+`supabase/provision/firmantes_instalacion` **in #48 itself**, from his own
+machine:
 
 ```
 henry namespaces="bob-install-chain",verify-required sk-ssh-ed25519@openssh.com AAAA…
 ```
 
 He checks the fingerprint (`ssh-keygen -lf`) against the one the physical key
-shows when it signs, before the merge. Once `main` has an empty file, adding
-the key is itself a change nobody can sign; only an admin merge would get out
-of that. Later key changes go in a PR that holds only that change, signed by a
-key already listed. Until then the file holds no key and every check fails
-closed. Then make "What installs BOb is signed by Henry (O-3)" a required
-check. The workflow is not on `main` yet, so it does not run on #48; its
-first run is on the next PR.
+shows when it signs. Each box takes its copy at bootstrap; a later key change
+is a new copy installed by root.
 
 Measured without a database (`tests/install-approval.test.mjs`), with
 `caja-prueba`: the same code as `caja`, never as root, with a directory for
-`/opt/bob` and any listed key accepted, so tests can sign. Measured: the
-digest moves with any file, a new migration included, and not with an
-approval, the working tree, the index or `.gitattributes`; the verifier's
-refusals; the box runs the committed tree from its own directory with a clean
-environment, refuses a new unsigned migration, a replayed approval, a wrong
-text, an unlisted signer, a missing state, writable signers or root, an odd
-variable, and moves its state only after an install that ends well; a
-modified file, `skip-worktree`, a corrupt index and an fsmonitor hook change
-nothing. Not measured: a good signature by a real security key, and `caja` as
-root on a box. Henry's first signature, and his first install with it, are
-those measurements.
+`/opt/bob`, any listed key accepted, the system `PATH` only, and no lock or
+`setpriv`. Measured: the digest's cover and refusals; the verifier's refusals;
+the box runs the committed tree from its own directory with a clean
+environment and the settings given as arguments; it refuses a new unsigned
+migration, a replayed or revoked approval, a wrong text, an unlisted signer,
+no confirmation, a missing state or revocation list, writable signers, root,
+approvals or connection files, an odd setting; a program not root's is
+refused; the state moves only after success; a modified file,
+`skip-worktree`, a corrupt index and an fsmonitor hook change nothing. Not
+measured: a real security key, `caja` as root on a box, `setpriv` and
+`flock`. Henry's first install is that measurement.
 
-`.github/CODEOWNERS` puts the whole repository under Henry: his signature
-covers all of it. **Making code-owner review required is Henry's setting in
-branch protection.** The workflow tokens are read-only.
+`.github/CODEOWNERS` puts the whole repository under Henry. **Making
+code-owner review required is Henry's setting in branch protection.**
 
 The guard: the CI job "Chain applies as bob_migrador (O-3)", on
 `supabase/postgres:17.6.1.136`, **still to be made a required check by
-Henry**. Today `main` requires the other four. They fail if:
-- what installs BOb changes without Henry's signature (in its own workflow);
+Henry**; it is the only O-3 check to require. Today `main` requires the other
+four. They fail if:
 - `instalar-bob.sh` stops: an install file is edited, `postgres` cannot push
   the chain, the provisioning fails, or a later migration does not apply as
   `bob_migrador`, whatever its date;

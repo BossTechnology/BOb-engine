@@ -1,20 +1,18 @@
-name: Install approval
+name: Install signature
 
-# O-3 (P5 §6.2). What installs BOb on a box changes only with Henry's signature,
-# made with a security key that must be touched, over the pair base → new of
-# the digest scripts/firma-instalacion.sh computes over the whole tree.
+# O-3 (P5 §6.2). Informative, never required. Henry signs when he installs on
+# a box («Al instalar en la caja»), and the box always demands it: root's copy
+# of firma-instalacion.sh writes the commit's tree into a directory of root's,
+# checks the signature there against signers kept outside the repository, and
+# runs instalar-bob.sh from that directory. Ordinary PRs need no key.
 #
-# This is the early warning. What protects a box is the box: root's copy of
-# firma-instalacion.sh writes the signed commit's tree into a directory of
-# root's, checks the same signature there against signers kept outside the
-# repository, and runs instalar-bob.sh from that directory. A check here
-# can be dodged (another workflow with a job of the same name, an admin merge),
-# a box cannot.
+# This job only says whether the PR's tree already carries an approval from
+# main's digest, and whether it verifies. It always passes; a bad approval is
+# a warning.
 #
 # pull_request_target: this workflow, its script and the signers file come from
-# main, so a PR cannot edit away the check that judges it. The PR is fetched as
-# git objects and read as data; nothing of it is checked out or run. The token
-# is read-only. edited re-runs it when the PR's base changes.
+# main. The PR is fetched as git objects and read as data; nothing of it is
+# checked out or run. The token is read-only.
 on:
   pull_request_target:
     types: [opened, synchronize, reopened, edited]
@@ -25,32 +23,33 @@ permissions:
 
 jobs:
   signed:
-    name: What installs BOb is signed by Henry (O-3)
+    name: Install signature, informative (O-3)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
-      - name: Compare with main, and verify the signature when it changed
+      - name: Compare with main, and verify an approval if the PR carries one
         env:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR: ${{ github.event.pull_request.number }}
         run: |
-          [ "$BASE_REF" = main ] || { echo "::error::This PR targets $BASE_REF, not main: what installs BOb is judged against main only."; exit 1; }
+          [ "$BASE_REF" = main ] || { echo "::notice::This PR targets $BASE_REF, not main: not compared."; exit 0; }
           git fetch -q --no-tags origin "+refs/pull/$PR/head:refs/bob/pr"
-          [ "$(git rev-parse refs/bob/pr)" = "$HEAD_SHA" ] || { echo "::error::The PR moved while this ran: re-run."; exit 1; }
+          [ "$(git rev-parse refs/bob/pr)" = "$HEAD_SHA" ] || { echo "::notice::The PR moved while this ran."; exit 0; }
           f=scripts/firma-instalacion.sh
           base=$("$f" huella "$BASE_SHA" .)
-          new=$("$f" huella "$HEAD_SHA" .)
+          new=$("$f" huella "$HEAD_SHA" .) || { echo "::warning::The PR's tree is refused by the digest (a symlink, a submodule or an odd path): no box would install it."; exit 0; }
           if [ "$base" = "$new" ]; then echo "nothing that installs BOb changed ($new)"; exit 0; fi
           echo "what installs BOb changed: $base → $new"
-          "$f" huella "$HEAD_SHA" . --lista
           a="supabase/provision/aprobaciones/$base-$new.aprobacion"
-          git show "$HEAD_SHA:$a" > "$RUNNER_TEMP/msg" 2>/dev/null && git show "$HEAD_SHA:$a.sig" > "$RUNNER_TEMP/sig" 2>/dev/null \
-            || { echo "::error::$a and its .sig are not in the PR. Henry signs with scripts/firmar-instalacion.sh, from main, after the last push (P5 §6.2)."; exit 1; }
+          if ! { git show "$HEAD_SHA:$a" > "$RUNNER_TEMP/msg" 2>/dev/null && git show "$HEAD_SHA:$a.sig" > "$RUNNER_TEMP/sig" 2>/dev/null; }; then
+            echo "::notice::Not signed in the tree. Henry signs when he installs it on a box (P5 §6.2)."; exit 0
+          fi
           cmp -s "$RUNNER_TEMP/msg" <("$f" mensaje "$base" "$new") \
-            || { echo "::error::$a does not approve $base → $new (main moved, or an old approval): Henry signs again."; exit 1; }
-          "$f" verificar supabase/provision/firmantes_instalacion "$RUNNER_TEMP/msg" "$RUNNER_TEMP/sig"
+            || { echo "::warning::$a does not hold the pair $base → $new."; exit 0; }
+          "$f" verificar supabase/provision/firmantes_instalacion "$RUNNER_TEMP/msg" "$RUNNER_TEMP/sig" \
+            || echo "::warning::$a does not verify against main's signers: a box would refuse it."
