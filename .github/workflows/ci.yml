@@ -7,12 +7,13 @@ on:
 
 # ID-12 — a tenancy failure is a build-blocking defect, not a bug.
 #
-# ALL FOUR JOBS BELOW MUST BE REQUIRED STATUS CHECKS on the protected branch:
+# ALL FIVE JOBS BELOW MUST BE REQUIRED STATUS CHECKS on the protected branch:
 #
 #   Migrations apply from an empty database
 #   Tenancy (build-blocking · ID-10 to ID-12)
 #   Contracts, schema and naming
 #   Availability (FR-20 to FR-23)
+#   Chain applies as bob_migrador (O-3)
 #
 # Lint and build joins this list when an application layer exists. The setting
 # lives in branch protection, not here, and is the one part of ID-12 a workflow
@@ -167,7 +168,7 @@ jobs:
   # O-3 (D77), diagnostic: the chain applied as bob_migrador, not postgres,
   # over a Supabase database with no BOb in it. Lists every place it stops.
   owner-chain-probe:
-    name: O-3 probe · the chain as bob_migrador
+    name: Chain applies as bob_migrador (O-3)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5

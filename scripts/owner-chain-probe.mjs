@@ -61,11 +61,19 @@ for (const f of readdirSync(dir).filter((f) => /^\d{14}_.*\.sql$/.test(f)).sort(
   const sql = readFileSync(`${dir}/${f}`, 'utf8')
   try {
     await owner.query('BEGIN'); await owner.query(sql); await owner.query('COMMIT'); applied++
+    console.log(`ok   ${f}`)
   } catch (e) {
     await owner.query('ROLLBACK')
-    blockers.push({ migration: f, code: e.code, message: e.message, where: (e.where || '').split('\n')[0] })
+    const b = { migration: f, code: e.code, message: e.message, where: (e.where || '').split('\n')[0] }
+    blockers.push(b)
+    console.log(`STOP ${f}\n    ${b.code} ${b.message}${b.where ? `\n    at ${b.where}` : ''}`)
     const before = new Set((await admin.query(OWNED)).rows.map(key))
-    await admin.query('BEGIN'); await admin.query(sql)
+    await admin.query('BEGIN')
+    try { await admin.query(sql) } catch (err) {
+      await admin.query('ROLLBACK')
+      console.log(`    and postgres cannot apply it either: ${err.code} ${err.message}; the probe ends here`)
+      break
+    }
     const fresh = (await admin.query(OWNED)).rows.filter((r) => !before.has(key(r)))
     for (const r of fresh) {
       const kind = r.kind === 'TABLE'
