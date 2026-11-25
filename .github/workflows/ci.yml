@@ -15,6 +15,9 @@ on:
 #   Availability (FR-20 to FR-23)
 #   Chain applies as bob_migrador (O-3)
 #
+# Today main requires the first four. "Chain applies as bob_migrador (O-3)" is
+# still to be made required by Henry, in branch protection.
+#
 # Lint and build joins this list when an application layer exists. The setting
 # lives in branch protection, not here, and is the one part of ID-12 a workflow
 # file cannot assert about itself.
@@ -165,9 +168,10 @@ jobs:
           SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
         run: pnpm run test:availability
 
-  # O-3 (D77 §2.8): the chain applied by its own owner, bob_migrador, not by
-  # postgres, over a Supabase database with no BOb in it. See
-  # scripts/owner-chain-check.mjs and P5 §6.2.
+  # O-3 (D77 §2.8): postgres applies the install chain once, the provisioning
+  # hands bob to bob_migrador, and every later migration applies as it, over a
+  # Supabase database with no BOb in it. See scripts/owner-chain-check.mjs and
+  # P5 §6.2.
   owner-chain-probe:
     name: Chain applies as bob_migrador (O-3)
     runs-on: ubuntu-latest
