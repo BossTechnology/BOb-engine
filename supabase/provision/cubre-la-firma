@@ -1,11 +1,21 @@
-# What Henry's signature covers besides supabase/provision/ itself (O-3, P5 §6.2;
-# scripts/huella-instalacion.mjs). One path per line. This file is under
-# supabase/provision/, so changing it needs a signature too.
+# What Henry's signature covers besides supabase/provision/ itself and any
+# tracked node_modules/ (O-3, P5 §6.2; scripts/firma-instalacion.sh). One file
+# per line, never a directory. Absent files count as absent, so adding one
+# later changes the digest. This list is under supabase/provision/, so changing
+# it needs a signature too. Each path must also be in .github/CODEOWNERS.
+#
+# What runs on a box, or decides what runs:
 scripts/instalar-bob.sh
-scripts/aplicar-migraciones.mjs
-scripts/owner-chain-check.mjs
-scripts/huella-instalacion.mjs
-scripts/verificar-firma-instalacion.sh
+scripts/firma-instalacion.sh
+supabase/config.toml
+# What Henry runs to sign, and what checks it in CI:
 scripts/firmar-instalacion.sh
+scripts/owner-chain-check.mjs
 .github/workflows/install-approval.yml
 .github/CODEOWNERS
+# What a package manager would run, if one ever ran here:
+package.json
+pnpm-lock.yaml
+pnpm-workspace.yaml
+.npmrc
+.pnpmfile.cjs

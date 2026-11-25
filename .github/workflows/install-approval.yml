@@ -1,16 +1,22 @@
 name: Install approval
 
-# O-3 (P5 §6.2). What installs BOb on a box (supabase/provision/, and what
-# supabase/provision/cubre-la-firma lists) changes only with Henry's signature
-# over its digest, made with a security key that must be touched.
+# O-3 (P5 §6.2). What installs BOb on a box changes only with Henry's signature,
+# made with a security key that must be touched, over the pair base → new of
+# the digest scripts/firma-instalacion.sh computes.
 #
-# pull_request_target: this workflow, its scripts and the signers file come from
-# main, so a PR cannot edit away the check that judges it. The PR's code is
-# never checked out or run: its files are read through the API as data, to
-# compute the digest and fetch the signature. The token is read-only.
+# This is the early warning. What protects a box is the box: instalar-bob.sh
+# runs only after root's copy of firma-instalacion.sh has checked the same
+# signature there, against signers kept outside the repository. A check here
+# can be dodged (another workflow with a job of the same name, an admin merge),
+# a box cannot.
+#
+# pull_request_target: this workflow, its script and the signers file come from
+# main, so a PR cannot edit away the check that judges it. The PR is fetched as
+# git objects and read as data; nothing of it is checked out or run. The token
+# is read-only. edited re-runs it when the PR's base changes.
 on:
   pull_request_target:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, edited]
 
 permissions:
   contents: read
@@ -25,23 +31,25 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
-      - uses: actions/setup-node@v5
-        with:
-          node-version: '22'
       - name: Compare with main, and verify the signature when it changed
         env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR: ${{ github.event.pull_request.number }}
         run: |
-          base=$(node scripts/huella-instalacion.mjs --github "$REPO" "$BASE_SHA")
-          head=$(node scripts/huella-instalacion.mjs --github "$REPO" "$HEAD_SHA")
-          if [ "$base" = "$head" ]; then echo "nothing that installs BOb changed ($head)"; exit 0; fi
-          echo "what installs BOb changed: digest $head (main: $base)"
-          sig="$RUNNER_TEMP/firma.sig"
-          if ! node scripts/huella-instalacion.mjs --github "$REPO" "$HEAD_SHA" --file "supabase/provision/aprobaciones/$head.sig" > "$sig"; then
-            echo "::error::What installs BOb changed and supabase/provision/aprobaciones/$head.sig is not in the PR. Henry signs it with scripts/firmar-instalacion.sh after the last push (P5 §6.2)."
-            exit 1
-          fi
-          scripts/verificar-firma-instalacion.sh supabase/provision/firmantes_instalacion "$head" "$sig"
+          [ "$BASE_REF" = main ] || { echo "::error::This PR targets $BASE_REF, not main: what installs BOb is judged against main only."; exit 1; }
+          git fetch -q --no-tags origin "+refs/pull/$PR/head:refs/bob/pr"
+          [ "$(git rev-parse refs/bob/pr)" = "$HEAD_SHA" ] || { echo "::error::The PR moved while this ran: re-run."; exit 1; }
+          f=scripts/firma-instalacion.sh
+          base=$("$f" huella "$BASE_SHA" .)
+          new=$("$f" huella "$HEAD_SHA" .)
+          if [ "$base" = "$new" ]; then echo "nothing that installs BOb changed ($new)"; exit 0; fi
+          echo "what installs BOb changed: $base → $new"
+          "$f" huella "$HEAD_SHA" . --lista
+          a="supabase/provision/aprobaciones/$new.aprobacion"
+          git show "$HEAD_SHA:$a" > "$RUNNER_TEMP/msg" 2>/dev/null && git show "$HEAD_SHA:$a.sig" > "$RUNNER_TEMP/sig" 2>/dev/null \
+            || { echo "::error::$a and its .sig are not in the PR. Henry signs with scripts/firmar-instalacion.sh, from main, after the last push (P5 §6.2)."; exit 1; }
+          cmp -s "$RUNNER_TEMP/msg" <("$f" mensaje "$base" "$new") \
+            || { echo "::error::$a does not approve $base → $new (main moved, or an old approval): Henry signs again."; exit 1; }
+          "$f" verificar supabase/provision/firmantes_instalacion "$RUNNER_TEMP/msg" "$RUNNER_TEMP/sig"

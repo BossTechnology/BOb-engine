@@ -3482,3 +3482,52 @@ four further points. Each was verified first.
   an unlisted signer. Not measured: a good signature by a real security key.
   Henry's key goes into `firmantes_instalacion` in #48 itself, since with an
   empty file on `main` nobody could sign its addition.
+
+### O-3 · fifth independent review of PR #48, applied
+
+The review at `0031b6a` found two blockers and four further points. Each was
+verified first.
+
+- **B2-1 · the digest did not cover code the box ran.** True. `resto` ran
+  node with `pg` from `node_modules` after `pnpm install`, and neither
+  `package.json` (a `preinstall` runs at install), the lockfile nor
+  `supabase/config.toml` was covered. Fixed by removing what ran uncovered:
+  `resto` applies each file with `psql -c` (one simple query, no metacommand,
+  measured), with no node and no pnpm on the box; `aplicar-migraciones.mjs`,
+  `huella-instalacion.mjs` and `NODE_IMAGE` are gone. The digest now covers
+  `package.json`, `pnpm-lock.yaml`, `.npmrc`, `pnpm-workspace.yaml`,
+  `.pnpmfile.cjs`, `supabase/config.toml` and every tracked `node_modules/`
+  file, by mode, path and sha256. A directory in `cubre-la-firma`, a symlink
+  and a submodule are refused. The record in `bob.schema_migrations` holds
+  the file's sha256 instead of its text.
+- **B2-2 · the signature was checked only in CI.** True, and CI can be
+  spoofed. Now root's copy of `scripts/firma-instalacion.sh`
+  (`/opt/bob/bin/firma-instalacion caja`) checks it on the box before
+  anything runs, against `/opt/bob/firmantes_instalacion` (root's, 644), with
+  the digest it computes itself; a dirty checkout or a missing signature
+  installs nothing. `instalar-bob.sh` run directly hands itself to that copy.
+  CI adds `edited` and `synchronize` and fails if the base is not `main`.
+- **I-a · replay.** Henry signs the pair base → new, and the box keeps its
+  last signed state (`/opt/bob/instalacion-firmada`); an approval whose base
+  is not that state is refused.
+- **I-b · how Henry signs.** `scripts/firmar-instalacion.sh <branch>` runs
+  from a clean `main`, computes both digests with `main`'s script against the
+  PR's ref, shows the diff of what is covered, asks before the touch, and
+  signs in its own namespace (`bob-install-chain`). The key is not the one in
+  `firmantes_imagen`.
+- **I-c · bootstrap.** Documented in P5 §6.2: the key goes in #48 (later,
+  in a PR with only that change), Henry checks the fingerprint against the
+  physical key; `sk-` does not prove hardware, and FIDO attestation is not
+  verified here (`-O write-attestation` keeps the proof).
+- **I-d · the transaction check can be dodged.** True. The promise is
+  lowered: a file that ends the transaction is detected and reported, not
+  prevented. Comments, P5 and the CI bank say so.
+- **Minor.** `huella-instalacion.mjs`'s `argv[1]` guard is gone with the
+  file.
+
+Measured in `tests/install-approval.test.mjs`, without a database: each
+digest case, each refusal of the verifier, and `caja` refusing a dirty
+checkout, a missing or foreign approval and signers that are not root's,
+with nothing run. Not measured: a good signature by a real security key, and
+`caja` on a real box.
+

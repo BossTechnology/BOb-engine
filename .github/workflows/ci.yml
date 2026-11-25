@@ -185,6 +185,10 @@ jobs:
   owner-chain-probe:
     name: Chain applies as bob_migrador (O-3)
     runs-on: ubuntu-latest
+    # A disposable stack: instalar-bob.sh skips Henry's signature here, and only
+    # here (P5 §6.2). On a box, root's firma-instalacion checks it first.
+    env:
+      INSTALAR_SIN_FIRMA: ci
     steps:
       - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v6
@@ -247,9 +251,11 @@ jobs:
       # never reach it: good files apply and are recorded in bob.schema_migrations
       # in one transaction; a failing one leaves neither; a backslash anywhere is
       # refused before anything is sent, so \! never runs, whatever quoting or
-      # comment surrounds it; a file that ends the transaction itself, however
-      # it is written, is caught and not recorded, and nothing after its end
-      # writes. Then resto and cadena run again and change nothing.
+      # comment surrounds it; a COMMIT, END or ROLLBACK written into a file is
+      # detected and reported, the file is not recorded, and nothing after it
+      # writes. Detected, not prevented: what ran before it stays, and a file
+      # written to dodge the check can (P5 §6.2). psql -c is shown not to read
+      # metacommands. Then resto and cadena run again and change nothing.
       - name: resto applies a file whole or not at all
         env:
           POSTGRES_ENV: ${{ runner.temp }}/postgres.env
@@ -278,8 +284,8 @@ jobs:
           scripts/instalar-bob.sh resto
           [ "$(recorded 99990101000001)$(recorded 99990101000002)" = 11 ] || { echo "::error::the good samples are not recorded"; exit 1; }
           ok "SELECT to_regclass('bob.ci_resto_bare') IS NOT NULL AND to_regclass('bob.ci_resto_wrapped') IS NOT NULL" "the good samples did not apply"
-          ok "SELECT statements = :'body' || chr(10) FROM bob.schema_migrations WHERE version = '99990101000002'" \
-            "the record does not hold the file" -v body="$(cat $m/99990101000002_ci_resto_wrapped.sql)"
+          ok "SELECT sha256 = '$(sha256sum < $m/99990101000002_ci_resto_wrapped.sql | cut -d' ' -f1)' FROM bob.schema_migrations WHERE version = '99990101000002'" \
+            "the record does not hold the file's sha256"
           # Each bad sample alone: resto must fail, record nothing, run no shell,
           # and leave its "after" table unmade.
           bad() {
@@ -305,6 +311,10 @@ jobs:
           bad 99990101000009 "END WORK;" "SELECT 1;\nEND WORK;\nCREATE TABLE bob.ci_after_99990101000009 (id int);\n"
           bad 99990101000010 "ROLLBACK;" "SELECT 1;\nROLLBACK;\nCREATE TABLE bob.ci_after_99990101000010 (id int);\n"
           bad 99990101000011 "a COMMIT as the file's last statement" "CREATE TABLE bob.ci_before_11 (id int);\nCOMMIT;\n"
+          # psql -c sends its argument to the server as it is: no metacommand.
+          if psql "$MIG_URL" -X -q -c "SELECT 1; \\! touch $shell" 2>/dev/null; then echo "::error::psql -c took a metacommand line as SQL and succeeded"; exit 1; fi
+          [ ! -e "$shell" ] || { echo "::error::psql -c ran a shell"; exit 1; }
+          echo "psql -c does not run \\!: measured"
           # What a COMMIT inside a file had already run stays: detection, said in the failure.
           ok "SELECT to_regclass('bob.ci_before_6') IS NOT NULL" "measured: what ran before a stray COMMIT is committed"
           scripts/instalar-bob.sh resto | tee "$RUNNER_TEMP/resto-again.log"
