@@ -3488,3 +3488,45 @@ Relayed by the session that owns the release, 23 Nov. Nothing high.
 - **Low · noted.** The check reads only the database it connects to:
   `pg_extension` and `pg_foreign_server` are per database, so an extension in
   another database of the same cluster is not seen. BOb's boxes hold one.
+
+## Slice 3 · Fitted to the O-3 install chain (#48)
+
+Measured on 25 Nov: #40 merged without committing into #48 (`a54723b`), on
+the box's image (`supabase/postgres:17.6.1.136`), a disposable local stack,
+CLI 2.119.0. CI's pinned 2.120.0 was not used. Steps as #48's CI job runs
+them: `instalar-bob.sh cadena`, `alta-ci.sql` with its `supabase_admin` half,
+then `instalar-bob.sh resto`.
+- **How the two migrations go in.** `20261121200000` and `20261121200100` are
+  not in `install-chain.sha256`, so step 3 (`resto`) applies them as
+  `bob_migrador`, after the chain, in version order, and records them in
+  `bob.schema_migrations`. `2 applied, 0 already recorded.` Neither file has a
+  backslash, both are under the 120 000-byte limit (10 KB and 32 KB), and
+  their `BEGIN;`/`COMMIT;` are on their first and last lines, which `resto`
+  blanks. `owner-chain-check.mjs`: `35 migration file(s), 33 in the install
+  chain, 33 in the CLI's history, 2 in bob.schema_migrations`, no findings.
+- **lab-02.** It has the chain through `20261121190000` from `db push`. With
+  #48 in, `cadena` is a no-op there and `resto` applies only these two.
+  Nothing renumbers.
+- **The definer view runs as its owner.** With the files applied by
+  `bob_migrador`, `bob.v_ai_cell_state` and `bob.bob_ai_cell_state()` are owned
+  by it. `tests/slice3-cell-state.test.mjs` on that database: 45 of 45. The
+  R6 tenancy tests read the view as `bob_ai_ro` under one tenant's claim and
+  see its rows only, so `bob_migrador` can execute everything the view
+  reaches.
+- **One guard named the owner.** The R6 test "nothing else reads it"
+  excluded `postgres` by name, and failed on that layout with `bob_migrador`
+  listed. It now excludes the view's owner from `pg_class`, so it behaves the
+  same on both layouts. Seen red: `bob_app` granted the view and the function
+  by hand gives `['bob_ai_ro', 'bob_app']`. Revoked, green.
+- **Not from #40.** On that layout the suites need a fixture loader that can
+  write `bob` (`postgres` no longer owns it; they were run as
+  `supabase_admin`). The F-44 default-privileges test then reads
+  `supabase_admin`'s defaults. Both come from where the suite is run, not
+  from the migrations.
+- **Expected when `main` brings #48 into this PR.** One textual conflict,
+  `ESTADO.md`. And #48's CI step "resto applies a file whole or not at all"
+  asserts `^0 applied, 2 already recorded\.$` and says every migration is in
+  the chain. With Slice 3 there are four recorded: the two Slice 3 files and
+  the two samples. That line changes in the same merge. The tree digest also
+  changes, so Henry signs a new base-to-new pair for each box before its
+  window.

@@ -318,10 +318,13 @@ describe('R6 · BObee\'s views never cross a tenant boundary', () => {
     assert.ok(!cols.some((c) => /display|name|email/.test(c.attname)), JSON.stringify(cols))
     // Reading it takes SELECT on the view and EXECUTE on its definer function.
     // Supabase's read-all roles hold the first everywhere, never the second.
+    // The view's owner is excluded by ownership, not by name: postgres today,
+    // bob_migrador once the chain is applied by it (O-3, #48).
     const { rows } = await db.query(`SELECT r.rolname FROM pg_roles r
       WHERE has_table_privilege(r.oid, 'bob.v_ai_cell_state', 'SELECT')
         AND has_function_privilege(r.oid, 'bob.bob_ai_cell_state()', 'EXECUTE')
-        AND NOT r.rolsuper AND r.rolname NOT LIKE 'pg\\_%' AND r.rolname <> 'postgres'
+        AND NOT r.rolsuper AND r.rolname NOT LIKE 'pg\\_%'
+        AND r.oid <> (SELECT relowner FROM pg_class WHERE oid = 'bob.v_ai_cell_state'::regclass)
       ORDER BY 1`)
     assert.deepEqual(rows.map((r) => r.rolname), ['bob_ai_ro'])
   })
