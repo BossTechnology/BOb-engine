@@ -3,6 +3,7 @@
 Una línea por cambio entregado, en lenguaje de usuario.
 
 ## Sin publicar
+- El chequeo de tenancy también revisa las tablas que son el tenant (hoy `organizations`, con llave `id`), no solo las que tienen `org_id`, y exige que cada política compare la llave con el claim de la organización (mencionarla no basta); `bob_app` ya no tiene permisos de escritura sobre `organizations` que la seguridad por filas le negaba siempre (F-46).
 - BObee: el guard de sus vistas revisa todas las `v_ai_*` y sus funciones, y también corre sobre la base tal como la instala `bob_migrador`. La aplicación ya no puede crear, cambiar ni borrar organizaciones (`bob_app` solo lee la suya). P5 deja escrito qué tiene que cumplir el servicio de inferencia antes de poder conectarse.
 - Slice 3: el texto de la 0.6 del contrato está escrito como propuesta, con las preguntas abiertas para Henry; sus dos migraciones entran como `bob_migrador` con la cadena de instalación de O-3 (medido en Postgres 17.6), y el guard de BObee ya no supone que el dueño de la vista es `postgres`.
 - P5 recoge que D62 quedó firmada (bzzz#457) y que el ensayo de lab-02 ya corrió; §5.2 pasa a D77: la aplicación y el feeder van al lado de la caja en `/opt/bob/`, el feeder lee por `bzzz-vecinos` y no tiene rol de ClickHouse.

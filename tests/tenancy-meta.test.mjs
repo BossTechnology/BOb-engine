@@ -10,11 +10,11 @@
 import { test, before, after, describe } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  connect, tenantTables, TENANCY_FLOOR, TENANT_A, TENANT_B,
+  connect, tenantTables, tenantRootTables, TENANCY_FLOOR, TENANT_A, TENANT_B,
 } from './helpers/db.mjs'
 import {
   structuralFindings, projectionGrantFindings, aggregateLeakFindings,
-  truncateFindings, truncateDefaultFindings,
+  truncateFindings, truncateDefaultFindings, constrainsTenant,
 } from './helpers/rls.mjs'
 
 let db
@@ -103,6 +103,171 @@ describe('ID-12 · the tenancy suite detects what it claims to detect', () => {
         const hit = findings.find((f) => f.table === 'meta_probe_app_unreached')
         assert.ok(hit, 'a table bob_app is granted and no policy reaches went unreported')
         assert.match(hit.finding, /bob_app/)
+      })
+    })
+
+    // F-46. A table keyed by its own id, which org_id points to, carries no
+    // org_id, so a discovery by column never saw it: bob_app held SELECT on
+    // bob.organizations and read its own organization as empty. The child
+    // table is what marks the probe as a tenant root; it is guarded, so the
+    // only finding expected is the root's.
+    test(`a table keyed by id, granted to bob_app with no policy reaching it, is reported (in ${s})`, async () => {
+      await probe(s, `
+        CREATE TABLE $S.meta_probe_root (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          name TEXT);
+        ALTER TABLE $S.meta_probe_root ENABLE ROW LEVEL SECURITY;
+        CREATE POLICY "members_read_own" ON $S.meta_probe_root
+          FOR SELECT TO authenticated USING (id = (auth.jwt() ->> 'org_id')::uuid);
+        GRANT SELECT ON $S.meta_probe_root TO bob_app;
+        CREATE TABLE $S.meta_probe_root_child (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          org_id UUID NOT NULL REFERENCES $S.meta_probe_root (id));
+        ALTER TABLE $S.meta_probe_root_child ENABLE ROW LEVEL SECURITY;
+        CREATE POLICY "tenant" ON $S.meta_probe_root_child
+          FOR SELECT TO authenticated USING (org_id = (auth.jwt() ->> 'org_id')::uuid);`,
+      async () => {
+        const roots = await tenantRootTables(db)
+        assert.ok(roots.some((t) => t.qualified === `${s}.meta_probe_root` && t.tenant_keys.includes('id')),
+          `the table org_id points to was not discovered: ${JSON.stringify(roots.map((t) => t.qualified))}`)
+        const findings = await structuralFindings(db)
+        const hit = findings.find((f) => f.table === 'meta_probe_root')
+        assert.ok(hit, 'a table keyed by id that bob_app is granted and no policy reaches went unreported')
+        assert.match(hit.finding, /bob_app is granted SELECT but no SELECT policy reaches it/)
+      })
+    })
+
+    test(`a bob_app policy on a table keyed by id that does not constrain id is reported (in ${s})`, async () => {
+      await probe(s, `
+        CREATE TABLE $S.meta_probe_root_open (id UUID PRIMARY KEY DEFAULT gen_random_uuid());
+        ALTER TABLE $S.meta_probe_root_open ENABLE ROW LEVEL SECURITY;
+        CREATE POLICY "app_any_claim" ON $S.meta_probe_root_open
+          FOR SELECT TO bob_app USING ((auth.jwt() ->> 'org_id') IS NOT NULL);
+        CREATE TABLE $S.meta_probe_root_open_child (
+          org_id UUID NOT NULL REFERENCES $S.meta_probe_root_open (id));`, async () => {
+        const findings = await structuralFindings(db)
+        const hit = findings.find((f) => f.table === 'meta_probe_root_open')
+        assert.ok(hit, 'a policy reachable by bob_app that ignores id went unreported')
+        assert.match(hit.finding, /does not constrain id/)
+      })
+    })
+
+    // No expression is not a tenant-scoped one. It refuses every row, and
+    // the reach check would read it as a policy that reaches the grant.
+    test(`a bob_app policy with no expression at all is reported (in ${s})`, async () => {
+      await probe(s, `
+        CREATE TABLE $S.meta_probe_empty_policy (org_id UUID NOT NULL);
+        ALTER TABLE $S.meta_probe_empty_policy ENABLE ROW LEVEL SECURITY;
+        CREATE POLICY "app_nothing" ON $S.meta_probe_empty_policy FOR SELECT TO bob_app;
+        GRANT SELECT ON $S.meta_probe_empty_policy TO bob_app;`, async () => {
+        const findings = await structuralFindings(db)
+        assert.ok(findings.some((f) => f.table === 'meta_probe_empty_policy' &&
+          /does not constrain org_id/.test(f.finding)), 'a policy with no expression went unreported')
+      })
+    })
+
+    // bob_feeder writes the projections under each tenant's claim (F-22). A
+    // grant it holds that no policy reaches fails every time, like bob_app's.
+    test(`a table granted to bob_feeder that no policy reaches is reported (in ${s})`, async () => {
+      await probe(s, `
+        CREATE TABLE $S.meta_probe_feeder_unreached (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          org_id UUID NOT NULL);
+        ALTER TABLE $S.meta_probe_feeder_unreached ENABLE ROW LEVEL SECURITY;
+        CREATE POLICY "members_only" ON $S.meta_probe_feeder_unreached
+          FOR SELECT TO authenticated USING (org_id = (auth.jwt() ->> 'org_id')::uuid);
+        GRANT SELECT, INSERT ON $S.meta_probe_feeder_unreached TO bob_feeder;`, async () => {
+        const hits = (await structuralFindings(db)).filter((f) => f.table === 'meta_probe_feeder_unreached')
+        assert.ok(hits.some((f) => /^bob_feeder is granted INSERT/.test(f.finding)),
+          `a bob_feeder grant no policy reaches went unreported: ${JSON.stringify(hits)}`)
+      })
+    })
+
+    // Review of PR #43. Naming the key is not constraining it: a subquery
+    // over another table's `id` names `id` and lets every row through.
+    test(`a bob_app policy keyed by a subquery over u.id is reported (in ${s})`, async () => {
+      await probe(s, `
+        CREATE TABLE $S.meta_probe_root_subq (id UUID PRIMARY KEY DEFAULT gen_random_uuid());
+        ALTER TABLE $S.meta_probe_root_subq ENABLE ROW LEVEL SECURITY;
+        CREATE POLICY "app_via_users" ON $S.meta_probe_root_subq FOR SELECT TO bob_app
+          USING (EXISTS (SELECT 1 FROM bob.users u WHERE u.id = auth.uid()));
+        GRANT SELECT ON $S.meta_probe_root_subq TO bob_app;
+        CREATE TABLE $S.meta_probe_root_subq_child (
+          org_id UUID NOT NULL REFERENCES $S.meta_probe_root_subq (id));`, async () => {
+        const findings = await structuralFindings(db)
+        const hit = findings.find((f) => f.table === 'meta_probe_root_subq')
+        assert.ok(hit, 'a policy that only names u.id in a subquery passed for constraining id')
+        assert.match(hit.finding, /does not constrain id to the org_id claim/)
+      })
+    })
+
+    // A foreign key may reference any unique key, not only the primary key.
+    test(`a root that org_id reaches through a unique slug is discovered and checked (in ${s})`, async () => {
+      await probe(s, `
+        CREATE TABLE $S.meta_probe_root_slug (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          slug TEXT NOT NULL UNIQUE);
+        ALTER TABLE $S.meta_probe_root_slug ENABLE ROW LEVEL SECURITY;
+        CREATE POLICY "members" ON $S.meta_probe_root_slug FOR SELECT TO authenticated
+          USING (id = (auth.jwt() ->> 'org_id')::uuid);
+        GRANT SELECT ON $S.meta_probe_root_slug TO bob_app;
+        CREATE TABLE $S.meta_probe_root_slug_child (
+          org_id TEXT NOT NULL REFERENCES $S.meta_probe_root_slug (slug));`, async () => {
+        const roots = await tenantRootTables(db)
+        const root = roots.find((t) => t.qualified === `${s}.meta_probe_root_slug`)
+        assert.ok(root, 'a root reached through a unique, non-primary key was not discovered')
+        assert.deepEqual(root.tenant_keys, ['slug'])
+        assert.ok((await structuralFindings(db)).some((f) => f.table === 'meta_probe_root_slug' &&
+          /bob_app is granted SELECT/.test(f.finding)), 'the slug-keyed root went unchecked')
+      })
+    })
+
+    // A composite foreign key that carries org_id among its columns.
+    test(`a root that org_id reaches through a composite key is discovered and checked (in ${s})`, async () => {
+      await probe(s, `
+        CREATE TABLE $S.meta_probe_root_pair (
+          id UUID NOT NULL, region TEXT NOT NULL, PRIMARY KEY (region, id));
+        ALTER TABLE $S.meta_probe_root_pair ENABLE ROW LEVEL SECURITY;
+        CREATE POLICY "members" ON $S.meta_probe_root_pair FOR SELECT TO authenticated
+          USING (id = (auth.jwt() ->> 'org_id')::uuid);
+        GRANT SELECT ON $S.meta_probe_root_pair TO bob_app;
+        CREATE TABLE $S.meta_probe_root_pair_child (
+          region TEXT NOT NULL, org_id UUID NOT NULL,
+          FOREIGN KEY (region, org_id) REFERENCES $S.meta_probe_root_pair (region, id));`, async () => {
+        const root = (await tenantRootTables(db)).find((t) => t.qualified === `${s}.meta_probe_root_pair`)
+        assert.ok(root, 'a root reached through a composite foreign key was not discovered')
+        assert.deepEqual(root.tenant_keys, ['id'], 'the tenant key is the column org_id lands on')
+        assert.ok((await structuralFindings(db)).some((f) => f.table === 'meta_probe_root_pair' &&
+          /bob_app is granted SELECT/.test(f.finding)), 'the composite-keyed root went unchecked')
+      })
+    })
+
+    test(`TRUNCATE on a table keyed by id, granted to an application role, is reported (in ${s})`, async () => {
+      await probe(s, `
+        CREATE TABLE $S.meta_probe_root_truncate (id UUID PRIMARY KEY DEFAULT gen_random_uuid());
+        CREATE TABLE $S.meta_probe_root_truncate_child (
+          org_id UUID NOT NULL REFERENCES $S.meta_probe_root_truncate (id));
+        GRANT TRUNCATE ON $S.meta_probe_root_truncate TO bob_app;`, async () => {
+        const hits = (await truncateFindings(db)).filter((f) => f.table === 'meta_probe_root_truncate')
+        assert.ok(hits.some((f) => /^bob_app holds TRUNCATE/.test(f.finding)),
+          'TRUNCATE for bob_app on a tenant root went unreported')
+      })
+    })
+
+    test(`an aggregate over a table keyed by id that crosses the boundary is reported (in ${s})`, async () => {
+      await probe(s, `
+        CREATE TABLE $S.meta_probe_root_count (id UUID PRIMARY KEY);
+        ALTER TABLE $S.meta_probe_root_count ENABLE ROW LEVEL SECURITY;
+        CREATE POLICY "names_id" ON $S.meta_probe_root_count
+          FOR SELECT TO authenticated USING (id IS NOT NULL);
+        GRANT USAGE ON SCHEMA $S TO authenticated;
+        GRANT SELECT ON $S.meta_probe_root_count TO authenticated;
+        INSERT INTO $S.meta_probe_root_count (id) VALUES ('${TENANT_A}'), ('${TENANT_B}');
+        CREATE TABLE $S.meta_probe_root_count_child (
+          org_id UUID NOT NULL REFERENCES $S.meta_probe_root_count (id));`, async () => {
+        const { findings } = await aggregateLeakFindings(db, TENANT_A, TENANT_B)
+        assert.ok(findings.some((f) => f.table === 'meta_probe_root_count'),
+          'a count over a tenant root that reached the other tenant went unreported')
       })
     })
 
@@ -295,6 +460,83 @@ describe('ID-12 · the tenancy suite detects what it claims to detect', () => {
       })
     })
   }
+
+  // The expressions themselves, without the catalog: what counts as
+  // constraining the tenant key and what only names it (review of PR #43).
+  test('a policy constrains the tenant only by comparing its key with the org_id claim', () => {
+    const C = "((auth.jwt() ->> 'org_id'::text))::uuid"
+    const cases = [
+      [`(org_id = ${C})`, ['org_id'], true],
+      [`(id = ${C})`, ['id'], true],
+      [`((user_id = auth.uid()) AND (org_id = ${C}))`, ['org_id'], true],
+      [`(${C} = id)`, ['id'], true],
+      ['(id IS NOT NULL)', ['id'], false],
+      ["((auth.jwt() ->> 'id'::text) IS NOT NULL)", ['id'], false],
+      ['(EXISTS ( SELECT 1 FROM users u WHERE (u.id = auth.uid())))', ['id'], false],
+      [`(EXISTS ( SELECT 1 FROM users u WHERE (u.id = ${C})))`, ['id'], false],
+      [`((id = ${C}) OR true)`, ['id'], false],
+      [`(NOT (id = ${C}))`, ['id'], false],
+      [`(o.id = ${C})`, ['id'], false],
+      [`(org_id = ${C})`, ['id'], false],
+      ['true', ['org_id'], false],
+      // Holding the comparison is not being bound by it: each of these
+      // contains it word for word and still lets another tenant's row through.
+      [`CASE WHEN (id = ${C}) THEN true ELSE true END`, ['id'], false],
+      [`COALESCE((id = ${C}), true)`, ['id'], false],
+      [`((id = ${C}) IS NOT TRUE)`, ['id'], false],
+      [`((id = ${C}) IS FALSE)`, ['id'], false],
+      [`((id = ${C}) = false)`, ['id'], false],
+      // A bracket or an AND inside a literal or a quoted name is text.
+      [`((name = ') AND (id = ${C.replaceAll("'", "''")}) AND ('::text))`, ['id'], false],
+      [`((name = ')'::text) AND (id = ${C}))`, ['id'], true],
+      [`((a AND (id = ${C})) AND b)`, ['id'], true],
+      [`("Tenant Id" = ${C})`, ['Tenant Id'], true],
+      // The key is a name, never a pattern.
+      [`(id = ${C})`, ['i.'], false],
+      [`(id = ${C})`, ['(id'], false],
+    ]
+    for (const [expr, keys, want] of cases) {
+      assert.equal(constrainsTenant(expr, keys), want, `${expr} with key ${keys}`)
+    }
+  })
+
+  // org_id with no foreign key says nothing about which table holds the
+  // tenants. If none of them had one, discovery would find no root, and the
+  // check fails closed rather than reading an empty set as clean.
+  test('with no foreign key on any org_id, the missing tenant root is reported', async () => {
+    await db.query('BEGIN')
+    try {
+      const { rows } = await db.query(`
+        SELECT DISTINCT f.conrelid::regclass::text AS rel, f.conname
+          FROM pg_constraint f
+          JOIN pg_attribute a ON a.attrelid = f.conrelid AND a.attname = 'org_id'
+                             AND a.attnum = ANY (f.conkey)
+         WHERE f.contype = 'f' AND f.conparentid = 0`)
+      assert.ok(rows.length > 0, 'no foreign key on org_id to drop, so this proves nothing')
+      for (const r of rows) await db.query(`ALTER TABLE ${r.rel} DROP CONSTRAINT "${r.conname}"`)
+      assert.deepEqual(await tenantRootTables(db), [])
+      assert.ok((await structuralFindings(db)).some((f) => f.table === '(tenant root)'),
+        'tables carry org_id, no root was found, and the check said nothing')
+    } finally {
+      await db.query('ROLLBACK')
+    }
+  })
+
+  // `otherRows` is what shows the aggregate check had something to leak. The
+  // other tenant's own organization row always exists, so counting it there
+  // would keep that floor green over empty tables.
+  test("the other tenant's organization row alone is nothing to leak", async () => {
+    await db.query('BEGIN')
+    try {
+      const { rows: [other] } = await db.query(`
+        INSERT INTO bob.organizations (name, slug)
+        VALUES ('Cliente Demo', 'cliente-demo-vacio') RETURNING id`)
+      const { otherRows } = await aggregateLeakFindings(db, TENANT_A, other.id)
+      assert.equal(otherRows, 0, 'an empty tenant counted as something that could leak')
+    } finally {
+      await db.query('ROLLBACK')
+    }
+  })
 
   // The schema move itself, rehearsed. Every tenant table goes to `bob` and
   // discovery has to follow it: the same set, now all outside `public`, and

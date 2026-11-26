@@ -7,7 +7,7 @@
 import { test, before, after, describe } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  connect, loadFixture, asTenant, tenantTables, TENANCY_FLOOR, TENANT_A, TENANT_B,
+  connect, loadFixture, asTenant, tenantTables, tenantRootTables, TENANCY_FLOOR, TENANT_A, TENANT_B,
 } from './helpers/db.mjs'
 import {
   structuralFindings, projectionGrantFindings, aggregateLeakFindings,
@@ -39,6 +39,14 @@ describe('ID-10 · every read and write is constrained to a single organisation'
         `a set that is too small.\n  missing: ${missing.join(', ')}\n  found: ` +
         `${found.size} tables`,
     )
+  })
+
+  // The same floor for the tables keyed by their own id (F-46). A root
+  // discovery that finds nothing would leave organizations unchecked again.
+  test('discovery finds organizations as the table org_id points to', async () => {
+    const roots = await tenantRootTables(db)
+    assert.ok(roots.some((t) => t.table_name === 'organizations' && t.tenant_keys.includes('id')),
+      `tenantRootTables() did not find organizations keyed by id: ${JSON.stringify(roots)}`)
   })
 
   test('every table carrying org_id has RLS and a tenant-scoped policy', async () => {

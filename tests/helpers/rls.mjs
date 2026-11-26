@@ -6,7 +6,7 @@
 // meta-test creates a deliberately broken table, calls these same functions,
 // and asserts they report it. A green suite that cannot go red is not a suite.
 
-import { tenantTables, becomeTenant } from './db.mjs'
+import { tenantTables, tenantRootTables, becomeTenant } from './db.mjs'
 
 // Tables where RLS is enabled with NO policy on purpose — deny-all, server-side
 // only, service role bypasses. Stated intent, not oversight. Anything else with
@@ -19,17 +19,90 @@ export const DELIBERATE_DENY_ALL = new Set(['baselines'])
 // is not reachable from the API.
 // bob_app is in the set too: in a box, bob-web runs as bob_app under the box's
 // claim, so a bob_app policy that ignores org_id is the same hole.
-const PUBLIC_FACING = new Set(['public', 'anon', 'authenticated', 'bob_app'])
+// bob_feeder too: it writes the projections under each tenant's claim (F-22).
+const PUBLIC_FACING = new Set(['public', 'anon', 'authenticated', 'bob_app', 'bob_feeder'])
 
 // The roles the application runs as. A tenant table one of them is granted, and
 // that no policy reaches, answers it with nothing and says nothing: bob.users
 // read empty to bob_app, so nobody could sign in to a box. Deny-all tables are
-// exempt, because answering nothing is what they are for.
-const APP_ROLES = ['bob_app']
+// exempt, because answering nothing is what they are for. bob_feeder is held
+// to the same rule: a grant it cannot use is a write that fails at 3 a.m.
+const APP_ROLES = ['bob_app', 'bob_feeder']
+
+// What a tenant-scoped expression looks like, read from the catalog rather
+// than assumed: one of the conditions AND-ed at the top of it is, whole,
+//   key = ((auth.jwt() ->> 'org_id'::text))::uuid
+// with the key unqualified, or the same the other way round. Mentioning the
+// key is not enough (`id IS NOT NULL`, `->> 'id'`, a subquery over `u.id`),
+// and neither is holding the comparison somewhere inside (`… OR true`,
+// CASE, COALESCE, IS NOT TRUE): only a conjunct binds every row. So nothing
+// is searched for. The expression is split into its conjuncts and each is
+// compared as text, which also means a key is never read as a pattern.
+// Anything this does not recognise fails, so a new shape is looked at.
+const CLAIM = "((auth.jwt() ->> 'org_id'::text))::uuid"
+const quoteIdent = (s) => `"${s.replace(/"/g, '""')}"`
+
+// pg_policies deparses with every AND and OR list in brackets of its own.
+// Brackets and words inside a literal or a quoted name are text.
+function conjuncts(expr) {
+  let depth = 0
+  let quote = null
+  let closesAt = -1   // where the first bracket closes
+  let start = 0
+  const parts = []
+  for (let i = 0; i < expr.length; i++) {
+    const ch = expr[i]
+    if (quote) {
+      if (ch === quote) quote = null
+    } else if (ch === "'" || ch === '"') {
+      quote = ch
+    } else if (ch === '(') {
+      depth++
+    } else if (ch === ')') {
+      if (--depth === 0 && closesAt < 0) closesAt = i
+    } else if (depth === 0) {
+      if (expr.startsWith(' OR ', i)) return [expr]
+      if (expr.startsWith(' AND ', i)) {
+        parts.push(expr.slice(start, i))
+        start = i + ' AND '.length
+      }
+    }
+  }
+  if (parts.length > 0) return [...parts, expr.slice(start)].flatMap(conjuncts)
+  if (expr.startsWith('(') && closesAt === expr.length - 1) return conjuncts(expr.slice(1, -1))
+  return [expr]
+}
+
+export function constrainsTenant(expr, keys) {
+  const bound = new Set(keys.flatMap((key) => [key, quoteIdent(key)])
+    .flatMap((k) => [`${k} = ${CLAIM}`, `${CLAIM} = ${k}`]))
+  return conjuncts(expr).some((c) => bound.has(c))
+}
 
 export async function structuralFindings(client) {
   const findings = []
-  const tables = await tenantTables(client)
+  // Both kinds of tenant table, each with the column its policies must
+  // constrain: org_id on the tables a tenant owns, the primary key on the ones
+  // a tenant is (organizations, keyed by `id`; F-46). One loop, so a check
+  // added below reaches both.
+  const owned = await tenantTables(client)
+  const roots = await tenantRootTables(client)
+  const tables = [
+    ...owned.map((t) => ({ ...t, tenant_keys: ['org_id'] })),
+    ...roots.map((t) => ({ ...t, root: true })),
+  ]
+
+  // Fail closed: tables carry org_id and nothing says which table holds the
+  // tenants, so whatever holds them is not being checked.
+  if (owned.length > 0 && roots.length === 0) {
+    findings.push({
+      table: '(tenant root)',
+      rule: 'ID-10',
+      finding: `${owned.length} tables carry org_id and no foreign key on org_id points ` +
+        'to a table without one, so the table that holds the tenants is not found ' +
+        'and not checked',
+    })
+  }
 
   // roles comes back as name[]; cast so the driver parses it as an array
   // rather than handing back the literal '{authenticated}'.
@@ -52,7 +125,10 @@ export async function structuralFindings(client) {
       findings.push({
         table: t.table_name,
         rule: 'ID-10',
-        finding: 'carries org_id but row-level security is not enabled',
+        finding: t.root
+          ? `is keyed by its own ${t.tenant_keys.join(' or ')}, which org_id points to, but ` +
+            'row-level security is not enabled'
+          : 'carries org_id but row-level security is not enabled',
       })
       continue
     }
@@ -94,14 +170,21 @@ export async function structuralFindings(client) {
       const roles = (p.roles || []).map(String)
       if (!roles.some((r) => PUBLIC_FACING.has(r))) continue
 
-      const expressions = [p.qual, p.with_check].filter(Boolean).join(' ')
-      if (!expressions.includes('org_id')) {
+      // Each expression on its own: USING decides what is read, WITH CHECK
+      // what is written, and a tight one does not cover a loose other.
+      // No expression at all constrains nothing either.
+      const written = [p.qual, p.with_check].filter(Boolean)
+      const loose = written.length === 0
+        ? ['(no expression)']
+        : written.filter((e) => !constrainsTenant(e, t.tenant_keys))
+      if (loose.length > 0) {
         findings.push({
           table: t.table_name,
           rule: 'ID-10',
           finding:
             `policy "${p.policyname}" is reachable by ${roles.join(', ')} ` +
-            'but its expression does not constrain org_id',
+            `but its expression does not constrain ${t.tenant_keys.join(' or ')} ` +
+            `to the org_id claim: ${loose.join(' / ')}`,
         })
       }
     }
@@ -118,18 +201,28 @@ export async function structuralFindings(client) {
 // The caller holds a transaction. The tenant's role is taken inside a
 // savepoint and given back, so the meta-test can call this over a probe it has
 // not rolled back yet.
+//
+// The tables a tenant is (organizations) are counted too, by their tenant key
+// (F-46): a tenant that can count every organization has learnt how many
+// customers there are.
 export async function aggregateLeakFindings(client, tenant, other) {
   const hidden = new Set((await tenantTablesUnreadableByApi(client)).map((t) => t.qualified))
-  const tables = (await tenantTables(client)).filter((t) => !hidden.has(t.qualified))
+  const tables = [
+    ...(await tenantTables(client)).map((t) => ({ ...t, tenant_keys: ['org_id'] })),
+    ...(await tenantRootTables(client)).map((t) => ({ ...t, root: true })),
+  ].filter((t) => !hidden.has(t.qualified))
   const owns = new Map()
   let otherRows = 0
   for (const t of tables) {
+    const match = (n) => t.tenant_keys.map((k) => `${quoteIdent(k)}::text = $${n}::text`).join(' OR ')
     const { rows } = await client.query(
-      `SELECT count(*) FILTER (WHERE org_id = $1)::int AS own,
-              count(*) FILTER (WHERE org_id = $2)::int AS other
+      `SELECT count(*) FILTER (WHERE ${match(1)})::int AS own,
+              count(*) FILTER (WHERE ${match(2)})::int AS other
          FROM ${t.qualified}`, [tenant, other])
     owns.set(t.qualified, rows[0].own)
-    otherRows += rows[0].other
+    // Not the other tenant's own row in a root: it always exists, and would
+    // keep "there was something to leak" true over empty tables.
+    if (!t.root) otherRows += rows[0].other
   }
 
   const findings = []
@@ -353,7 +446,7 @@ export async function stagingGrantFindings(client) {
 // exclusion cannot hide a table that lost its grant by accident.
 export async function tenantTablesUnreadableByApi(client) {
   const out = []
-  for (const t of await tenantTables(client)) {
+  for (const t of [...await tenantTables(client), ...await tenantRootTables(client)]) {
     const { rows: [r] } = await client.query(
       "SELECT has_table_privilege('authenticated', $1::regclass, 'SELECT') AS ok", [t.qualified])
     if (!r.ok) out.push(t)
@@ -368,17 +461,22 @@ export async function tenantTablesUnreadableByApi(client) {
 // grant to PUBLIC or through a role counts.
 export const NEVER_TRUNCATES = ['anon', 'authenticated', 'bob_app', 'bob_feeder', 'bob_ai_ro']
 
+// The tables a tenant is (organizations, F-46) are included: TRUNCATE there
+// empties every customer at once.
 export async function truncateFindings(client) {
+  const roots = (await tenantRootTables(client)).map((t) => t.qualified)
   const { rows } = await client.query(`
     SELECT r.rolname AS role, format('%I.%I', n.nspname, c.relname) AS qualified, c.relname
       FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-      JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'org_id' AND NOT a.attisdropped
       CROSS JOIN (SELECT unnest($1::text[]) AS rolname) r
      WHERE c.relkind IN ('r', 'p')
        AND n.nspname NOT LIKE 'pg\\_%' AND n.nspname <> 'information_schema'
+       AND (EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.oid
+                       AND a.attname = 'org_id' AND NOT a.attisdropped)
+            OR format('%I.%I', n.nspname, c.relname) = ANY($2::text[]))
        AND EXISTS (SELECT 1 FROM pg_roles x WHERE x.rolname = r.rolname)
        AND has_table_privilege(r.rolname, c.oid, 'TRUNCATE')
-     ORDER BY 2, 1`, [NEVER_TRUNCATES])
+     ORDER BY 2, 1`, [NEVER_TRUNCATES, roots])
   return rows.map((r) => ({
     table: r.relname,
     rule: 'ID-10',

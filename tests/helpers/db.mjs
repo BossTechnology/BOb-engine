@@ -238,6 +238,54 @@ export async function tenantTables(client) {
   return rows
 }
 
+// The tables a tenant IS rather than the tables a tenant owns: no org_id of
+// their own, and pointed to by other tables' org_id. Today that is
+// organizations, whose tenant key is `id`. tenantTables cannot see them, and
+// that is how bob_app held SELECT on bob.organizations with no policy reaching
+// it (F-46).
+//
+// Discovered, not named: every foreign key, single-column or composite, in
+// which a column named org_id takes part names the table it points to, and
+// the column org_id lands on there is that table's tenant key. A foreign key
+// may reference the primary key or any other unique key (a slug, say), so
+// whatever it references counts. A table pointed to through more than one key
+// carries them all in `tenant_keys`; a policy has to constrain one of them.
+//
+// What this cannot see is a root that only FK-less org_id columns point to:
+// 22 tables today (the projections, the logs) carry org_id with no foreign
+// key at all. structuralFindings fails closed when tenant tables exist and no
+// root is found, so the discovery going empty is never silent.
+//
+// Same shape as tenantTables, plus `tenant_keys`.
+export async function tenantRootTables(client) {
+  const { rows } = await client.query(`
+    SELECT n.nspname AS table_schema,
+           c.relname AS table_name,
+           format('%I.%I', n.nspname, c.relname) AS qualified,
+           c.relrowsecurity  AS rls_enabled,
+           c.relforcerowsecurity AS rls_forced,
+           (SELECT count(*)::int FROM pg_policies p
+             WHERE p.schemaname = n.nspname AND p.tablename = c.relname) AS policy_count,
+           array_agg(DISTINCT key.attname::text ORDER BY key.attname::text) AS tenant_keys
+      FROM pg_constraint fk
+      CROSS JOIN LATERAL generate_subscripts(fk.conkey, 1) i
+      JOIN pg_attribute ref ON ref.attrelid = fk.conrelid
+                           AND ref.attnum = fk.conkey[i] AND ref.attname = 'org_id'
+      JOIN pg_class c ON c.oid = fk.confrelid
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      JOIN pg_attribute key ON key.attrelid = c.oid AND key.attnum = fk.confkey[i]
+     WHERE fk.contype = 'f'
+       AND n.nspname NOT LIKE 'pg\\_%'
+       AND n.nspname <> 'information_schema'
+       AND c.relkind IN ('r', 'p')
+       AND NOT EXISTS (
+         SELECT 1 FROM pg_attribute a
+          WHERE a.attrelid = c.oid AND a.attname = 'org_id' AND NOT a.attisdropped)
+     GROUP BY n.nspname, c.relname, c.relrowsecurity, c.relforcerowsecurity
+     ORDER BY 1, 2`)
+  return rows
+}
+
 // The floor under tenantTables. A discovery that finds nothing passes every
 // check that loops over what it found, so the suite asserts these are in the
 // set wherever they live. They are the tables the tenancy tests and the
