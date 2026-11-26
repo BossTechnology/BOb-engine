@@ -3489,6 +3489,390 @@ Relayed by the session that owns the release, 23 Nov. Nothing high.
   `pg_extension` and `pg_foreign_server` are per database, so an extension in
   another database of the same cluster is not seen. BOb's boxes hold one.
 
+## O-3 · the chain applied by its own owner — measured, decided
+
+D77 (Henry, 24 Nov) puts BOb beside the box's apps, on the box's database and
+GoTrue, with one schema per neighbour app, and its §2.8 names the owner
+`bob_migrador`. Objection O-3: the chain is applied today by `postgres`, which
+can touch every schema, `auth` included. Measured in CI on PR #48, a Supabase
+stack started with no migration: `bob_migrador` applies 12 of the 33 files and
+stops at 21. Five causes, none cleared by a grant D77 allows: creating in
+`public` (17 files), the trigger on `auth.users`, the `supabase_realtime`
+publication, `CREATE ROLE` and `CREATE SCHEMA IF NOT EXISTS`. And the one grant
+that is needed outside `bob`, USAGE on `auth`, only `supabase_admin` can give,
+not `postgres`. The table, `bob.sql`'s measured content and the guard are in
+P5 §6.2, "Applied by `bob_migrador`". The guard is
+`scripts/owner-chain-check.mjs`, a CI job that Henry has still to make a required check.
+
+Decided by Henry on 2026-11-24, in the Relevo chat: «postgres una vez, luego
+migrador». On the USAGE grant on `auth`: «Nota en D77: ese grant con
+supabase_admin»; the note is D77 77.21 and 77.22 (bzzz#442, `b483d7b9`).
+Pending, no date: a baseline migration that does not leave `bob`, after 0.6.
+
+### O-3 · independent review of PR #48, applied
+
+A review at `89e6f78` found that the check measured a state no box will have.
+Each point was verified first:
+- The O-3 job is not a required check: `main` requires four. The text now says
+  it is still to be made one by Henry.
+- Phase B ran over a `bob` the fallback had given to `bob_migrador`. On a box,
+  `postgres` applies the install chain and owns all of `bob`, so the
+  migrations of PR #40 and PR #43 would have stopped with 42501. Nothing said
+  how ownership passes.
+- A new migration dated before the cut-off fell in phase A, past every check.
+- An edited install file passed, since only names were compared.
+- The file regex was narrower than the CLI's.
+- The footprint missed privileges on objects, `rolreplication`, members of
+  the role, and other databases.
+- `GRANT bob_migrador TO postgres` was permanent.
+- The warning regex missed «not all privileges were granted».
+
+Now:
+- `postgres` applies the install chain, a closed list with sha256 hashes
+  (`supabase/provision/install-chain.sha256`).
+- `bob` and everything in it pass to `bob_migrador`, idempotently. At first
+  `supabase_admin` did this, since CI ran Postgres 15. After the second
+  review it follows Bzzz's alta (bzzz#450): `postgres` does it, in one
+  transaction, on 17.6.1.136.
+- Every other migration the CLI would apply runs as `bob_migrador` alone,
+  whatever its date.
+- The footprint reads `pg_shdepend`, with memberships both ways. Nobody is
+  granted membership.
+
+Not measured:
+- Postgres 17 (F-37). On 16 and later the creator of a role gets ADMIN on it.
+- What `bob` opens to `anon` or PUBLIC. Pending.
+
+P5 §6.2 has the detail and the red runs.
+
+### O-3 · second independent review of PR #48, applied
+
+The review at `a041bd3` confirmed the earlier fixes. Each new point was
+verified first:
+- **A, blocking.** The hand-over broke `bob.proj_ensure_partition`. It is
+  SECURITY DEFINER, and after the hand-over it runs as `bob_migrador`, which
+  cannot execute `public.bob_grant_projection` (EXECUTE revoked from PUBLIC).
+  The feeder would have failed with 42501 on the first new month. Fixed with
+  a grant in `supabase/provision/bob.sql`, which is Bzzz's `config/supabase/vecinas/bob.sql`, kept identical. It is part of the expected footprint. The check now
+  finds any definer in `bob` that calls a function outside it without
+  EXECUTE, and creates a new month as `bob_migrador`.
+- **B.** The install list could be edited in the same PR. Now a CI step fails
+  on any change to it unless it carries the label `install-chain-change`,
+  applied by the login in the repository variable `INSTALL_CHAIN_APPROVER`,
+  for Henry to set. A CODEOWNERS file was not chosen: it binds only with
+  required reviews, and `main` has none.
+- **C.** The box procedure did not exist. It is now
+  `scripts/instalar-bob.sh`, and CI runs it unchanged. The CLI cannot push as
+  `bob_migrador` (42501 on `supabase_migrations`, shared). So step 3 applies
+  each file with `psql` as `bob_migrador`, and `postgres` records it.
+- **D.** The reader check now also follows a function's own `search_path`.
+  Names built with `EXECUTE format(…)` stay unseen.
+- **E.** What `bob` opens to `anon`, `authenticated` or PUBLIC is still
+  pending.
+
+Measured as well:
+- Default privileges, with or without a schema: both show in the footprint.
+
+Aligned with Bzzz's alta (bzzz#450, measured on `supabase/postgres:17.6.1.136`).
+In that alta, `postgres` does the hand-over inside one transaction. It takes
+`GRANT bob_migrador TO postgres WITH INHERIT FALSE, SET TRUE` and CREATE on
+the database for `bob_migrador`, and revokes both before the COMMIT. That
+works because on Postgres 16+ the creator of a role holds ADMIN on it.
+`supabase_admin` only grants USAGE on `auth` (77.22).
+
+`supabase/provision/` in BOb-engine is now a CI stand-in for that alta. It
+keeps the same names as `bob.conf`, the same order and the same transaction.
+What counts on a box is the alta. The O-3 job runs on 17.6.1.136, checked from
+the container. There, `postgres` holding ADMIN on `bob_migrador`, without
+INHERIT or SET, is the one membership expected. The second job on stock 17 was
+dropped.
+
+Then the review of #450 asked for three changes, all now in #48:
+- `instalar-bob.sh` uses the alta's names (`MIGRADOR_USUARIO`, `MIGRADOR_CLAVE`,
+  `MIGRADOR_HOST`, `MIGRADOR_RED`) and its path,
+  `/opt/bob/secrets/migrador.env`.
+- `instalar-bob.sh` never sets the password and creates no role or schema.
+- `supabase/provision/bob.sql` is the base of #450's
+  `config/supabase/vecinas/bob.sql`, PR-4 EXECUTE included, kept identical.
+
+### O-3 · third independent review of PR #48, applied
+
+The review at `203da29` (CI green at `8e95759`) raised three points. Each was
+verified first.
+
+- **1 · A PR that edits the workflow switches the control off.** True: the
+  list guard is a step of `ci.yml`, and the same PR can change it.
+  - `.github/CODEOWNERS` puts `.github/`, `scripts/owner-chain-check.mjs`,
+    `scripts/instalar-bob.sh` and `supabase/provision/` under Henry. It binds
+    only when code-owner review is required on `main`, which is Henry's
+    setting.
+  - The approval is bound to the list. The step reads the label
+    `install-chain-change` from the PR at run time, not from an event, and
+    requires a comment by `INSTALL_CHAIN_APPROVER` naming the sha256 of the
+    exact list under test. Any push that touches the list changes that hash.
+    A review was not used: GitHub does not let an author approve their own
+    PR, and Henry authors these.
+  - The workflow declares `permissions: contents: read, pull-requests: read,
+    issues: read`.
+- **2 · `resto` applied files half-way.** True: `bob_migrador` applied a file,
+  then `postgres` recorded it in a second connection; a failure between the
+  two left a file applied and not recorded. Now one psql as `bob_migrador`
+  reads, on stdin, the file, the CLI's `INSERT` into
+  `supabase_migrations.schema_migrations`, and one `COMMIT`. For that,
+  `bob.sql` gives `bob_migrador` USAGE on `supabase_migrations` and INSERT on
+  `schema_migrations`, inside a `DO` that checks the table exists. This
+  changed `bob.sql`. *Superseded by the fourth review below: the history moved
+  to `bob.schema_migrations` and `bob.sql` is back to #450's.*
+  - Before anything runs, a file is refused if it has a backslash outside a
+    dollar-quoted body or comment, or transaction control other than one
+    leading `BEGIN` and one closing `COMMIT`. All 33 current files pass (9
+    bare, 24 wrapped); CI runs `instalar-bob.sh revisar` on every migration.
+  - CI tests `resto` with sample files after the check: two good ones apply
+    and are recorded, one failing on its second statement leaves neither its
+    first statement nor a record, and one with `\!` is refused and its
+    command never runs.
+- **3 · The `postgres` password was in argv.** True: `POSTGRES_URL` carried it
+  into `psql` and `supabase db push`, and `docker run -e PGPASSWORD` put
+  `bob_migrador`'s into the container's `Config.Env`. Now both are read with
+  `sudo` from files (`POSTGRES_ENV`, the alta's `migrador.env`), by key, into
+  pgpass files, mode 600, in a private tmpfs directory removed on exit. The
+  container gets that directory mounted read-only. No URL carries a password.
+
+Not changed: `scripts/ensayo-migracion-lab.sh` still passes `PGPASSWORD` to
+`docker exec -e`. That does not reach `Config.Env`, but it shows in the exec's
+inspect while it runs. It is a follow-up.
+
+### O-3 · fourth independent review of PR #48, applied
+
+The review at `c2b05f7`, measured with psql on PG16, found three blockers and
+four further points. Each was verified first.
+
+- **B3 · the guard in front of `resto` could be bypassed, and psql ran a
+  shell.** True. The awk guard did not know strings or `/* */` comments.
+  Measured against it: `\!` between two `/* $$ */` comments, and between two
+  `'$$'` strings, passed as "bare", and psql would have run them as Henry.
+  `SELECT '--'; COMMIT;` and `/* -- */ COMMIT;` passed too, and `END WORK;`
+  was not seen. Fixed by not parsing SQL:
+  - `scripts/aplicar-migraciones.mjs` applies each file with node-postgres,
+    one simple-protocol query, which runs SQL only;
+  - a backslash anywhere in a file refuses it before it is sent;
+  - a LOCAL value set before the file and read after it catches a file that
+    ends the transaction however it is written. It is then not recorded and
+    the run fails. The session is read-only by default, so nothing after that
+    end writes. What ran before it stays committed, and the failure says so.
+  - CI runs every case above as a sample file and sees each refused or
+    caught, the shell never run, nothing recorded.
+- **I1 and B1 · the history in a shared table.** True. INSERT on
+  `supabase_migrations.schema_migrations` let `bob_migrador` record future
+  versions for any CLI user, and the primary key answered which exist. And
+  `bob.sql` stopped matching #450. Now `resto` records in
+  `bob.schema_migrations`, owned by `bob_migrador`, made by its first run,
+  with no grant to anyone (as opsRUN's `opsrun.schema_migration`). The CLI's
+  history holds the install chain only. `bob.sql` is back to #450 at
+  `7429eec`, byte for byte (`ad9adf91…2605`), and the check pins that hash.
+  The check reads both histories: the chain in the CLI's, the rest in
+  `bob.schema_migrations`, nothing outside the chain in the CLI's. With the
+  CLI's history holding only the chain, `cadena` run again is a no-op,
+  measured in CI.
+- **I2.** An edited approval comment is not accepted (`created_at` must equal
+  `updated_at`), and `\r\n` is normalised. *Superseded by B2 below: there is
+  no comment any more.*
+- **I3.** The approved digest covers the install list, `instalar-bob.sh`,
+  `aplicar-migraciones.mjs`, `owner-chain-check.mjs`, `bob.sql` and the guard
+  itself. A change to any of them needs the approval. *Kept under B2, with
+  the cover discovered from `supabase/provision/` plus one list.*
+- **I4.** Without tmpfs (`$XDG_RUNTIME_DIR` or `/dev/shm`, checked as tmpfs on
+  Linux), the script stops. It no longer falls back to `/tmp`.
+- **Minor.** `name` and the rest of the record go as bound parameters.
+- **B2 · who signs the approval.** The `gh` the agents use is signed in as
+  Henry's login, so an agent could write the comment. Henry decided: «Firma con
+  llave que pide toque». Applied:
+  - the comment approval is gone;
+  - Henry signs the digest with `ssh-keygen -Y sign -n bob-install-chain` and a
+    security key, through `scripts/firmar-instalacion.sh`, into
+    `supabase/provision/aprobaciones/<digest>.sig`. A file, not a comment: it
+    is reviewed, merged and kept on `main`, while a comment can change after
+    the run that read it;
+  - `install-approval.yml` runs on `pull_request_target`. Workflow, scripts
+    and `firmantes_instalacion` come from `main`, and the PR is read through
+    the API, never checked out;
+  - the verifier accepts only `sk-` keys bound to the namespace and never
+    `no-touch-required`, and fails closed with no key;
+  - the format reuses Bzzz's `config/bob/firmantes_imagen` (`allowed_signers`,
+    `namespaces=`, empty until Henry adds his key);
+  - the digest covers `supabase/provision/` (minus `aprobaciones/`) and what
+    `cubre-la-firma` lists; a test keeps that list under `CODEOWNERS`.
+
+  Measured without a key, in `tests/install-approval.test.mjs`: the digest
+  moves with each covered file and not otherwise, and the verifier refuses no
+  key, a plain key that did sign, `no-touch-required`, a missing namespace and
+  an unlisted signer. Not measured: a good signature by a real security key.
+  Henry's key goes into `firmantes_instalacion` in #48 itself, since with an
+  empty file on `main` nobody could sign its addition.
+
+### O-3 · fifth independent review of PR #48, applied
+
+The review at `0031b6a` found two blockers and four further points. Each was
+verified first.
+
+- **B2-1 · the digest did not cover code the box ran.** True. `resto` ran
+  node with `pg` from `node_modules` after `pnpm install`, and neither
+  `package.json` (a `preinstall` runs at install), the lockfile nor
+  `supabase/config.toml` was covered. Fixed by removing what ran uncovered:
+  `resto` applies each file with `psql -c` (one simple query, no metacommand,
+  measured), with no node and no pnpm on the box; `aplicar-migraciones.mjs`,
+  `huella-instalacion.mjs` and `NODE_IMAGE` are gone. The digest now covers
+  `package.json`, `pnpm-lock.yaml`, `.npmrc`, `pnpm-workspace.yaml`,
+  `.pnpmfile.cjs`, `supabase/config.toml` and every tracked `node_modules/`
+  file, by mode, path and sha256. A directory in `cubre-la-firma`, a symlink
+  and a submodule are refused. The record in `bob.schema_migrations` holds
+  the file's sha256 instead of its text.
+- **B2-2 · the signature was checked only in CI.** True, and CI can be
+  spoofed. Now root's copy of `scripts/firma-instalacion.sh`
+  (`/opt/bob/bin/firma-instalacion caja`) checks it on the box before
+  anything runs, against `/opt/bob/firmantes_instalacion` (root's, 644), with
+  the digest it computes itself; a dirty checkout or a missing signature
+  installs nothing. `instalar-bob.sh` run directly hands itself to that copy.
+  CI adds `edited` and `synchronize` and fails if the base is not `main`.
+- **I-a · replay.** Henry signs the pair base → new, and the box keeps its
+  last signed state (`/opt/bob/instalacion-firmada`); an approval whose base
+  is not that state is refused.
+- **I-b · how Henry signs.** `scripts/firmar-instalacion.sh <branch>` runs
+  from a clean `main`, computes both digests with `main`'s script against the
+  PR's ref, shows the diff of what is covered, asks before the touch, and
+  signs in its own namespace (`bob-install-chain`). The key is not the one in
+  `firmantes_imagen`.
+- **I-c · bootstrap.** Documented in P5 §6.2: the key goes in #48 (later,
+  in a PR with only that change), Henry checks the fingerprint against the
+  physical key; `sk-` does not prove hardware, and FIDO attestation is not
+  verified here (`-O write-attestation` keeps the proof).
+- **I-d · the transaction check can be dodged.** True. The promise is
+  lowered: a file that ends the transaction is detected and reported, not
+  prevented. Comments, P5 and the CI bank say so.
+- **Minor.** `huella-instalacion.mjs`'s `argv[1]` guard is gone with the
+  file.
+
+Measured in `tests/install-approval.test.mjs`, without a database: each
+digest case, each refusal of the verifier, and `caja` refusing a dirty
+checkout, a missing or foreign approval and signers that are not root's,
+with nothing run. Not measured: a good signature by a real security key, and
+`caja` on a real box.
+
+### O-3 · sixth independent review of PR #48, applied
+
+The review at `fa08b18` found one blocker and three further points, each seen
+failing; each was verified first. The reviewer's design, which closes all
+four at once, was applied, with one change noted.
+
+- **B · `resto` installed migrations the signature did not cover.** True: the
+  digest covered `supabase/provision/` and a list, not
+  `supabase/migrations/`. A new `29990101000000_atk.sql` (`GRANT ALL … TO
+  anon`) left the digest unchanged and ran under the old approval. Now the
+  digest is the whole tree (all but `supabase/provision/aprobaciones/`);
+  `cubre-la-firma` is gone. Symlinks, submodules and odd paths are refused
+  anywhere. Every PR to `main` that changes anything needs Henry's signature.
+- **I1 · `.gitattributes` with `eol=crlf`** changed what ran without moving
+  the digest. Now nothing is read from a working tree: the box writes the tree
+  byte for byte from the blobs (`git cat-file blob`), and hashes those bytes.
+  *Changed from the proposal:* not `git archive`, which applies the tree's
+  `.gitattributes` (eol, `export-subst`, `export-ignore`) and so can make what
+  is written differ from the blobs.
+- **I2 · the clean-checkout check failed open** (a corrupt index, rc 128 and
+  empty output; `skip-worktree`; `core.fsmonitor` running code inside `git
+  status`). The check is gone, since nothing of the checkout is read: the
+  commit is fetched by its sha into a new repository of root's, with git run
+  with no fsmonitor, hooks or untracked cache, and every exit status checked.
+- **I3 · TOCTOU**: `caja` ran as Henry and exec'd from the working tree. Now
+  `caja` runs as root, under `env -i` with a fixed `PATH` and five checked
+  variables, and runs `instalar-bob.sh` from root's directory, 700, removed
+  after.
+- **I4 · state.** `/opt/bob/instalacion-firmada` must exist (Henry writes it
+  once); `/opt`, `/opt/bob`, `/opt/bob/bin` and the script must be root's and
+  not writable by others; the new state is written only after an install
+  that ends well.
+- **Minor.** `verify-required` is required and `cert-authority` refused;
+  `cadena` needs the `supabase` CLI to be the version CI pins (2.120.0);
+  approvals are named by the pair (`<base>-<nueva>.aprobacion`), so several
+  can reach one digest; `resto` refuses a file holding a NUL byte (CI bank
+  case added).
+
+Measured in `tests/install-approval.test.mjs` with `caja-prueba` (the same
+code, not as root, a directory for `/opt/bob`, any listed key): every case of
+the review seen refused or harmless, the committed tree run from root's
+directory with a clean environment, the state moved only after success. The
+sixth-review case was seen failing with the digest made to skip the new
+migration. Not measured: a real security key, and `caja` as root on a box.
+
+### O-3 · seventh independent review of PR #48, applied
+
+The review at `434d528` found nothing blocking. Henry decided when he signs:
+«Al instalar en la caja». The box always demands the signature; the CI check
+is informative («Install signature, informative (O-3)», never failing, never
+required); the only required O-3 check is «Chain applies as bob_migrador
+(O-3)». `firmar-instalacion.sh <commit> --base <commit>` now writes the
+approval for the box's `/opt/bob/aprobaciones/` and commits nothing.
+
+- **I1 · an approval cannot be revoked.** True. `caja` now shows the commit,
+  the pair and the log (non-printing characters removed) and installs only if
+  Henry types `instalo` at a terminal; and it refuses an approval of a digest
+  or pair listed in `/opt/bob/aprobaciones-revocadas` (root's, required).
+- **I2 · programs run as root from a PATH starting at `/usr/local`.** True
+  (on the reviewer's machine `/usr/local/bin` is not root's). The PATH now
+  puts system directories first, and every program `caja` or
+  `instalar-bob.sh` runs, where found, must be root's and not writable by
+  others along its whole path and through every link.
+- **I3.** `#!/bin/bash -p`, `bash -p` on every re-exec, and P5 says never
+  `SETENV` or `env_keep` in sudoers for this command: the connection settings
+  now go as `VAR=value` arguments, not through sudo's environment.
+- **Minor, all applied.** `transfer.fsckObjects` on the fetch, and
+  `git-upload-pack` as the caller through `setpriv` (`SUDO_UID`); the
+  connection files must be root's and not writable by others; a host starting
+  with `-` is refused; `flock` on `/opt/bob/.instalando` and old `trabajo.*`
+  removed; `instalar-bob.sh` checks it is root, in `/opt/bob/trabajo.*/arbol`,
+  root's, not only that a variable is set.
+
+Measured in `tests/install-approval.test.mjs` with `caja-prueba`. Not
+measured: `setpriv`, `flock` and `caja` as root on a box, and a real security
+key; ESTADO lists them as follow-ups.
+
+### O-3 · final verification of PR #48, applied
+
+The verification at `7f1da5c` found nothing blocking, two important points
+and minors; each was verified first.
+
+- **Settings not shown; passwords to any host.** True: `POSTGRES_HOST=evil` in
+  a prepared command would have had root send `postgres`'s password away. The
+  `instalo` screen now shows the settings and where passwords go, and root
+  sends them only to loopback or a host in `/opt/bob/hosts-permitidos`
+  (root's), checked in `caja` and again in `instalar-bob.sh`, for
+  `POSTGRES_HOST` and the alta's `MIGRADOR_HOST`. `psql` runs with
+  `PGREQUIREAUTH=scram-sha-256`; `cadena`'s `supabase db push` does not read
+  it, and keeps the host check.
+- **A listed set of programs.** True, against «discover, do not enumerate».
+  Now every directory of the fixed `PATH` and `git --exec-path`, every file in
+  them and every link target is checked; the comment no longer says «every
+  program».
+- **Minor.** The commit, the pair and the settings are shown again after the
+  log; the connection files are checked along their whole path; `FIRMA_GID`
+  must be non-zero; `firmar-instalacion.sh` writes under `$TMPDIR` by default;
+  P5 says `instalo` is a last look, not proof of presence: the barrier is the
+  signature.
+- **Last check at `a54723b`.** Two importants, applied: every link on the
+  `PATH` is checked hop by hop with `cadena_propia`, not only its final
+  target; psql is called by its real binary (`/usr/lib/postgresql/<v>/bin/psql`,
+  checked with its directory), not through `pg_wrapper`. P5 says what is not
+  checked: shared libraries, the loader, what an interpreter loads, and `sudo`
+  and the `#!/bin/bash -p` that run before any check. Minors: `resto` refuses
+  a missing `MIGRADOR_ENV` file; a connection file readable by a group or
+  others is refused; the screen shows `MIGRADOR_RED`; a `find` error on the
+  `PATH` fails with its message; P5 says `PGREQUIREAUTH` does not act with the
+  container's libpq 15.
+
+- **Check at `c46d125`.** No blockers. Applied: `caja` fails when no psql is found, and
+  `instalar-bob.sh` in a signed tree requires an absolute `BOB_PSQL`; the screen
+  shows the `MIGRADOR_USUARIO` read from the file; the chain list is read once
+  into a variable instead of `chain_files | grep -q` under pipefail.
+
 ## Slice 3 · Fitted to the O-3 install chain (#48)
 
 Measured on 25 Nov: #40 merged without committing into #48 (`a54723b`), on

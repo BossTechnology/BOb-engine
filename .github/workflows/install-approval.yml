@@ -1,0 +1,55 @@
+name: Install signature
+
+# O-3 (P5 §6.2). Informative, never required. Henry signs when he installs on
+# a box («Al instalar en la caja»), and the box always demands it: root's copy
+# of firma-instalacion.sh writes the commit's tree into a directory of root's,
+# checks the signature there against signers kept outside the repository, and
+# runs instalar-bob.sh from that directory. Ordinary PRs need no key.
+#
+# This job only says whether the PR's tree already carries an approval from
+# main's digest, and whether it verifies. It always passes; a bad approval is
+# a warning.
+#
+# pull_request_target: this workflow, its script and the signers file come from
+# main. The PR is fetched as git objects and read as data; nothing of it is
+# checked out or run. The token is read-only.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  signed:
+    name: Install signature, informative (O-3)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+      - name: Compare with main, and verify an approval if the PR carries one
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          [ "$BASE_REF" = main ] || { echo "::notice::This PR targets $BASE_REF, not main: not compared."; exit 0; }
+          git fetch -q --no-tags origin "+refs/pull/$PR/head:refs/bob/pr"
+          [ "$(git rev-parse refs/bob/pr)" = "$HEAD_SHA" ] || { echo "::notice::The PR moved while this ran."; exit 0; }
+          f=scripts/firma-instalacion.sh
+          base=$("$f" huella "$BASE_SHA" .)
+          new=$("$f" huella "$HEAD_SHA" .) || { echo "::warning::The PR's tree is refused by the digest (a symlink, a submodule or an odd path): no box would install it."; exit 0; }
+          if [ "$base" = "$new" ]; then echo "nothing that installs BOb changed ($new)"; exit 0; fi
+          echo "what installs BOb changed: $base → $new"
+          a="supabase/provision/aprobaciones/$base-$new.aprobacion"
+          if ! { git show "$HEAD_SHA:$a" > "$RUNNER_TEMP/msg" 2>/dev/null && git show "$HEAD_SHA:$a.sig" > "$RUNNER_TEMP/sig" 2>/dev/null; }; then
+            echo "::notice::Not signed in the tree. Henry signs when he installs it on a box (P5 §6.2)."; exit 0
+          fi
+          cmp -s "$RUNNER_TEMP/msg" <("$f" mensaje "$base" "$new") \
+            || { echo "::warning::$a does not hold the pair $base → $new."; exit 0; }
+          "$f" verificar supabase/provision/firmantes_instalacion "$RUNNER_TEMP/msg" "$RUNNER_TEMP/sig" \
+            || echo "::warning::$a does not verify against main's signers: a box would refuse it."
