@@ -29,14 +29,15 @@
 // (that a person touched it), and caja as root on a box (Henry's first
 // signature and install are those measurements).
 
-import { test, describe } from 'node:test'
+import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync, chmodSync, existsSync, readdirSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { REPO_ROOT } from './helpers/db.mjs'
+import pg from 'pg'
+import { REPO_ROOT, DB_URL } from './helpers/db.mjs'
 import { skKey, UP, UV } from './helpers/sk.mjs'
 
 const F = join(REPO_ROOT, 'scripts/firma-instalacion.sh')
@@ -52,6 +53,12 @@ const STUB = [
   '[ -n "$BOB_FIRMA_VERIFICADA" ] || exit 9',
   'printf "%s\\n%s\\n%s\\n%s\\n%s\\n" "$(pwd)" "$BOB_FIRMA_VERIFICADA" "${FOO-unset}" "$(cat marca.txt)" "${POSTGRES_HOST-unset}" > "$HOME/ran"',
   '[ ! -f falla ] || exit 3',
+  '# cadena from the empty base: what caja handed over; then, like instalar-bob.sh,',
+  '# refuse before the mark ($HOME/rehusa), or write it and fail after ($HOME/falla).',
+  'printf "%s|%s|%s\\n" "${BOB_BASE_VACIA-}" "${BOB_EN_CURSO-}" "${BOB_EN_CURSO_PAR-}" > "$HOME/vacia"',
+  '[ ! -f "$HOME/rehusa" ] || exit 1',
+  '[ -z "${BOB_EN_CURSO-}" ] || printf "%s\\n" "$BOB_EN_CURSO_PAR" > "$BOB_EN_CURSO"',
+  '[ ! -f "$HOME/falla" ] || exit 3',
   '',
 ].join('\n')
 
@@ -198,9 +205,13 @@ describe('a security key\'s signature', () => {
 describe('on a box', () => {
   // A box: <raiz> stands for /opt/bob. Its state is `prev`; the repository
   // holds an approval prev → digest, signed by the test key.
-  const box = ({ prev = 'a'.repeat(64), signers = `ci namespaces="bob-install-chain" ${PUB}\n`, revocadas = '# none\n', migrador = true } = {}) => {
-    const r = repo(); r.commit()
+  const box = ({ prev = 'a'.repeat(64), signers = `ci namespaces="bob-install-chain" ${PUB}\n`, revocadas = '# none\n', migrador = true, cli = false } = {}) => {
+    const r = repo()
+    // cli: the tree pins a supabase CLI and <raiz>/bin (the box's /opt/bob/bin) has it, so cadena reaches instalar-bob.sh.
+    if (cli) r.put('.github/workflows/ci.yml', 'env:\n  SUPABASE_CLI_VERSION: 9.9.9\n')
+    r.commit()
     const raiz = tmp('raiz-'); chmodSync(raiz, 0o755)
+    if (cli) { mkdirSync(join(raiz, 'bin'), { mode: 0o755 }); writeFileSync(join(raiz, 'bin/supabase'), '#!/bin/sh\n# test stub\necho 9.9.9\n'); chmodSync(join(raiz, 'bin/supabase'), 0o755) }
     writeFileSync(join(raiz, 'firmantes_instalacion'), signers); chmodSync(join(raiz, 'firmantes_instalacion'), 0o644)
     if (prev) { writeFileSync(join(raiz, 'instalacion-firmada'), prev + '\n'); chmodSync(join(raiz, 'instalacion-firmada'), 0o644) }
     if (migrador) {
@@ -212,9 +223,9 @@ describe('on a box', () => {
       const a = `${A}/${base}-${nueva}.aprobacion`
       r.put(a, run(['mensaje', base, nueva]).stdout); sign(join(r.d, a)); return r.commit()
     }
-    const caja = (commit = r.git('rev-parse', 'HEAD'), { env = {}, args = [], input = 'instalo\n' } = {}) => {
+    const caja = (commit = r.git('rev-parse', 'HEAD'), { env = {}, args = [], input = 'instalo\n', step = 'resto' } = {}) => {
       rmSync(join(raiz, 'ran'), { force: true })
-      const out = run(['caja-prueba', raiz, r.d, commit, 'resto', ...args], { env: { ...process.env, FOO: '1', POSTGRES_HOST: 'from-env', ...env }, input })
+      const out = run(['caja-prueba', raiz, r.d, commit, step, ...args], { env: { ...process.env, FOO: '1', POSTGRES_HOST: 'from-env', ...env }, input })
       const ran = existsSync(join(raiz, 'ran')) ? readFileSync(join(raiz, 'ran'), 'utf8').split('\n') : null
       return { out, ran, state: existsSync(join(raiz, 'instalacion-firmada')) ? readFileSync(join(raiz, 'instalacion-firmada'), 'utf8').trim() : null }
     }
@@ -359,6 +370,120 @@ describe('on a box', () => {
     chmodSync(a, 0o666); refusedBefore(b.caja(), /writable by others/)
     b.done()
   })
+  // The empty base (Henry, «Defined empty base»): a box with no BOb stands at
+  // VACIA, and its first install is signed from it. Only cadena runs from it,
+  // and instalar-bob.sh checks the database (tests/install-empty-base.test.mjs).
+  const VACIA = createHash('sha256').update('').digest('hex')
+  test('the empty base is sha256 of nothing, and no tree has it', () => {
+    assert.equal(run(['vacia']).stdout.trim(), VACIA)
+    const r = repo(); r.commit(); assert.notEqual(r.huella(), VACIA); rmSync(r.d, { recursive: true })
+  })
+  test('from the empty base, resto is refused before anything runs', () => {
+    const b = box({ prev: VACIA }); b.approve(VACIA)
+    refusedBefore(b.caja(undefined, { step: 'resto' }), /empty base.*cadena/); b.done()
+  })
+  test('from the empty base, cadena passes the signature check with an approval from it', () => {
+    const b = box({ prev: VACIA }); b.approve(VACIA)
+    const res = b.caja(undefined, { step: 'cadena' })
+    // caja-prueba has no supabase CLI on its fixed PATH: it stops at the pin, after the approval.
+    refusedBefore(res, /supabase CLI/); b.done()
+  })
+  test('a box records the pair it reached its state with', () => {
+    const b = box(); const d = b.r.huella(); b.approve('a'.repeat(64))
+    assert.equal(b.caja().out.status, 0)
+    assert.equal(readFileSync(join(b.raiz, 'instalacion-aprobacion'), 'utf8').trim(), `${'a'.repeat(64)}-${d}`); b.done()
+  })
+  // Review of #54, (1): with the empty base, every version has its VACIA-d.
+  // Running d again accepts only the pair the box reached d with, so a box
+  // whose state is written as d by hand does not install, whatever the order.
+  for (const x of ['f'.repeat(64), '1'.repeat(64)]) {
+    test(`a box at ${x[0]}…: d written by hand into the state does not install, with X-d revoked and VACIA-d present`, () => {
+      const b = box({ prev: x }); const d = b.r.huella()
+      b.approve(VACIA); b.approve(x)
+      writeFileSync(join(b.raiz, 'aprobaciones-revocadas'), `${x}-${d}\n`)
+      refusedBefore(b.caja(), /revoked/)
+      writeFileSync(join(b.raiz, 'instalacion-firmada'), d + '\n')
+      // No record: only d → d would run it, and Henry signed none.
+      refusedBefore(b.caja(), /no approval from/)
+      writeFileSync(join(b.raiz, 'instalacion-aprobacion'), `${x}-${'0'.repeat(64)}\n`); chmodSync(join(b.raiz, 'instalacion-aprobacion'), 0o644)
+      refusedBefore(b.caja(), /does not end at/)
+      b.done()
+    })
+  }
+  test('running d again verifies the recorded pair again: revoked since, it is refused', () => {
+    const b = box(); const d = b.r.huella(); b.approve('a'.repeat(64))
+    assert.equal(b.caja().out.status, 0)
+    writeFileSync(join(b.raiz, 'aprobaciones-revocadas'), `${'a'.repeat(64)}-${d}\n`)
+    refusedBefore(b.caja(), /revoked/); b.done()
+  })
+  // Re-review of #54: instalacion-en-curso is instalar-bob.sh's (BOB_EN_CURSO),
+  // written only after its check passed; caja never writes it, and binds it
+  // to VACIA-<digest>. These reach instalar-bob.sh on cadena (the tree's stub,
+  // which writes the mark where the real one does: after the check).
+  const st = (b, f) => existsSync(join(b.raiz, f)) ? readFileSync(join(b.raiz, f), 'utf8').trim() : null
+  const put = (b, f, c) => { writeFileSync(join(b.raiz, f), c + '\n'); chmodSync(join(b.raiz, f), 0o644) }
+  test('cadena from the empty base reaches instalar-bob.sh with the mark it may write: VACIA-<digest>, fresh', () => {
+    const b = box({ prev: VACIA, cli: true }); const d = b.r.huella(); b.approve(VACIA)
+    const res = b.caja(undefined, { step: 'cadena' })
+    assert.equal(res.out.status, 0, res.out.stdout + res.out.stderr)
+    assert.equal(st(b, 'vacia'), `1|${join(b.raiz, 'instalacion-en-curso')}|${VACIA}-${d}`)
+    assert.equal(res.state, d); assert.equal(st(b, 'instalacion-aprobacion'), `${VACIA}-${d}`)
+    assert.equal(st(b, 'instalacion-en-curso'), null, 'the mark is removed once the state moved'); b.done()
+  })
+  test('a check that refuses (or a database that cannot be reached) leaves no mark: the next run checks fresh again', () => {
+    const b = box({ prev: VACIA, cli: true }); b.approve(VACIA); put(b, 'rehusa', 'x')
+    for (const _ of [1, 2]) {
+      const res = b.caja(undefined, { step: 'cadena' })
+      assert.equal(res.out.status, 1); assert.match(res.out.stderr, /cadena failed/)
+      assert.equal(st(b, 'vacia').split('|')[0], '1', 'fresh, not reanuda')
+      assert.equal(st(b, 'instalacion-en-curso'), null, 'caja wrote no mark'); assert.equal(res.state, VACIA)
+    }
+    b.done()
+  })
+  test('a cadena that fails after the check passed is retried as reanuda, to the same digest, and ends well', () => {
+    const b = box({ prev: VACIA, cli: true }); const d = b.r.huella(); b.approve(VACIA); put(b, 'falla', 'x')
+    assert.equal(b.caja(undefined, { step: 'cadena' }).out.status, 1)
+    assert.equal(st(b, 'instalacion-en-curso'), `${VACIA}-${d}`); assert.equal(st(b, 'instalacion-firmada'), VACIA)
+    assert.equal(b.caja(undefined, { step: 'cadena' }).out.status, 1); assert.equal(st(b, 'vacia').split('|')[0], 'reanuda')
+    rmSync(join(b.raiz, 'falla'))
+    const ok = b.caja(undefined, { step: 'cadena' }); assert.equal(ok.out.status, 0, ok.out.stderr)
+    assert.equal(st(b, 'vacia').split('|')[0], 'reanuda'); assert.equal(ok.state, d); assert.equal(st(b, 'instalacion-en-curso'), null); b.done()
+  })
+  test('a mark for another digest: refused before anything runs (a retry installs the same commit)', () => {
+    const b = box({ prev: VACIA, cli: true }); b.approve(VACIA); put(b, 'instalacion-en-curso', `${VACIA}-${'b'.repeat(64)}`)
+    refusedBefore(b.caja(undefined, { step: 'cadena' }), /not a cadena from the empty base to [0-9a-f]{64}/); b.done()
+  })
+  test('a mark that is not a cadena from the empty base: refused', () => {
+    const b = box({ prev: VACIA }); b.approve(VACIA); put(b, 'instalacion-en-curso', `${'a'.repeat(64)}-${'b'.repeat(64)}`)
+    refusedBefore(b.caja(undefined, { step: 'cadena' }), /not a cadena from the empty base/); b.done()
+  })
+  test('a mark on a box that is not at the empty base, and that is not a finished cadena to it: refused', () => {
+    const b = box(); b.approve('a'.repeat(64)); put(b, 'instalacion-en-curso', `${VACIA}-${'b'.repeat(64)}`)
+    refusedBefore(b.caja(), /en-curso exists, but this box is not at the empty base/); b.done()
+  })
+  test('a crash between moving the state and removing the mark does not leave the box stuck', () => {
+    const b = box({ prev: VACIA, cli: true }); const d = b.r.huella(); b.approve(VACIA)
+    put(b, 'instalacion-firmada', d); put(b, 'instalacion-aprobacion', `${VACIA}-${d}`); put(b, 'instalacion-en-curso', `${VACIA}-${d}`)
+    const res = b.caja()
+    assert.equal(res.out.status, 0, res.out.stdout + res.out.stderr); assert.match(res.out.stdout, /ended well: removing/)
+    assert.equal(st(b, 'instalacion-en-curso'), null); assert.equal(res.state, d)
+    // A crash one step earlier (the record written, the state not): still at the empty base, retried as reanuda.
+    const c = box({ prev: VACIA, cli: true }); const e = c.r.huella(); c.approve(VACIA)
+    put(c, 'instalacion-aprobacion', `${VACIA}-${e}`); put(c, 'instalacion-en-curso', `${VACIA}-${e}`)
+    assert.equal(c.caja(undefined, { step: 'cadena' }).out.status, 0); assert.equal(st(c, 'vacia').split('|')[0], 'reanuda')
+    b.done(); c.done()
+  })
+  // Fix 3: a box that stands at d with no record (it was installed before
+  // instalacion-aprobacion existed, say lab-02 doing resto) runs d again only
+  // with an approval d → d that Henry signed; nothing written by hand.
+  test('a box at d with no record: an approval d → d runs it again, and is recorded', () => {
+    const b = box(); const d = b.r.huella(); put(b, 'instalacion-firmada', d)
+    const none = b.caja(); refusedBefore(none, /no approval from/); assert.match(none.out.stdout, /no record .*only an approval [0-9a-f]{64} → [0-9a-f]{64} runs it again/)
+    b.approve('a'.repeat(64)); refusedBefore(b.caja(), /no approval from/)
+    b.approve(d)
+    const res = b.caja(); assert.equal(res.out.status, 0, res.out.stdout + res.out.stderr)
+    assert.equal(st(b, 'instalacion-aprobacion'), `${d}-${d}`); b.done()
+  })
   test('a commit that is not a full sha: refused', () => {
     const b = box(); b.approve('a'.repeat(64)); refusedBefore(b.caja('HEAD'), /full sha/); b.done()
   })
@@ -404,5 +529,151 @@ describe('the repository', () => {
     assert.match(w, /f=scripts\/firma-instalacion\.sh\n/)
     assert.match(w, /aprobaciones\/\$base-\$new\.aprobacion/)
     assert.match(w, /"\$f" verificar supabase\/provision\/firmantes_instalacion /)
+  })
+})
+
+// The empty base (Henry, «Defined empty base»; scripts/firma-instalacion.sh
+// VACIA): a box where BOb was never installed holds it, and caja runs cadena
+// from it with BOB_BASE_VACIA=1 (or =reanuda, the retry of a cadena that did
+// not end well). instalar-bob.sh must then refuse a database with any trace of
+// BOb, so a box with the chain applied cannot claim the empty base and skip
+// the review of where it stands.
+//
+// This runs instalar-bob.sh cadena against the suite's database (the whole
+// chain applied) and against scratch databases made here and dropped after.
+// Nothing is pushed: `supabase` on PATH is a stub that only records it was
+// reached. GITHUB_ACTIONS=true and INSTALAR_SIN_FIRMA=ci are set so the script
+// runs outside a signed tree, as in CI's own job; on that path only,
+// INSTALAR_PRUEBA_DB points the checks at a scratch database.
+// Roles are the cluster's, not a database's: the suite's cluster has BOb's
+// roles, so a fresh check here always finds them. Not measured here: a fresh
+// check that passes, on a cluster with no BOb at all (the first install from
+// the empty base is that measurement).
+describe('the empty base, against the database', () => {
+  const url = new URL(DB_URL)
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'base-vacia-')))
+  writeFileSync(join(dir, 'postgres.env'), `POSTGRES_PASSWORD=${decodeURIComponent(url.password)}\n`); chmodSync(join(dir, 'postgres.env'), 0o600)
+  const bin = join(dir, 'bin'); mkdirSync(bin)
+  // Test stub for the supabase CLI: records that cadena reached the push.
+  writeFileSync(join(bin, 'supabase'), `#!/bin/sh\n# test stub, never the real CLI\necho "$*" > "${join(dir, 'pushed')}"\n`); chmodSync(join(bin, 'supabase'), 0o755)
+
+  const versions = readdirSync(join(REPO_ROOT, 'supabase/migrations')).map((f) => f.match(/^(\d{14})_.*\.sql$/)?.[1]).filter(Boolean)
+  const chain = readFileSync(join(REPO_ROOT, 'supabase/provision/install-chain.sha256'), 'utf8')
+    .split('\n').filter((l) => l && !l.startsWith('#')).map((l) => l.split(/\s+/)[1].slice(0, 14))
+  const afterChain = versions.find((v) => !chain.includes(v))
+
+  const cadena = (env) => {
+    spawnSync('rm', ['-f', join(dir, 'pushed')])
+    const r = spawnSync('bash', [join(REPO_ROOT, 'scripts/instalar-bob.sh'), 'cadena'], {
+      cwd: REPO_ROOT, encoding: 'utf8',
+      env: {
+        PATH: `${bin}:${process.env.PATH}`, HOME: dir, LANG: 'C',
+        INSTALAR_SIN_FIRMA: 'ci', GITHUB_ACTIONS: 'true', SUDO: '',
+        POSTGRES_ENV: join(dir, 'postgres.env'), POSTGRES_HOST: url.hostname, POSTGRES_PORT: url.port || '5432',
+        // instalar-bob.sh writes its pgpass on tmpfs: /dev/shm on Linux; a private directory on macOS.
+        ...(process.platform === 'linux' ? {} : { XDG_RUNTIME_DIR: dir }),
+        ...env,
+      },
+    })
+    return { ...r, pushed: existsSync(join(dir, 'pushed')) }
+  }
+  const refused = (r, ...why) => {
+    assert.equal(r.status, 1, r.stdout + r.stderr)
+    assert.match(r.stderr, /claims the empty base .*but its database already holds BOb/)
+    for (const w of why) assert.match(r.stderr, w)
+    assert.equal(r.pushed, false, 'nothing was pushed')
+  }
+  const passed = (r) => { assert.equal(r.status, 0, r.stdout + r.stderr); assert.ok(r.pushed, 'cadena reached the push') }
+
+  // A scratch database, as postgres: dropped when the file ends.
+  const admin = new pg.Client({ connectionString: DB_URL })
+  const made = []
+  async function scratch(sql = '') {
+    const name = `bob_vacia_${process.pid}_${made.length}`
+    await admin.query(`CREATE DATABASE ${name}`); made.push(name)
+    const u = new URL(DB_URL); u.pathname = `/${name}`
+    const c = new pg.Client({ connectionString: u.toString() }); await c.connect()
+    if (sql) await c.query(sql)
+    await c.end()
+    return name
+  }
+  const history = (...vs) => `CREATE SCHEMA supabase_migrations; CREATE TABLE supabase_migrations.schema_migrations (version text PRIMARY KEY);
+    INSERT INTO supabase_migrations.schema_migrations VALUES ${vs.map((v) => `('${v}')`).join(', ')};`
+  let role = null
+  after(async () => {
+    for (const n of made) await admin.query(`DROP DATABASE IF EXISTS ${n} WITH (FORCE)`).catch((e) => console.error(`could not drop ${n}: ${e.message}`))
+    if (role) await admin.query(`DROP ROLE IF EXISTS ${role}`)
+    await admin.end()
+  })
+  before(() => admin.connect())
+
+  test('control: without the empty base, the harness reaches the push', () => passed(cadena({})))
+
+  test('the suite\'s database, the chain applied: refused before the push, with what it found', () => {
+    refused(cadena({ BOB_BASE_VACIA: '1' }), /role bob_app/, /schema bob/, /By kind: .*\b[1-9][0-9]* history\b/, /[1-9][0-9]* function/)
+  })
+
+  test('an empty database finds only the cluster\'s roles: nothing in the database itself', async () => {
+    const r = cadena({ BOB_BASE_VACIA: '1', INSTALAR_PRUEBA_DB: await scratch() })
+    refused(r, /role bob_app/)
+    const found = r.stderr.split('\n').filter((l) => l.startsWith('  '))
+    assert.ok(found.every((l) => l.startsWith('  role ')), found.join('\n'))
+  })
+
+  test('schema bob renamed and the history emptied: still found, by the names BOb creates', async () => {
+    const db = await scratch(`CREATE SCHEMA bob_v1; CREATE TABLE bob_v1.proj_metric_counts (x int); CREATE TABLE bob_v1.actors (x int);
+      CREATE FUNCTION public.custom_access_token_hook(e jsonb) RETURNS jsonb LANGUAGE sql AS 'SELECT e'; ${history()}`.replace('VALUES ;', 'SELECT 1 WHERE false;'))
+    refused(cadena({ BOB_BASE_VACIA: '1', INSTALAR_PRUEBA_DB: db }), /relation bob_v1\.proj_metric_counts/, /relation bob_v1\.actors/, /function public\.custom_access_token_hook/)
+  })
+
+  test('a retry after a partial cadena: what the chain leaves is accepted', async () => {
+    const db = await scratch(`CREATE SCHEMA bob; CREATE TABLE bob.actors (x int); ${history(chain[0], chain[1])}`)
+    passed(cadena({ BOB_BASE_VACIA: 'reanuda', INSTALAR_PRUEBA_DB: db }))
+  })
+
+  // The mark (BOB_EN_CURSO) is written after the check passes, and only then.
+  const mark = join(dir, 'raiz', 'instalacion-en-curso'); mkdirSync(join(dir, 'raiz'))
+  const par = `${createHash('sha256').update('').digest('hex')}-${'d'.repeat(64)}`
+  const marked = () => existsSync(mark) ? readFileSync(mark, 'utf8').trim() : null
+  test('the mark: written once the check passed, with exactly the pair caja gave', async () => {
+    rmSync(mark, { force: true })
+    const db = await scratch(`CREATE SCHEMA bob; CREATE TABLE bob.actors (x int); ${history(chain[0])}`)
+    passed(cadena({ BOB_BASE_VACIA: 'reanuda', INSTALAR_PRUEBA_DB: db, BOB_EN_CURSO: mark, BOB_EN_CURSO_PAR: par }))
+    assert.equal(marked(), par)
+  })
+  test('the mark: not written when the check refuses', () => {
+    rmSync(mark, { force: true })
+    refused(cadena({ BOB_BASE_VACIA: '1', BOB_EN_CURSO: mark, BOB_EN_CURSO_PAR: par }))
+    assert.equal(marked(), null)
+  })
+  test('the mark: a path or pair that is not caja\'s is refused before the push', async () => {
+    const db = await scratch(history(chain[0]))
+    for (const [p, v] of [[join(dir, 'raiz', 'otro'), par], [mark, `${'a'.repeat(64)}`], [mark, `${par}\nx`]]) {
+      rmSync(mark, { force: true })
+      const r = cadena({ BOB_BASE_VACIA: 'reanuda', INSTALAR_PRUEBA_DB: db, BOB_EN_CURSO: p, BOB_EN_CURSO_PAR: v })
+      assert.equal(r.status, 2, r.stdout + r.stderr); assert.match(r.stderr, /not caja's/); assert.equal(r.pushed, false); assert.equal(marked(), null)
+    }
+  })
+  test('names a migration gives by RENAME TO, and BOb\'s indexes, are found too', async () => {
+    const db = await scratch(`CREATE SCHEMA otro; CREATE TABLE otro.autobotz (x int); CREATE TABLE public.vecina (x int);
+      CREATE INDEX idx_ab_due ON public.vecina (x); ${history()}`.replace('VALUES ;', 'SELECT 1 WHERE false;'))
+    refused(cadena({ BOB_BASE_VACIA: '1', INSTALAR_PRUEBA_DB: db }), /relation otro\.autobotz/, /relation public\.idx_ab_due/)
+  })
+
+  test('a retry with a migration after the chain in the history: refused', async () => {
+    const db = await scratch(history(chain[0], afterChain))
+    refused(cadena({ BOB_BASE_VACIA: 'reanuda', INSTALAR_PRUEBA_DB: db }), new RegExp(`history outside the install chain ${afterChain}`))
+  })
+
+  test('a retry where resto ran: refused', async () => {
+    const db = await scratch(`CREATE SCHEMA bob; CREATE TABLE bob.schema_migrations (version text);`)
+    refused(cadena({ BOB_BASE_VACIA: 'reanuda', INSTALAR_PRUEBA_DB: db }), /resto ran/)
+  })
+
+  test('a retry with a bob_* role that can log in (an old credential): refused', async () => {
+    role = `bob_prueba_${process.pid}`
+    await admin.query(`CREATE ROLE ${role} LOGIN`)
+    refused(cadena({ BOB_BASE_VACIA: 'reanuda', INSTALAR_PRUEBA_DB: await scratch() }), new RegExp(`role that can log in ${role}`))
+    await admin.query(`DROP ROLE ${role}`); role = null
   })
 })

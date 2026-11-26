@@ -10,6 +10,8 @@
 #   firma-instalacion.sh mensaje <digest-base> <digest-nuevo>
 #       The exact text Henry signs: the pair, so an old signature cannot bring
 #       back a state already signed once.
+#   firma-instalacion.sh vacia
+#       The empty base (see VACIA below): what a box with no BOb stands at.
 #   firma-instalacion.sh verificar <firmantes> <mensaje> <firma>
 #       Checks the signature against BOb's signers file (see verificar): a
 #       security key, touched, with its user verified (UV).
@@ -27,6 +29,32 @@
 # outside [A-Za-z0-9_./-] anywhere in the tree is refused.
 set -euo pipefail
 NS=bob-install-chain
+# The empty base: the digest of a box where BOb was never installed (Henry,
+# «Defined empty base»). It is sha256 of nothing, the digest of an empty
+# listing, which no tree has: huella refuses an empty tree. A box with no BOb
+# chain holds it in /opt/bob/instalacion-firmada, and its first install is
+# signed from it (firmar-instalacion.sh <commit> --base vacia). Every state
+# root writes by hand at bootstrap is root's word, not a signature; the empty
+# base is the one that is also checked against the database: from it only
+# cadena runs, and instalar-bob.sh (BOB_BASE_VACIA=1) refuses a database with
+# any trace of BOb, so a box with a chain applied cannot claim it to skip the
+# review of where it really stands.
+#
+# Two more files of root's, never written by hand:
+#   /opt/bob/instalacion-aprobacion (caja's): the pair <base>-<digest> the box
+#     reached its state with. Running a digest again (resto after cadena, a
+#     retry) accepts that pair alone, verified again: never another
+#     <X>-<digest>. A box that stands at a digest with no such record (it got
+#     there before this file existed, or by hand at bootstrap) runs it again
+#     only with an approval <digest>-<digest>, which Henry signs for that box
+#     (firmar-instalacion.sh <commit> --base <commit>).
+#   /opt/bob/instalacion-en-curso (instalar-bob.sh's, BOB_EN_CURSO): a cadena
+#     from the empty base whose check passed and that has not ended well. It
+#     is written only after the database was checked and found with no trace
+#     of BOb, and holds exactly <VACIA>-<digest>. Its retry, from the empty
+#     base to that same digest, may find what a partial chain leaves
+#     (BOB_BASE_VACIA=reanuda), and nothing more.
+VACIA=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 EXCLUIDO=supabase/provision/aprobaciones/
 PATH_FIJO=/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/sbin:/usr/local/bin
 PASAN="POSTGRES_ENV POSTGRES_HOST POSTGRES_PORT MIGRADOR_ENV MIGRADOR_PUERTO"
@@ -297,7 +325,7 @@ revocada() {  # <file> <base> <nueva>: is the pair, or the new digest, revoked?
 #   8. instalar-bob.sh runs from that directory, and only if it ends well is
 #      the new digest written as this box's state. The directory is removed.
 caja() {
-  local raiz=$1 uid=$2 relajado=$3 repo=$4 commit=$5 step=$6 v gd d prev cand ok c base pin have rc n src up ans f h hosts red psql u
+  local raiz=$1 uid=$2 relajado=$3 repo=$4 commit=$5 step=$6 v gd d prev vacia cand ok c base pin have rc n src up ans f h hosts red psql u
   case "$step" in cadena|resto) ;; *) fail "step: cadena or resto" ;; esac
   [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || fail "the commit: its full sha, as Henry read it (git rev-parse HEAD)"
   [[ "$repo" =~ ^/[A-Za-z0-9_./-]+$ ]] || fail "the repository: an absolute path in [A-Za-z0-9_./-]"
@@ -347,6 +375,22 @@ caja() {
 
   prev=$(cat "$raiz/instalacion-firmada")
   [[ "$prev" =~ ^[0-9a-f]{64}$ ]] || fail "$raiz/instalacion-firmada does not hold one digest"
+  vacia=""
+  if [ "$prev" = "$VACIA" ]; then
+    [ "$step" = cadena ] || fail "this box stands at the empty base (no BOb): its first step is cadena, not $step"
+    vacia=1
+  elif [ -e "$raiz/instalacion-en-curso" ]; then
+    # A cadena from the empty base that ended well, interrupted between
+    # moving the state and removing this file: both records say so.
+    propio "$raiz/instalacion-en-curso" "$uid"
+    if [ "$(cat "$raiz/instalacion-en-curso")" = "$VACIA-$prev" ] && [ -f "$raiz/instalacion-aprobacion" ] \
+       && [ "$(cat "$raiz/instalacion-aprobacion")" = "$VACIA-$prev" ]; then
+      echo "the cadena from the empty base to $prev ended well: removing $raiz/instalacion-en-curso it left"
+      rm -f "$raiz/instalacion-en-curso"
+    else
+      fail "$raiz/instalacion-en-curso exists, but this box is not at the empty base: refused"
+    fi
+  fi
 
   WORK=$(mktemp -d "$raiz/trabajo.XXXXXX"); chmod 700 "$WORK"
   gd=$WORK/git
@@ -363,12 +407,29 @@ caja() {
   [ "$(G --git-dir="$gd" cat-file -t "$commit")" = commit ] || fail "$commit is not a commit"
   extraer "$gd" "$commit" "$WORK/arbol" "$WORK/lista"
   d=$(sha < "$WORK/lista")
+  [ "$d" != "$VACIA" ] || fail "$commit has the empty base's digest: refused"
   [ -f "$WORK/arbol/scripts/instalar-bob.sh" ] || fail "$commit has no scripts/instalar-bob.sh"
+  if [ -n "$vacia" ] && [ -e "$raiz/instalacion-en-curso" ]; then
+    # The retry of a cadena from the empty base whose check passed: to the
+    # same digest only.
+    propio "$raiz/instalacion-en-curso" "$uid"
+    [ "$(cat "$raiz/instalacion-en-curso")" = "$VACIA-$d" ] \
+      || fail "$raiz/instalacion-en-curso is not a cadena from the empty base to $d: a retry installs the same commit, refused"
+    vacia=reanuda
+  fi
 
   if [ "$prev" = "$d" ]; then
-    cand=$( { G --git-dir="$gd" ls-tree --name-only "$commit" "$EXCLUIDO" | sed "s#^$EXCLUIDO##"
-              [ ! -d "$raiz/aprobaciones" ] || ls "$raiz/aprobaciones"; } \
-            | sed -n "s#^\([0-9a-f]\{64\}\)-$d\.aprobacion\$#\1#p" | sort -u)
+    # The same digest again: only the pair this box reached it with, or with
+    # no record of it, an approval <d>-<d> Henry signed for this box.
+    if [ -e "$raiz/instalacion-aprobacion" ]; then
+      propio "$raiz/instalacion-aprobacion" "$uid"
+      cand=$(cat "$raiz/instalacion-aprobacion")
+      [[ "$cand" =~ ^[0-9a-f]{64}-$d$ ]] || fail "$raiz/instalacion-aprobacion does not end at $d, where this box stands: refused"
+      cand=${cand%-$d}
+    else
+      echo "no record of the approval this box reached $d with: only an approval $d → $d runs it again"
+      cand=$d
+    fi
   else
     cand=$prev
   fi
@@ -390,7 +451,7 @@ caja() {
   [ -n "$ok" ] || fail "no approval from $prev (this box) to $d ($commit): nothing installed"
 
   if [ "$step" = cadena ]; then
-    pin=$(sed -n 's/^  SUPABASE_CLI_VERSION: *\([0-9][0-9.]*\)$/\1/p' "$WORK/arbol/.github/workflows/ci.yml" 2>/dev/null | head -1)
+    pin=$(sed -n 's/^  SUPABASE_CLI_VERSION: *\([0-9][0-9.]*\)$/\1/p' "$WORK/arbol/.github/workflows/ci.yml" 2>/dev/null | head -1) || pin=""
     have=$(supabase --version 2>/dev/null || true)
     [ -n "$pin" ] && [ "$have" = "$pin" ] || fail "the supabase CLI here is '${have:-none}', CI pins '${pin:-none}': nothing installed"
   fi
@@ -399,7 +460,7 @@ caja() {
   # a last look, not proof that he is there: the barrier is the signature.
   resumen() {
     echo "commit   $commit"
-    echo "base     $prev (this box)"
+    echo "base     $prev (this box)${vacia:+ = the empty base: no BOb here, which cadena checks in the database}"
     echo "nueva    $d (approval in $src)"
     echo "settings ${ajustes:-none}"
     echo "sends passwords to $hosts"
@@ -416,12 +477,15 @@ caja() {
   [ "$ans" = instalo ] || fail "not confirmed: nothing installed"
 
   set +e
-  (cd "$WORK/arbol" && BOB_FIRMA_VERIFICADA=$d BOB_PSQL=$psql SUDO="" /bin/bash -p scripts/instalar-bob.sh "$step")
+  (cd "$WORK/arbol" && BOB_FIRMA_VERIFICADA=$d BOB_BASE_VACIA=$vacia BOB_EN_CURSO=${vacia:+$raiz/instalacion-en-curso} BOB_EN_CURSO_PAR=${vacia:+$VACIA-$d} BOB_PSQL=$psql SUDO="" /bin/bash -p scripts/instalar-bob.sh "$step")
   rc=$?
   set -e
   [ "$rc" = 0 ] || fail "$step failed (exit $rc): this box stays at $prev"
+  n=$raiz/instalacion-aprobacion.nuevo
+  printf '%s-%s\n' "$ok" "$d" > "$n"; chmod 644 "$n"; mv -f "$n" "$raiz/instalacion-aprobacion"
   n=$raiz/instalacion-firmada.nuevo
   printf '%s\n' "$d" > "$n"; chmod 644 "$n"; mv -f "$n" "$raiz/instalacion-firmada"
+  rm -f "$raiz/instalacion-en-curso"
   echo "this box now stands at $d"
 }
 
@@ -448,6 +512,7 @@ cmd=${1:-}; shift || true
 case "$cmd" in
   huella) huella "${1:?rev}" "${2:-.}" "${3:-}" ;;
   mensaje) mensaje "${1:?}" "${2:?}" ;;
+  vacia) echo "$VACIA" ;;
   verificar) verificar "${1:?}" "${2:?}" "${3:?}" ;;
   herramienta) if [ -d "${1:?path}" ]; then directorio_propio "$1"; else cadena_propia "$1"; fi; echo "root's along its whole path: $1" ;;
   caja)
@@ -457,8 +522,10 @@ case "$cmd" in
   caja-prueba)
     [ "$(id -u)" != 0 ] || fail "caja-prueba never runs as root"
     [[ "${1:?raiz}" =~ ^/[A-Za-z0-9_./-]+$ ]] || fail "raiz: an absolute path"
-    PATH_FIJO=/usr/bin:/bin:/usr/sbin:/sbin   # the system's only, on a developer's machine too
+    # The system's only, on a developer's machine too, and <raiz>/bin, which
+    # stands for /opt/bob/bin: a test puts there the supabase CLI it pins.
+    PATH_FIJO=$1/bin:/usr/bin:/bin:/usr/sbin:/sbin
     NFIJOS=4; [ "${FIRMA_ENV_LIMPIO:-}" = 1 ] || limpio "$1" caja-prueba "$@"
     caja "$1" "$(id -u)" relajado "${2:?repo}" "${3:?commit}" "${4:?step}" ;;
-  *) echo "Usage: $0 huella|mensaje|verificar|caja|caja-prueba …" >&2; exit 2 ;;
+  *) echo "Usage: $0 huella|mensaje|vacia|verificar|caja|caja-prueba …" >&2; exit 2 ;;
 esac

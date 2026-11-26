@@ -799,20 +799,53 @@ sudo install -o root -g root -m 755 scripts/firma-instalacion.sh /opt/bob/bin/fi
 sudo install -o root -g root -m 644 supabase/provision/firmantes_instalacion /opt/bob/firmantes_instalacion
 sudo install -o root -g root -m 644 /dev/null /opt/bob/aprobaciones-revocadas
 printf '%s\n' <IP of bzzz-supabase-db on bzzz-app> bzzz-supabase-db | sudo tee /opt/bob/hosts-permitidos
-echo <digest> | sudo tee /opt/bob/instalacion-firmada && sudo chmod 644 /opt/bob/instalacion-firmada
+echo <digest> | sudo tee /opt/bob/instalacion-firmada && sudo chmod 644 /opt/bob/instalacion-firmada   # no BOb yet: /opt/bob/bin/firma-instalacion vacia | sudo tee …
 sudo install -d -o root -g root -m 700 /root/bob-install
 sudo install -o root -g root -m 600 /dev/null /root/bob-install/postgres.env   # then write POSTGRES_PASSWORD=… in it
 ```
 
 `instalacion-firmada` holds the digest of what the box runs today
-(`scripts/firma-instalacion.sh huella <that commit>`).
+(`scripts/firma-instalacion.sh huella <that commit>`), or the empty base on a
+box with no BOb (below). It is root's word, not a signature: write the digest
+the box really stands at. Two more files are never written by hand.
+`instalacion-aprobacion` (`caja`'s) is the pair `<base>-<digest>` the box
+reached its state with: running the same digest again, as `resto` after
+`cadena`, accepts that pair alone, verified again. A box that already stands
+at a digest and has no such record (installed before it existed, as lab-02
+for its `resto`) runs it again only with an approval `<digest>-<digest>`,
+which Henry signs like any other (`scripts/firmar-instalacion.sh <commit>
+--base <commit>` signs `d → d`; there is no diff). `instalacion-en-curso`
+(`instalar-bob.sh`'s, at the path `caja` gives it) is a `cadena` from the
+empty base whose database check passed and that has not ended well: it is
+written only after that check, holds exactly `<empty base>-<digest>`, and its
+retry must install the same digest. A refused check, or a database it cannot
+reach, leaves no such file, so the next run checks afresh. If `caja` stops
+between moving the state and removing it, the next run sees both records
+agree and removes it.
 
-- **TODO (H4).** On a box that runs no BOb yet, there is no commit to take the
-  digest of. Henry decided «Defined empty base» (2026-11-25). The
-  firma-instalacion-verify session implements it in
-  `scripts/firma-instalacion.sh`; it is not in BossTechnology/BOb-engine#51 as
-  of this writing. When its PR lands, this line names that PR and the digest
-  it defines. This file does not write a digest.
+- **The empty base (H4, BossTechnology/BOb-engine#54).** On a box that runs
+  no BOb yet, there is no commit to take the digest of. Henry decided «Defined
+  empty base» (2026-11-25). Such a box stands at the empty base,
+  `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`. It is
+  the sha256 of nothing (`scripts/firma-instalacion.sh vacia`), and no tree's
+  digest can be that value. `<digest>` above is that value, and Henry signs
+  the first install from it: `scripts/firmar-instalacion.sh <commit> --base
+  vacia`. It is the only state a box may claim without a signature, so it is
+  checked. From it, `caja` runs only `cadena`. `instalar-bob.sh cadena` then
+  refuses, before anything is pushed, a database with any trace of BOb, found
+  from the tree: a version of one of its migrations in the CLI's history, a
+  role `bob` or `bob_*`, schema `bob` with anything in it or a schema owned by
+  a `bob_*` role, or a relation (an index included), function or type named
+  as one that BOb's migrations create or rename to, in any schema not owned by
+  `supabase_admin` (so a renamed schema, or BOb's legacy objects in `public`,
+  are found). Policies and triggers are not looked for by name: they hang
+  from a table, which is. If that `cadena`
+  fails halfway, its retry, signed from the empty base too, accepts what a
+  partial chain leaves and nothing more: history inside the install chain
+  only, no `bob.schema_migrations`, no `bob_*` role that can log in. A box with the chain
+  applied (lab-02) never uses it: its `instalacion-firmada` holds the digest it
+  stands at, and Henry signs from there. **Not yet measured** on a database
+  with no BOb: the first install from the empty base is that measurement.
 - **How root on the host reaches the database (B3).** `bzzz-supabase-db`
   publishes no port, and its container name does not resolve on the host. So
   `POSTGRES_HOST` is its IP on `bzzz-app`:
