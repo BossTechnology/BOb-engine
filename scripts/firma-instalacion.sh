@@ -32,11 +32,20 @@ NS=bob-install-chain
 # «Defined empty base»). It is sha256 of nothing, the digest of an empty
 # listing, which no tree has: huella refuses an empty tree. A box with no BOb
 # chain holds it in /opt/bob/instalacion-firmada, and its first install is
-# signed from it (firmar-instalacion.sh <commit> --base vacia). It is the one
-# state a box may claim without a signature, so it is checked: from it only
-# cadena runs, and instalar-bob.sh (BOB_BASE_VACIA=1) refuses a database that
-# already holds any of BOb, so a box with a chain applied cannot claim it to
-# skip the review of where it really stands.
+# signed from it (firmar-instalacion.sh <commit> --base vacia). Every state
+# root writes by hand at bootstrap is root's word, not a signature; the empty
+# base is the one that is also checked against the database: from it only
+# cadena runs, and instalar-bob.sh (BOB_BASE_VACIA=1) refuses a database with
+# any trace of BOb, so a box with a chain applied cannot claim it to skip the
+# review of where it really stands.
+#
+# Two more files of root's, written by caja only, never by hand:
+#   /opt/bob/instalacion-aprobacion: the pair <base>-<digest> the box reached
+#     its state with. Running a digest again (resto after cadena, a retry)
+#     accepts that pair alone, verified again: never another <X>-<digest>.
+#   /opt/bob/instalacion-en-curso: a cadena from the empty base that has not
+#     ended well. Its retry, signed from the empty base too, may find what a
+#     partial chain leaves (BOB_BASE_VACIA=reanuda), and nothing more.
 VACIA=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 EXCLUIDO=supabase/provision/aprobaciones/
 PATH_FIJO=/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/sbin:/usr/local/bin
@@ -290,6 +299,13 @@ caja() {
   if [ "$prev" = "$VACIA" ]; then
     [ "$step" = cadena ] || fail "this box stands at the empty base (no BOb): its first step is cadena, not $step"
     vacia=1
+    if [ -e "$raiz/instalacion-en-curso" ]; then
+      propio "$raiz/instalacion-en-curso" "$uid"
+      [[ "$(cat "$raiz/instalacion-en-curso")" =~ ^$VACIA-[0-9a-f]{64}$ ]] || fail "$raiz/instalacion-en-curso is not a cadena from the empty base: refused"
+      vacia=reanuda
+    fi
+  else
+    [ ! -e "$raiz/instalacion-en-curso" ] || fail "$raiz/instalacion-en-curso exists, but this box is not at the empty base: refused"
   fi
 
   WORK=$(mktemp -d "$raiz/trabajo.XXXXXX"); chmod 700 "$WORK"
@@ -311,9 +327,12 @@ caja() {
   [ -f "$WORK/arbol/scripts/instalar-bob.sh" ] || fail "$commit has no scripts/instalar-bob.sh"
 
   if [ "$prev" = "$d" ]; then
-    cand=$( { G --git-dir="$gd" ls-tree --name-only "$commit" "$EXCLUIDO" | sed "s#^$EXCLUIDO##"
-              [ ! -d "$raiz/aprobaciones" ] || ls "$raiz/aprobaciones"; } \
-            | sed -n "s#^\([0-9a-f]\{64\}\)-$d\.aprobacion\$#\1#p" | sort -u)
+    # The same digest again: only the pair this box reached it with.
+    [ -f "$raiz/instalacion-aprobacion" ] || fail "this box stands at $d, but $raiz/instalacion-aprobacion (written by caja) is missing: which approval it reached $d with is unknown, so nothing runs"
+    propio "$raiz/instalacion-aprobacion" "$uid"
+    cand=$(cat "$raiz/instalacion-aprobacion")
+    [[ "$cand" =~ ^[0-9a-f]{64}-$d$ ]] || fail "$raiz/instalacion-aprobacion does not end at $d, where this box stands: refused"
+    cand=${cand%-$d}
   else
     cand=$prev
   fi
@@ -360,13 +379,19 @@ caja() {
   read -r ans || ans=""
   [ "$ans" = instalo ] || fail "not confirmed: nothing installed"
 
+  if [ -n "$vacia" ]; then
+    f=$raiz/instalacion-en-curso.nuevo; printf '%s-%s\n' "$VACIA" "$d" > "$f"; chmod 644 "$f"; mv -f "$f" "$raiz/instalacion-en-curso"
+  fi
   set +e
   (cd "$WORK/arbol" && BOB_FIRMA_VERIFICADA=$d BOB_BASE_VACIA=$vacia BOB_PSQL=$psql SUDO="" /bin/bash -p scripts/instalar-bob.sh "$step")
   rc=$?
   set -e
   [ "$rc" = 0 ] || fail "$step failed (exit $rc): this box stays at $prev"
+  n=$raiz/instalacion-aprobacion.nuevo
+  printf '%s-%s\n' "$ok" "$d" > "$n"; chmod 644 "$n"; mv -f "$n" "$raiz/instalacion-aprobacion"
   n=$raiz/instalacion-firmada.nuevo
   printf '%s\n' "$d" > "$n"; chmod 644 "$n"; mv -f "$n" "$raiz/instalacion-firmada"
+  rm -f "$raiz/instalacion-en-curso"
   echo "this box now stands at $d"
 }
 

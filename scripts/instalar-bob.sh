@@ -124,7 +124,11 @@ pw=$(key "$POSTGRES_ENV" POSTGRES_PASSWORD)
 [ -n "$pw" ] || { echo "$POSTGRES_ENV lacks POSTGRES_PASSWORD" >&2; exit 2; }
 ( umask 077; pgpass_line "$PG_HOST" "$PG_PORT" postgres "$pw" > "$priv/pgpass" )
 unset pw
-as_postgres() { PGPASSFILE="$priv/pgpass" "$PSQL" -h "$PG_HOST" -p "$PG_PORT" -U postgres -d postgres -X -q -v ON_ERROR_STOP=1 "$@"; }
+# The database is postgres. Only tests, on CI's path that skips the signature,
+# may point the checks at another (tests/install-empty-base.test.mjs).
+PG_DB=postgres
+if [ "${INSTALAR_SIN_FIRMA:-}" = ci ] && [ "${GITHUB_ACTIONS:-}" = true ] && [[ "${INSTALAR_PRUEBA_DB:-}" =~ ^[a-z_][a-z0-9_]*$ ]]; then PG_DB=$INSTALAR_PRUEBA_DB; fi
+as_postgres() { PGPASSFILE="$priv/pgpass" "$PSQL" -h "$PG_HOST" -p "$PG_PORT" -U postgres -d "$PG_DB" -X -q -v ON_ERROR_STOP=1 "$@"; }
 chain_files() { grep -v '^#' "$LIST" | awk '{ print $2 }'; }
 
 if [ "$step" = cadena ]; then
@@ -132,31 +136,63 @@ if [ "$step" = cadena ]; then
   work="$priv/work"; mkdir -p "$work/supabase/migrations"
   cp supabase/config.toml "$work/supabase/"
   echo "== 1 · the install chain, as postgres"
-  # From the empty base (caja sets BOB_BASE_VACIA=1 when this box's
-  # instalacion-firmada says BOb was never here), the database must agree:
-  # nothing of BOb in it. Found, not listed: any version of any file in
-  # supabase/migrations in the CLI's history, bob_migrador's own history, or
-  # any object in schema bob (an empty schema bob is no install).
-  if [ "${BOB_BASE_VACIA:-}" = 1 ]; then
+  # From the empty base (caja sets BOB_BASE_VACIA when this box's
+  # instalacion-firmada says BOb was never here), the database must agree.
+  # Found from the tree, not listed:
+  #   - the CLI's history: a version of any file in supabase/migrations;
+  #   - roles: bob, or any bob_*;
+  #   - schema bob with anything in it, or any schema owned by a bob_* role;
+  #   - any relation, function or type, in any schema but Supabase's own
+  #     (owned by supabase_admin), named as one that BOb's migrations create
+  #     (a renamed schema, or BOb's legacy objects in public, are found so).
+  # BOB_BASE_VACIA=reanuda: the retry of a cadena from the empty base that did
+  # not end well (caja's instalacion-en-curso). What a partial chain leaves is
+  # accepted, and nothing more: history inside the install chain only, no
+  # bob.schema_migrations (resto never ran), and no bob_* role that can log in
+  # (an old credential would survive the install).
+  if [ -n "${BOB_BASE_VACIA:-}" ]; then
+    case "$BOB_BASE_VACIA" in 1) modo="" ;; reanuda) modo=", retrying a partial cadena" ;; *) echo "BOB_BASE_VACIA: 1 or reanuda" >&2; exit 2 ;; esac
     vs=$(ls supabase/migrations | sed -n 's/^\([0-9]\{14\}\)_.*\.sql$/\1/p' | paste -sd, -)
-    [[ "$vs" =~ ^[0-9,]+$ ]] || { echo "no migration found in the tree" >&2; exit 2; }
-    found=$(as_postgres -A -t -c "SELECT CASE WHEN to_regclass('supabase_migrations.schema_migrations') IS NULL THEN 0 ELSE 1 END" \
-      -c "SELECT (to_regclass('bob.schema_migrations') IS NOT NULL)::int" \
-      -c "SELECT count(*) FROM pg_class WHERE relnamespace = to_regnamespace('bob')" \
-      -c "SELECT count(*) FROM pg_proc WHERE pronamespace = to_regnamespace('bob')") \
+    cv=$(chain_files | sed -n 's/^\([0-9]\{14\}\)_.*\.sql$/\1/p' | paste -sd, -)
+    names=$(cat supabase/migrations/*.sql | tr 'A-Z' 'a-z' \
+      | grep -o -E 'create( or replace)? (unlogged )?(table|view|materialized view|function|type|sequence)( if not exists)? +[a-z_".]+' \
+      | awk '{print $NF}' | tr -d '"' | sed 's/.*\.//' | grep -E '^[a-z_][a-z0-9_]*$' | sort -u | paste -sd, -) || names=""
+    [[ "$vs" =~ ^[0-9,]+$ && "$cv" =~ ^[0-9,]+$ && "$names" =~ ^[a-z0-9_,]+$ ]] || { echo "cannot read BOb's migrations from the tree" >&2; exit 2; }
+    hist=$(as_postgres -A -t -c "SELECT to_regclass('supabase_migrations.schema_migrations') IS NOT NULL") \
       || { echo "cannot read the database to check the empty base: nothing installed" >&2; exit 1; }
-    read -r -d '' hist mig rel fn <<<"$found" || true
-    [[ "$hist $mig $rel $fn" =~ ^[0-9]+\ [0-9]+\ [0-9]+\ [0-9]+$ ]] || { echo "unexpected answer checking the empty base: nothing installed" >&2; exit 1; }
-    hits=0
-    if [ "$hist" = 1 ]; then
-      hits=$(as_postgres -A -t -c "SELECT count(*) FROM supabase_migrations.schema_migrations WHERE version = ANY (string_to_array('$vs', ','))") \
-        || { echo "cannot read the CLI's history: nothing installed" >&2; exit 1; }
+    q="WITH sa AS (SELECT oid FROM pg_roles WHERE rolname = 'supabase_admin'),
+      nm AS (SELECT unnest(string_to_array('$names', ',')) AS name),
+      obj AS (SELECT relname AS name, relnamespace AS ns, 'relation' AS k FROM pg_class WHERE relkind IN ('r','v','m','p','f','S')
+              UNION ALL SELECT proname, pronamespace, 'function' FROM pg_proc
+              UNION ALL SELECT typname, typnamespace, 'type' FROM pg_type t WHERE typtype IN ('e','d','c','r')
+                AND NOT EXISTS (SELECT 1 FROM pg_class c WHERE c.reltype = t.oid))"
+    if [ "$BOB_BASE_VACIA" = 1 ]; then
+      q="$q
+      SELECT 'role ' || rolname FROM pg_roles WHERE rolname = 'bob' OR rolname LIKE 'bob\_%'
+      UNION ALL SELECT 'schema ' || nspname FROM pg_namespace n
+        WHERE (nspname = 'bob' AND (EXISTS (SELECT 1 FROM pg_class WHERE relnamespace = n.oid) OR EXISTS (SELECT 1 FROM pg_proc WHERE pronamespace = n.oid)))
+           OR pg_get_userbyid(nspowner) LIKE 'bob\_%'
+      UNION ALL SELECT DISTINCT o.k || ' ' || n.nspname || '.' || o.name FROM obj o JOIN nm USING (name) JOIN pg_namespace n ON n.oid = o.ns
+        WHERE n.nspowner NOT IN (SELECT oid FROM sa) AND n.nspname NOT IN ('pg_catalog', 'information_schema')"
+      [ "$hist" != t ] || q="$q
+      UNION ALL SELECT 'history ' || version FROM supabase_migrations.schema_migrations WHERE version = ANY (string_to_array('$vs', ','))"
+    else
+      q="$q
+      SELECT 'role that can log in ' || rolname FROM pg_roles WHERE (rolname = 'bob' OR rolname LIKE 'bob\_%') AND rolcanlogin
+      UNION ALL SELECT 'resto ran: bob.schema_migrations' WHERE to_regclass('bob.schema_migrations') IS NOT NULL"
+      [ "$hist" != t ] || q="$q
+      UNION ALL SELECT 'history outside the install chain ' || version FROM supabase_migrations.schema_migrations
+        WHERE version = ANY (string_to_array('$vs', ',')) AND NOT version = ANY (string_to_array('$cv', ','))"
     fi
-    if [ "$hits" != 0 ] || [ "$mig" != 0 ] || [ "$rel" != 0 ] || [ "$fn" != 0 ]; then
-      echo "This box claims the empty base (no BOb), but its database already holds BOb: $hits of BOb's migrations in the CLI's history, bob.schema_migrations: $mig, schema bob: $rel relations and $fn functions. Nothing installed. /opt/bob/instalacion-firmada must hold the digest this box really stands at, and Henry signs from there." >&2
+    found=$(as_postgres -A -t -c "$q") || { echo "cannot read the database to check the empty base: nothing installed" >&2; exit 1; }
+    if [ -n "$found" ]; then
+      echo "This box claims the empty base (no BOb$modo), but its database already holds BOb. Found $(wc -l <<<"$found" | tr -d ' '):" >&2
+      echo "By kind: $(awk '{print $1}' <<<"$found" | sort | uniq -c | awk '{printf "%s%s %s", (NR > 1 ? ", " : ""), $1, $2}'). The first 20:" >&2
+      head -20 <<<"$found" | sed 's/^/  /' >&2
+      echo "Nothing installed. /opt/bob/instalacion-firmada must hold the digest this box really stands at, and Henry signs from there." >&2
       exit 1
     fi
-    echo "the empty base: no BOb in this database (checked)"
+    echo "the empty base: no trace of BOb in this database (checked$modo)"
   fi
   (cd supabase/migrations && grep -v '^#' "../provision/install-chain.sha256" | "${SHA[@]}" -c --quiet -)
   chain_files | while read -r f; do cp "supabase/migrations/$f" "$work/supabase/migrations/"; done

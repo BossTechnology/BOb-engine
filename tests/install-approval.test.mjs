@@ -315,9 +315,44 @@ describe('on a box', () => {
     // caja-prueba has no supabase CLI on its fixed PATH: it stops at the pin, after the approval.
     refusedBefore(res, /supabase CLI/); b.done()
   })
-  test('from the empty base, an approval from another base is refused', () => {
-    const b = box({ prev: VACIA }); b.approve('a'.repeat(64))
-    refusedBefore(b.caja(undefined, { step: 'cadena' }), /no approval from e3b0c442/); b.done()
+  test('a box records the pair it reached its state with', () => {
+    const b = box(); const d = b.r.huella(); b.approve('a'.repeat(64))
+    assert.equal(b.caja().out.status, 0)
+    assert.equal(readFileSync(join(b.raiz, 'instalacion-aprobacion'), 'utf8').trim(), `${'a'.repeat(64)}-${d}`); b.done()
+  })
+  // Review of #54, (1): with the empty base, every version has its VACIA-d.
+  // Running d again accepts only the pair the box reached d with, so a box
+  // whose state is written as d by hand does not install, whatever the order.
+  for (const x of ['f'.repeat(64), '1'.repeat(64)]) {
+    test(`a box at ${x[0]}…: d written by hand into the state does not install, with X-d revoked and VACIA-d present`, () => {
+      const b = box({ prev: x }); const d = b.r.huella()
+      b.approve(VACIA); b.approve(x)
+      writeFileSync(join(b.raiz, 'aprobaciones-revocadas'), `${x}-${d}\n`)
+      refusedBefore(b.caja(), /revoked/)
+      writeFileSync(join(b.raiz, 'instalacion-firmada'), d + '\n')
+      refusedBefore(b.caja(), /instalacion-aprobacion .*missing/)
+      writeFileSync(join(b.raiz, 'instalacion-aprobacion'), `${x}-${'0'.repeat(64)}\n`); chmodSync(join(b.raiz, 'instalacion-aprobacion'), 0o644)
+      refusedBefore(b.caja(), /does not end at/)
+      b.done()
+    })
+  }
+  test('running d again verifies the recorded pair again: revoked since, it is refused', () => {
+    const b = box(); const d = b.r.huella(); b.approve('a'.repeat(64))
+    assert.equal(b.caja().out.status, 0)
+    writeFileSync(join(b.raiz, 'aprobaciones-revocadas'), `${'a'.repeat(64)}-${d}\n`)
+    refusedBefore(b.caja(), /revoked/); b.done()
+  })
+  // (2): a cadena from the empty base that did not end well leaves
+  // instalacion-en-curso; it is caja's, and only at the empty base.
+  test('instalacion-en-curso on a box that is not at the empty base: refused', () => {
+    const b = box(); b.approve('a'.repeat(64))
+    writeFileSync(join(b.raiz, 'instalacion-en-curso'), `${VACIA}-${'b'.repeat(64)}\n`); chmodSync(join(b.raiz, 'instalacion-en-curso'), 0o644)
+    refusedBefore(b.caja(), /en-curso exists, but this box is not at the empty base/); b.done()
+  })
+  test('instalacion-en-curso that is not a cadena from the empty base: refused', () => {
+    const b = box({ prev: VACIA }); b.approve(VACIA)
+    writeFileSync(join(b.raiz, 'instalacion-en-curso'), `${'a'.repeat(64)}-${'b'.repeat(64)}\n`); chmodSync(join(b.raiz, 'instalacion-en-curso'), 0o644)
+    refusedBefore(b.caja(undefined, { step: 'cadena' }), /not a cadena from the empty base/); b.done()
   })
   test('a commit that is not a full sha: refused', () => {
     const b = box(); b.approve('a'.repeat(64)); refusedBefore(b.caja('HEAD'), /full sha/); b.done()

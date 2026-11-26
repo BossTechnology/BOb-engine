@@ -799,13 +799,19 @@ sudo install -o root -g root -m 755 scripts/firma-instalacion.sh /opt/bob/bin/fi
 sudo install -o root -g root -m 644 supabase/provision/firmantes_instalacion /opt/bob/firmantes_instalacion
 sudo install -o root -g root -m 644 /dev/null /opt/bob/aprobaciones-revocadas
 printf '%s\n' <IP of bzzz-supabase-db on bzzz-app> bzzz-supabase-db | sudo tee /opt/bob/hosts-permitidos
-echo <digest> | sudo tee /opt/bob/instalacion-firmada && sudo chmod 644 /opt/bob/instalacion-firmada
+echo <digest> | sudo tee /opt/bob/instalacion-firmada && sudo chmod 644 /opt/bob/instalacion-firmada   # no BOb yet: /opt/bob/bin/firma-instalacion vacia | sudo tee …
 sudo install -d -o root -g root -m 700 /root/bob-install
 sudo install -o root -g root -m 600 /dev/null /root/bob-install/postgres.env   # then write POSTGRES_PASSWORD=… in it
 ```
 
 `instalacion-firmada` holds the digest of what the box runs today
-(`scripts/firma-instalacion.sh huella <that commit>`).
+(`scripts/firma-instalacion.sh huella <that commit>`), or the empty base on a
+box with no BOb (below). It is root's word, not a signature: write the digest
+the box really stands at. `caja` writes two more files, never written by hand:
+`instalacion-aprobacion`, the pair `<base>-<digest>` the box reached its state
+with (running the same digest again, as `resto` after `cadena`, accepts that
+pair alone, verified again), and `instalacion-en-curso`, a `cadena` from the
+empty base that has not ended well.
 
 - **The empty base (H4, BossTechnology/BOb-engine#54).** On a box that runs
   no BOb yet, there is no commit to take the digest of. Henry decided «Defined
@@ -816,9 +822,15 @@ sudo install -o root -g root -m 600 /dev/null /root/bob-install/postgres.env   #
   the first install from it: `scripts/firmar-instalacion.sh <commit> --base
   vacia`. It is the only state a box may claim without a signature, so it is
   checked. From it, `caja` runs only `cadena`. `instalar-bob.sh cadena` then
-  refuses, before anything is pushed, a database that holds any of BOb: a
-  version of one of its migrations in the CLI's history,
-  `bob.schema_migrations`, or any object in schema `bob`. A box with the chain
+  refuses, before anything is pushed, a database with any trace of BOb, found
+  from the tree: a version of one of its migrations in the CLI's history, a
+  role `bob` or `bob_*`, schema `bob` with anything in it or a schema owned by
+  a `bob_*` role, or a relation, function or type named as one that BOb's
+  migrations create, in any schema not owned by `supabase_admin` (so a renamed
+  schema, or BOb's legacy objects in `public`, are found). If that `cadena`
+  fails halfway, its retry, signed from the empty base too, accepts what a
+  partial chain leaves and nothing more: history inside the install chain
+  only, no `bob.schema_migrations`, no `bob_*` role that can log in. A box with the chain
   applied (lab-02) never uses it: its `instalacion-firmada` holds the digest it
   stands at, and Henry signs from there. **Not yet measured** on a database
   with no BOb: the first install from the empty base is that measurement.
