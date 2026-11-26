@@ -217,14 +217,22 @@ jobs:
           docker ps --format '{{.Image}}' | grep -E 'supabase/postgres:' | tee /dev/stderr | grep -q ':17.6.1.136$'
       # No password on a command line: instalar-bob.sh reads it from a file, as
       # on a box (CI's local stack has the default one).
+      # Over the db container's own address, not loopback, as on a box
+      # (POSTGRES_HOST=172.19.0.3 on lab-02): the CLI wants TLS from any host
+      # that is not loopback, and this database, like the box's, has ssl off.
+      # The later `cadena` run again goes over 127.0.0.1.
       - name: 1 · the install chain (scripts/instalar-bob.sh cadena)
         env:
           POSTGRES_ENV: ${{ runner.temp }}/postgres.env
-          POSTGRES_PORT: '54322'
           SUDO: ''
         run: |
           (umask 077; echo POSTGRES_PASSWORD=postgres > "$POSTGRES_ENV")
-          scripts/instalar-bob.sh cadena
+          POSTGRES_HOST=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' supabase_db_bob-v1)
+          case "$POSTGRES_HOST" in 127.*|'') echo "::error::no container address for supabase_db_bob-v1: '$POSTGRES_HOST'"; exit 1 ;; esac
+          ssl=$(PGPASSWORD=postgres psql -h "$POSTGRES_HOST" -p 5432 -U postgres -d postgres -X -A -t -c 'SHOW ssl')
+          echo "database at $POSTGRES_HOST:5432, ssl $ssl"
+          [ "$ssl" = off ] || { echo "::error::ssl is '$ssl' here: this step no longer measures a database without TLS"; exit 1; }
+          POSTGRES_HOST=$POSTGRES_HOST POSTGRES_PORT=5432 scripts/instalar-bob.sh cadena
       # Step 2 on a box is Bzzz's alta (bzzz#450). Here, its stand-in, writing
       # the same migrador.env the alta writes.
       - name: 2 · the alta, CI stand-in for bzzz#450
