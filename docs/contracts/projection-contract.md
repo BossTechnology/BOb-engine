@@ -8,8 +8,13 @@ route-plan task 3.7 implements against this version.
 was built against (BOb-engine#40, spec `docs/slice-3-absent-not-zero.md`,
 amendments F-28 to F-34, F-38, F-39). It goes into the sections it names when
 Federico accepts it on Relevo task 6. Until then the version stays 0.5.3.
-Marked **[PROPOSED 0.6]** where it lands. Points that need Henry before the
-text is final are marked **[OPEN · Henry]**, with the question.
+Marked **[PROPOSED 0.6]** where it lands. The three points that needed Henry
+were decided by him on 25 Nov; each is marked **[DECIDED · Henry, 25 Nov]**.
+
+**How this version stands** (Henry, 25 Nov: «Sí, fusionar igual»). If
+Federico has not accepted by the Monday 30 Nov window, BOb-engine#40 merges with
+this block as **0.6 proposed, accepted by Henry**. The header stays at 0.5.3
+until Federico accepts. Anything he changes comes back later as a migration.
 
 - **F-28 · §5, §8 · Liveness and the observed zero.** Liveness has two sources
   for one bucket of one channel: **traffic** (an interaction with activity in
@@ -33,11 +38,11 @@ text is final are marked **[OPEN · Henry]**, with the question.
     same rule for whatever it does not count.
   - The label failures stay under §4.1. 3.7 owes F-28 as the reference feeder
     does.
-  - **[OPEN · Henry]** The notices posted on task 6 (20 and 21 Nov) say the
-    zero row carries "the bucket's `session_count`" and do not carry the
-    "no zero for a metric the feeder does not count" rule. Both change what
-    3.7 writes. *Question: do both go to Federico as part of 0.6, worded as
-    above?*
+  - **[DECIDED · Henry, 25 Nov]** «Sí, en 0.6», with the wording above. Both
+    rules go to Federico as part of 0.6, and 3.7 owes them. The notices posted
+    on task 6 (20 and 21 Nov) did not carry them. The first rule is that a
+    zero row's `session_count` is the metric's own denominator in the bucket.
+    The second is that a metric the feeder does not count gets no zero.
 - **F-29 · §9.1 · Three capabilities.** `disambiguation`, `escalation`,
   `queue`. Presence only, declared per channel, never mapped from
   `channel_type` or from `channel_actor_mix`. Ten become thirteen.
@@ -81,18 +86,17 @@ text is final are marked **[OPEN · Henry]**, with the question.
   Slice 4 classifier-failure count and the Slice 5 unfounded-claims row. The
   last three read the same functions when their slice is built; the scope map
   carries the list, not a count.
-- **[OPEN · Henry]** Federico accepted F-41 on task 6 (23 Nov: `first_seen`
-  and `last_seen` inside the frame, the CHECK stays, a daily sweep off each
-  organization's peak). *Question: does F-41 go into 0.6 with Slice 3, or take
-  its own number (0.5.4) ahead of it?*
-- **[OPEN · Henry]** *Question: if Federico has not accepted by the Monday
-  30 Nov window, does #40 merge with this block as "proposed 0.6, accepted by
-  Henry", the header still at 0.5.3, and anything he changes coming back as a
-  migration?*
+- **F-41 is in 0.6** (**[DECIDED · Henry, 25 Nov]**: «Dentro de 0.6», no
+  separate 0.5.4). Federico accepted it on task 6 on 23 Nov: `first_seen` and
+  `last_seen` fall inside the frame, the CHECK stays, and the sweep is daily,
+  off each organization's peak. Its text is the **[PROPOSED, F-41]** block
+  below.
+- **Merging before Federico accepts** (**[DECIDED · Henry, 25 Nov]**: «Sí,
+  fusionar igual»): see "How this version stands" at the top of this block.
 
-**Proposed after 0.5.3, not a version yet** (P5 Q6 (a), Henry, 2026-11-21;
-F-41). Marked **[PROPOSED, F-41]** where it lands, in §7.2, §7.3a, §7.4 and
-§10. It takes a version number when it is accepted:
+**F-41, part of 0.6** (P5 Q6 (a), Henry, 2026-11-21; accepted by Federico on
+23 Nov; in 0.6 by Henry's decision of 25 Nov). Marked **[PROPOSED, F-41]**
+where it lands, in §7.2, §7.3a, §7.4 and §10:
 - **§7.2, §7.3a.** The reconciliation's window no longer reads the truth
   store. The feeder container calls `member_refs_seen(frame)` and stages what
   it returns in a new table, `bob.member_refs_seen`. `bob_app` reads the
