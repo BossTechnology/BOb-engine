@@ -280,7 +280,7 @@ describe('on a box', () => {
   test('resto with no migrador file: refused; the screen shows MIGRADOR_RED', () => {
     const b = box(); b.approve('a'.repeat(64))
     const res = b.caja(); assert.equal(res.out.status, 0, res.out.stderr)
-    assert.match(res.out.stdout, /migrador@127\.0\.0\.1:5432 \(from .*MIGRADOR_RED=bzzz-data\)/)
+    assert.match(res.out.stdout, / bob_migrador@127\.0\.0\.1:5432 \(from .*MIGRADOR_RED=bzzz-data\)/)
     b.done()
     const c = box({ migrador: false }); c.approve('a'.repeat(64)); refusedBefore(c.caja(), /migrador\.env does not exist/); c.done()
   })

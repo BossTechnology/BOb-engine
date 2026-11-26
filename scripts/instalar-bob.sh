@@ -117,6 +117,9 @@ permitido "$PG_HOST" || { echo "POSTGRES_HOST $PG_HOST is not permitted (/opt/bo
 export PGREQUIREAUTH=scram-sha-256
 # On a box, caja hands over psql's real binary (not Debian's pg_wrapper), checked.
 PSQL=${BOB_PSQL:-psql}
+if signed_tree; then
+  [[ "${BOB_PSQL:-}" == /* ]] || { echo "BOB_PSQL is empty: caja hands over psql's checked binary; nothing installed" >&2; exit 2; }
+fi
 pw=$(key "$POSTGRES_ENV" POSTGRES_PASSWORD)
 [ -n "$pw" ] || { echo "$POSTGRES_ENV lacks POSTGRES_PASSWORD" >&2; exit 2; }
 ( umask 077; pgpass_line "$PG_HOST" "$PG_PORT" postgres "$pw" > "$priv/pgpass" )
@@ -180,10 +183,11 @@ mig -c "
 done_v=$(mig -A -t -c 'SELECT version FROM bob.schema_migrations')
 
 applied=0; seen=0
+chain=$(chain_files)
 for path in $(ls supabase/migrations/*.sql | sort); do
   f=$(basename "$path")
   [[ "$f" =~ ^[0-9]+_.*\.sql$ ]] || continue
-  chain_files | grep -qxF "$f" && continue
+  grep -qxF "$f" <<<"$chain" && continue
   seen=$((seen + 1))
   v=${f%%_*}; n=${f#*_}; n=${n%.sql}
   grep -qx "$v" <<<"$done_v" && continue

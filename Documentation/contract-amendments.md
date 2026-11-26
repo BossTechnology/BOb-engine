@@ -3641,3 +3641,7 @@ and minors; each was verified first.
   `PATH` fails with its message; P5 says `PGREQUIREAUTH` does not act with the
   container's libpq 15.
 
+- **Check at `c46d125`.** No blockers. Applied: `caja` fails when no psql is found, and
+  `instalar-bob.sh` in a signed tree requires an absolute `BOB_PSQL`; the screen
+  shows the `MIGRADOR_USUARIO` read from the file; the chain list is read once
+  into a variable instead of `chain_files | grep -q` under pipefail.

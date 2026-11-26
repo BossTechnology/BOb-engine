@@ -161,9 +161,9 @@ psql_real() {
     [[ "$v" =~ ^[0-9]+$ ]] || continue
     if [ -z "$best" ] || [ "$v" -gt "${best%%:*}" ]; then best="$v:$p"; fi
   done
-  if [ -n "$best" ]; then p=${best#*:}; else p=$(command -v psql 2>/dev/null) || { echo ""; return 0; }; fi
+  if [ -n "$best" ]; then p=${best#*:}; else p=$(command -v psql 2>/dev/null) || fail "no psql on this box: install postgresql-client"; fi
   directorio_propio "$(dirname "$p")" >&2; cadena_propia "$p" >&2
-  head -c 2 "$p" | grep -q '^#!' && fail "$p is a script, not psql itself: refused"
+  [ "$(head -c 2 "$p")" != '#!' ] || fail "$p is a script, not psql itself: refused"
   echo "$p"
 }
 herramientas() {
@@ -224,7 +224,7 @@ revocada() {  # <file> <base> <nueva>: is the pair, or the new digest, revoked?
 #   8. instalar-bob.sh runs from that directory, and only if it ends well is
 #      the new digest written as this box's state. The directory is removed.
 caja() {
-  local raiz=$1 uid=$2 relajado=$3 repo=$4 commit=$5 step=$6 v gd d prev cand ok c base pin have rc n src up ans f h hosts red psql
+  local raiz=$1 uid=$2 relajado=$3 repo=$4 commit=$5 step=$6 v gd d prev cand ok c base pin have rc n src up ans f h hosts red psql u
   case "$step" in cadena|resto) ;; *) fail "step: cadena or resto" ;; esac
   [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || fail "the commit: its full sha, as Henry read it (git rev-parse HEAD)"
   [[ "$repo" =~ ^/[A-Za-z0-9_./-]+$ ]] || fail "the repository: an absolute path in [A-Za-z0-9_./-]"
@@ -259,10 +259,11 @@ caja() {
   if [ "$step" = resto ]; then
     f=${MIGRADOR_ENV:-$raiz/secrets/migrador.env}
     [ -e "$f" ] || fail "$f does not exist: resto needs the alta's file (MIGRADOR_ENV)"
-    conf "$f"; h=$(clave "$f" MIGRADOR_HOST); red=$(clave "$f" MIGRADOR_RED)
+    conf "$f"; u=$(clave "$f" MIGRADOR_USUARIO); h=$(clave "$f" MIGRADOR_HOST); red=$(clave "$f" MIGRADOR_RED)
+    [ -n "$u" ] || fail "$f has no MIGRADOR_USUARIO"
     [ -n "$h" ] || fail "$f has no MIGRADOR_HOST"
     host_permitido "$raiz" "$uid" "$h" || fail "MIGRADOR_HOST in $f is not loopback nor in $raiz/hosts-permitidos: refused"
-    hosts="$hosts, migrador@$h:${MIGRADOR_PUERTO:-5432} (from $f; MIGRADOR_RED=${red:-none})"
+    hosts="$hosts, $u@$h:${MIGRADOR_PUERTO:-5432} (from $f; MIGRADOR_RED=${red:-none})"
   fi
 
   # One at a time; what an interrupted run left is removed.
