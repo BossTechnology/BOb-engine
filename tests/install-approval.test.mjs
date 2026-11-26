@@ -180,6 +180,14 @@ describe('a security key\'s signature', () => {
     const other = skKey('ecdsa')
     no(check(line(k) + line(other, 'namespaces="bob-install-chain"', 'otro'), other.sign(msg)), /verify-required/)
   })
+  test('an option * is refused, even with a file named verify-required where the script runs (no glob)', () => {
+    writeFileSync(join(d, 'verify-required'), ''); writeFileSync(join(d, 'signers'), line(k, 'namespaces="bob-install-chain",verify-required,*')); writeFileSync(join(d, 'm.sig'), k.sign(msg))
+    const r = run(['verificar', join(d, 'signers'), join(d, 'm'), join(d, 'm.sig')], { cwd: d })
+    rmSync(join(d, 'verify-required'))
+    no(r, /option \*/)
+  })
+  test('a signature whose reserved field is not empty is refused', () => no(check(line(k), k.sign(msg, NS, UP | UV, 1, 'x')), /reserved/))
+  test('armored text that is not base64 says so', () => no(check(line(k), '-----BEGIN SSH SIGNATURE-----\nAAAA=\nAAA\n-----END SSH SIGNATURE-----\n'), /not base64/))
   test('a signature file that is not one armored sshsig is refused', () => {
     const s = k.sign(msg)
     no(check(line(k), s + s), /signature/)

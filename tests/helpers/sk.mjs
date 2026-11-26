@@ -59,8 +59,8 @@ export function skKey(kind = 'ecdsa', application = 'ssh:') {
     type,
     line: `${type} ${pub.toString('base64')}`,
     // An armored SSH signature, as `ssh-keygen -Y sign` writes it to <file>.sig.
-    sign(message, namespace = 'bob-install-chain', flags = UP | UV, counter = 1) {
-      const blob = Buffer.concat([Buffer.from('SSHSIG'), u32(1), str(pub), str(namespace), str(''), str('sha512'),
+    sign(message, namespace = 'bob-install-chain', flags = UP | UV, counter = 1, reserved = '') {
+      const blob = Buffer.concat([Buffer.from('SSHSIG'), u32(1), str(pub), str(namespace), str(reserved), str('sha512'),
         str(signBlob(message, namespace, flags, counter))])
       const b64 = blob.toString('base64').match(/.{1,70}/g).join('\n')
       return `-----BEGIN SSH SIGNATURE-----\n${b64}\n-----END SSH SIGNATURE-----\n`

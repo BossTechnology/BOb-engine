@@ -104,7 +104,7 @@ firma_sk() {
     b64=$b64$l
   done < "$f"
   [ -n "$fin" ] && [ -n "$b64" ] || fail "the signature is not an armored SSH signature: refused"
-  H=$(printf '%s' "$b64" | base64 -d 2>/dev/null | od -An -v -tx1 | tr -d ' \n')
+  H=$(printf '%s' "$b64" | base64 -d 2>/dev/null | od -An -v -tx1 | tr -d ' \n') || fail "the signature is not base64: refused"
   [ -n "$H" ] || fail "the signature is not base64: refused"
   P=0
   need() { (( P + $1 <= ${#H} / 2 )) || fail "the signature is cut short: refused"; }
@@ -115,7 +115,8 @@ firma_sk() {
   u32; [ "$R" = 1 ] || fail "sshsig version $R: refused"
   str; t=$R                                   # the signing key
   str; [ "$R" = "$(hx "$NS")" ] || fail "the signature is not in namespace $NS: refused"
-  str; str                                    # reserved, hash algorithm: ssh-keygen checks them
+  str; [ -z "$R" ] || fail "the signature's reserved field is not empty: refused"
+  str                                         # the hash algorithm: ssh-keygen checks it
   str; s=$R                                   # the signature blob
   [ "$P" = $((${#H} / 2)) ] || fail "the signature has bytes after it: refused"
   H=$t; P=0; str; SIG_KEY=$R                  # the key's type
@@ -133,7 +134,7 @@ firma_sk() {
 # only) accepts a key that is not a security key, and no verify-required, so
 # tests can sign.
 verificar() {
-  local signers=$1 msg=$2 sig=$3 relajado=${4:-} keys=0 line principal options keytype key principals out p o v
+  local signers=$1 msg=$2 sig=$3 relajado=${4:-} keys=0 line principal options keytype key principals out p o v opts
   [ -f "$signers" ] || fail "$signers does not exist: nobody can sign yet"
   [ -s "$sig" ] || fail "no signature"
   [ -n "$WORK" ] || WORK=$(mktemp -d)
@@ -149,7 +150,9 @@ verificar() {
     [[ "$options" != *cert-authority* ]] || fail "the key of $principal is a cert-authority: refused"
     [[ "$options" == *"namespaces=\"$NS\""* ]] || fail "the key of $principal is not restricted to namespaces=\"$NS\": refused"
     [[ "$options" != *no-touch-required* ]] || fail "the key of $principal is marked no-touch-required: refused"
-    for o in ${options//,/ }; do
+    # Split on commas only: never word-split or glob (an option * would match a file).
+    IFS=, read -r -a opts <<<"$options"
+    for o in ${opts[@]+"${opts[@]}"}; do
       case "$o" in "namespaces=\"$NS\""|verify-required) ;;
         *) fail "the key of $principal has the option $o, which BOb does not use: refused" ;; esac
     done
