@@ -75,7 +75,7 @@ text is final are marked **[OPEN · Henry]**, with the question.
   only to those actor types and only to applicable pairs; degenerate metrics
   write `user` only. Still two views.
 - **F-34 · §7.2.** How an AREP ref resolves is open, outside Slice 3.
-- **Rules and consumers** (Federico on BOB-7, 23 Nov). The rules are four:
+- **Rules and consumers** (Federico on Relevo task 7, 23 Nov). The rules are four:
   FR-32, UI-03, PR-10, SR-2. The consumers are seven: the charts, the
   Performance matrix, the sentiment panel, BObee, the Slice 7 drill-downs, the
   Slice 4 classifier-failure count and the Slice 5 unfounded-claims row. The
