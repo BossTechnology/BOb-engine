@@ -807,12 +807,21 @@ sudo install -o root -g root -m 600 /dev/null /root/bob-install/postgres.env   #
 `instalacion-firmada` holds the digest of what the box runs today
 (`scripts/firma-instalacion.sh huella <that commit>`).
 
-- **TODO (H4).** On a box that runs no BOb yet, there is no commit to take the
-  digest of. Henry decided «Defined empty base» (2026-11-25). The
-  firma-instalacion-verify session implements it in
-  `scripts/firma-instalacion.sh`; it is not in BossTechnology/BOb-engine#51 as
-  of this writing. When its PR lands, this line names that PR and the digest
-  it defines. This file does not write a digest.
+- **The empty base (H4, BossTechnology/BOb-engine#54).** On a box that runs
+  no BOb yet, there is no commit to take the digest of. Henry decided «Defined
+  empty base» (2026-11-25). Such a box stands at the empty base,
+  `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`. It is
+  the sha256 of nothing (`scripts/firma-instalacion.sh vacia`), and no tree's
+  digest can be that value. `<digest>` above is that value, and Henry signs
+  the first install from it: `scripts/firmar-instalacion.sh <commit> --base
+  vacia`. It is the only state a box may claim without a signature, so it is
+  checked. From it, `caja` runs only `cadena`. `instalar-bob.sh cadena` then
+  refuses, before anything is pushed, a database that holds any of BOb: a
+  version of one of its migrations in the CLI's history,
+  `bob.schema_migrations`, or any object in schema `bob`. A box with the chain
+  applied (lab-02) never uses it: its `instalacion-firmada` holds the digest it
+  stands at, and Henry signs from there. **Not yet measured** on a database
+  with no BOb: the first install from the empty base is that measurement.
 - **How root on the host reaches the database (B3).** `bzzz-supabase-db`
   publishes no port, and its container name does not resolve on the host. So
   `POSTGRES_HOST` is its IP on `bzzz-app`:
