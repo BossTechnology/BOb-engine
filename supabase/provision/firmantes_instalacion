@@ -1,12 +1,19 @@
 # Who may sign a change to what installs BOb on a box (O-3, P5 §6.2;
-# scripts/firma-instalacion.sh verificar). Format: ssh-keygen allowed_signers,
-# as Bzzz's config/bob/firmantes_imagen, ONE PUBLIC KEY per line, never a
-# private one. Only a security key that must be touched to sign is accepted:
-#   henry namespaces="bob-install-chain",verify-required sk-ssh-ed25519@openssh.com AAAA...
-# (or sk-ecdsa-sha2-nistp256@openssh.com, Secure Enclave included).
-# verify-required is required: the key must ask for a PIN or biometric too.
-# cert-authority is refused. CI reads this file
-# from main, never from the PR. A box reads its own copy,
+# scripts/firma-instalacion.sh verificar). ONE PUBLIC KEY per line, never a
+# private one:
+#   henry namespaces="bob-install-chain",verify-required sk-ecdsa-sha2-nistp256@openssh.com AAAA...
+# (or sk-ssh-ed25519@openssh.com). The principal is one plain name; the only
+# options are namespaces="bob-install-chain" and verify-required, both
+# required. Only a security key is accepted (Secure Enclave with Touch ID
+# included); cert-authority, no-touch-required and any other option are
+# refused.
+# This is BOb's format, not ssh-keygen's: ssh-keygen refuses verify-required
+# in an allowed_signers file ("bad options: unknown key option", OpenSSH 10.3
+# and 10.6p2). verificar checks every line, gives ssh-keygen a copy of its own
+# without verify-required, and itself requires both flags in the signature:
+# the key was touched (0x01) and verified its user with a PIN or biometric
+# (UV, 0x04). Do not hand this file to ssh-keygen directly.
+# CI reads this file from main, never from the PR. A box reads its own copy,
 # /opt/bob/firmantes_instalacion (root's, 644), never the checkout's. The key is
 # this file's alone, not the one in firmantes_imagen.
 # Empty on purpose: until Henry puts his public key here, nothing that installs
