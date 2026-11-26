@@ -1,0 +1,4 @@
+# O-3 (P5 §6.2): Henry's signature covers the whole tree that installs BOb on
+# a box, so every path is his to review. Requiring code-owner review is a
+# branch-protection setting, Henry's to turn on.
+*    @hdgarzon

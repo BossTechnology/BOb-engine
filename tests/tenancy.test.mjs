@@ -268,18 +268,39 @@ describe('PR-4 · BOb never writes a projection table', () => {
 
 // Slice 3 spec §7 and §11, R6. BObee's face is a definer view: the migration
 // owner reads behind it, so RLS does not hold it, and tenancy is the view's own
-// filter on the caller's org_id claim. Every v_ai_* view that carries org_id is
-// found, not listed, and read as bob_ai_ro under each tenant's claim.
+// filter on the caller's org_id claim. Every v_ai_* view is found, not listed,
+// and read as bob_ai_ro under each tenant's claim. So is every SECURITY DEFINER
+// function a v_ai_* view reads.
 describe('R6 · BObee\'s views never cross a tenant boundary', () => {
-  async function aiViews() {
+  // Every v_ai_* view, in any schema, with or without org_id: one without it
+  // fails below instead of dropping out of the tenancy check.
+  async function allAiViews() {
     const { rows } = await db.query(`
-      SELECT format('%I.%I', n.nspname, c.relname) AS qualified
+      SELECT c.oid::int AS oid, format('%I.%I', n.nspname, c.relname) AS qualified,
+             pg_get_userbyid(c.relowner) AS owner,
+             EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.oid
+                       AND a.attname = 'org_id' AND NOT a.attisdropped) AS has_org_id
         FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
        WHERE c.relkind IN ('v', 'm') AND c.relname LIKE 'v\\_ai\\_%'
-         AND EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.oid
-                       AND a.attname = 'org_id' AND NOT a.attisdropped)
-       ORDER BY 1`)
-    return rows.map((r) => r.qualified)
+       ORDER BY 2`)
+    return rows
+  }
+  async function aiViews() {
+    return (await allAiViews()).filter((v) => v.has_org_id).map((v) => v.qualified)
+  }
+  // The SECURITY DEFINER functions a view's rewrite rule depends on.
+  async function definerFunctions(viewOid) {
+    const { rows } = await db.query(`
+      SELECT DISTINCT format('%I.%I(%s)', pn.nspname, p.proname, pg_get_function_identity_arguments(p.oid)) AS fn,
+             pg_get_userbyid(p.proowner) AS owner
+        FROM pg_rewrite r
+        JOIN pg_depend d ON d.classid = 'pg_rewrite'::regclass AND d.objid = r.oid
+                        AND d.refclassid = 'pg_proc'::regclass
+        JOIN pg_proc p ON p.oid = d.refobjid
+        JOIN pg_namespace pn ON pn.oid = p.pronamespace
+       WHERE r.ev_class = $1 AND p.prosecdef
+       ORDER BY 1`, [viewOid])
+    return rows
   }
 
   async function asAiRo(orgId, fn) {
@@ -297,8 +318,11 @@ describe('R6 · BObee\'s views never cross a tenant boundary', () => {
     }
   }
 
-  test('discovery finds v_ai_cell_state', async () => {
-    assert.ok((await aiViews()).includes('bob.v_ai_cell_state'))
+  test('discovery finds v_ai_cell_state, and every v_ai_* view carries org_id', async () => {
+    const views = await allAiViews()
+    assert.ok(views.some((v) => v.qualified === 'bob.v_ai_cell_state'), JSON.stringify(views))
+    assert.deepEqual(views.filter((v) => !v.has_org_id).map((v) => v.qualified), [],
+      'a v_ai_* view without org_id cannot be checked for tenancy')
   })
 
   test('one tenant\'s claim sees only its own rows, and sees some', async () => {
@@ -320,17 +344,64 @@ describe('R6 · BObee\'s views never cross a tenant boundary', () => {
     }
   })
 
-  test('the view exposes no display_name, and nothing else reads it', async () => {
-    const { rows: cols } = await db.query(`SELECT a.attname FROM pg_attribute a
-      WHERE a.attrelid = 'bob.v_ai_cell_state'::regclass AND a.attnum > 0 AND NOT a.attisdropped`)
-    assert.ok(!cols.some((c) => /display|name|email/.test(c.attname)), JSON.stringify(cols))
-    // Reading it takes SELECT on the view and EXECUTE on its definer function.
-    // Supabase's read-all roles hold the first everywhere, never the second.
-    const { rows } = await db.query(`SELECT r.rolname FROM pg_roles r
-      WHERE has_table_privilege(r.oid, 'bob.v_ai_cell_state', 'SELECT')
-        AND has_function_privilege(r.oid, 'bob.bob_ai_cell_state()', 'EXECUTE')
-        AND NOT r.rolsuper AND r.rolname NOT LIKE 'pg\\_%' AND r.rolname <> 'postgres'
-      ORDER BY 1`)
-    assert.deepEqual(rows.map((r) => r.rolname), ['bob_ai_ro'])
+  test('no view exposes a name, and only bob_ai_ro reads it', async () => {
+    for (const v of await allAiViews()) {
+      const { rows: cols } = await db.query(`SELECT a.attname FROM pg_attribute a
+        WHERE a.attrelid = $1 AND a.attnum > 0 AND NOT a.attisdropped`, [v.oid])
+      assert.ok(!cols.some((c) => /display|name|email/.test(c.attname)), `${v.qualified}: ${JSON.stringify(cols)}`)
+      // Reading it takes SELECT on the view and EXECUTE on each definer function
+      // it reads. Supabase's read-all roles hold the first everywhere, never the
+      // second. The owner is excluded by ownership, not by name: postgres, or
+      // bob_migrador once the chain after the install chain is applied by it (O-3).
+      const fns = (await definerFunctions(v.oid)).map((f) => f.fn)
+      const { rows } = await db.query(`SELECT r.rolname FROM pg_roles r
+        WHERE has_table_privilege(r.oid, $1::oid, 'SELECT')
+          AND (SELECT bool_and(has_function_privilege(r.oid, f::regprocedure, 'EXECUTE'))
+                 FROM unnest($2::text[]) f) IS NOT FALSE
+          AND NOT r.rolsuper AND r.rolname NOT LIKE 'pg\\_%'
+          AND r.oid <> (SELECT relowner FROM pg_class WHERE oid = $1::oid)
+        ORDER BY 1`, [v.oid, fns])
+      assert.deepEqual(rows.map((r) => r.rolname), ['bob_ai_ro'], v.qualified)
+    }
+  })
+
+  test('each view and the definer functions it reads share one owner, postgres or bob_migrador', async () => {
+    for (const v of await allAiViews()) {
+      const fns = await definerFunctions(v.oid)
+      assert.ok(['postgres', 'bob_migrador'].includes(v.owner), `${v.qualified} is owned by ${v.owner}`)
+      for (const f of fns) assert.equal(f.owner, v.owner, `${f.fn} is owned by ${f.owner}, ${v.qualified} by ${v.owner}`)
+    }
+  })
+
+  test('v_ai_cell_state reads its tenancy through a definer function, so the owner check has something to check', async () => {
+    const v = (await allAiViews()).find((x) => x.qualified === 'bob.v_ai_cell_state')
+    assert.deepEqual((await definerFunctions(v.oid)).map((f) => f.fn), ['bob.bob_ai_cell_state()'])
+  })
+})
+
+// F-46: bob_app reads its own organization (a SELECT policy keyed by id). It
+// writes none: the Slice 1 grants gave it INSERT, UPDATE and DELETE, and only
+// the operator creates or changes an organization (M-5, review of #40).
+describe('F-46 · bob_app reads its organization and writes none', () => {
+  test('bob_app holds no INSERT, UPDATE, DELETE or TRUNCATE on bob.organizations', async () => {
+    const { rows } = await db.query(`SELECT p FROM unnest(ARRAY['INSERT','UPDATE','DELETE','TRUNCATE']) p
+      WHERE has_table_privilege('bob_app', 'bob.organizations', p)`)
+    assert.deepEqual(rows.map((r) => r.p), [])
+  })
+
+  test('bob_app still reads its own organization, and only it', async () => {
+    for (const [mine, other] of [[TENANT_A, TENANT_B], [TENANT_B, TENANT_A]]) {
+      await db.query('BEGIN')
+      try {
+        await db.query('GRANT bob_app TO current_user')
+        await db.query('SELECT set_config($1, $2, true)', ['request.jwt.claims', JSON.stringify({ org_id: mine })])
+        await db.query('SET LOCAL ROLE bob_app')
+        const { rows } = await db.query('SELECT id::text AS id FROM bob.organizations')
+        assert.deepEqual(rows.map((r) => r.id), [mine])
+        assert.ok(!rows.some((r) => r.id === other))
+      } finally {
+        await db.query('ROLLBACK')
+      }
+    }
   })
 })

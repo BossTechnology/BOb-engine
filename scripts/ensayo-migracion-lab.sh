@@ -44,13 +44,13 @@
 #   --red NAME                  its docker network (bzzz-app)
 #   --db-host HOST --db-port N  how the CLI and node reach it from this host
 #                               (default: the container's address on --red, 5432)
-#   --migrador FILE             /opt/bzzz/secrets/bob/migrador.env
+#   --migrador FILE             /opt/bob/secrets/migrador.env (the alta, bzzz#450)
 #   --salida DIR                /data/bzzz/misc/ensayo-p5
 #   --supabase BIN              supabase
 #
 # THE CREDENTIAL FILE holds two lines, read by name and never printed:
-#   BOB_MIGRADOR_USUARIO=postgres
-#   BOB_MIGRADOR_CLAVE=...
+#   MIGRADOR_USUARIO=…
+#   MIGRADOR_CLAVE=...
 # Mode 600. Only this script reads it (objection 6).
 #
 # EXIT: 0 every check as expected · 1 a check did not hold · 2 refused to start.
@@ -64,7 +64,7 @@ OBJETIVO="lab-02"
 CONT="bzzz-supabase-db"
 RED="bzzz-app"
 DB_HOST="" ; DB_PORT=""
-MIGRADOR="/opt/bzzz/secrets/bob/migrador.env"
+MIGRADOR="/opt/bob/secrets/migrador.env"
 SALIDA="/data/bzzz/misc/ensayo-p5"
 SUPABASE="supabase"
 NODE="node"
@@ -115,11 +115,12 @@ esac
 PERM="$(stat -c %a "$MIGRADOR" 2>/dev/null || stat -f %Lp "$MIGRADOR")"
 [ "$PERM" = 600 ] || rechazar "$MIGRADOR está en modo $PERM, no en 600"
 leer_var() { sed -n "s/^$1=//p" "$MIGRADOR" | tail -1 | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/"; }
-USUARIO="$(leer_var BOB_MIGRADOR_USUARIO)"
-CLAVE="$(leer_var BOB_MIGRADOR_CLAVE)"
-[ -n "$USUARIO" ] || rechazar "$MIGRADOR no trae BOB_MIGRADOR_USUARIO"
-[ -n "$CLAVE" ] || rechazar "$MIGRADOR no trae BOB_MIGRADOR_CLAVE"
-[[ "$USUARIO" =~ ^[a-z_][a-z0-9_]*$ ]] || rechazar "BOB_MIGRADOR_USUARIO no tiene forma de rol"
+# The alta's names (bzzz#450); the older BOB_MIGRADOR_* still read.
+USUARIO="$(leer_var MIGRADOR_USUARIO)"; [ -n "$USUARIO" ] || USUARIO="$(leer_var BOB_MIGRADOR_USUARIO)"
+CLAVE="$(leer_var MIGRADOR_CLAVE)"; [ -n "$CLAVE" ] || CLAVE="$(leer_var BOB_MIGRADOR_CLAVE)"
+[ -n "$USUARIO" ] || rechazar "$MIGRADOR no trae MIGRADOR_USUARIO"
+[ -n "$CLAVE" ] || rechazar "$MIGRADOR no trae MIGRADOR_CLAVE"
+[[ "$USUARIO" =~ ^[a-z_][a-z0-9_]*$ ]] || rechazar "MIGRADOR_USUARIO no tiene forma de rol"
 export PGPASSWORD="$CLAVE" PGUSER="$USUARIO"
 
 # ── The container and how to reach it ────────────────────────────────────────
@@ -294,7 +295,7 @@ preflight() {
   fi
   imagen="$(docker inspect -f '{{.Config.Image}}' "$CONT")"
   ev "- imagen de \`$CONT\`: \`$imagen\`"
-  ev "- \`$MIGRADOR\`: modo $PERM; trae BOB_MIGRADOR_USUARIO y BOB_MIGRADOR_CLAVE (valores no impresos)"
+  ev "- \`$MIGRADOR\`: modo $PERM; trae MIGRADOR_USUARIO y MIGRADOR_CLAVE (valores no impresos)"
   command -v "$NODE" >/dev/null || rechazar "no hay node: lo necesita la reconstrucción de las proyecciones"
   [ -d "$REPO/node_modules/pg" ] || rechazar "falta node_modules/pg: corre pnpm install --frozen-lockfile en $REPO"
   local quien

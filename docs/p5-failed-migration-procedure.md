@@ -81,9 +81,15 @@ What is never done because of BOb:
      file, so that it runs first there. On lab-02 it is older than what is
      applied, so it goes with `--include-all` and must do nothing on a box
      that is already right. *Not rehearsed.*
-4. **Apply with the same step**: `supabase db push --dry-run`, then
-   `supabase db push`, from the credential in `/opt/bzzz/secrets/bob/migrador.env`.
-5. **Check after**: `schema_migrations` holds exactly the pinned commit's
+4. **Apply with the same step**: `scripts/instalar-bob.sh resto` (O-3, P5
+   §6.2), which applies every unrecorded file as `bob_migrador` whatever its
+   date, from the alta's credential in `/opt/bob/secrets/migrador.env`. Each
+   file goes in one transaction with its record in `bob.schema_migrations`
+   (`bob_migrador`'s; the CLI's history holds the install chain only), so a
+   file that fails leaves nothing applied and nothing recorded. The CLI's `supabase db push`
+   cannot run as `bob_migrador`.
+5. **Check after**: the two histories together (the CLI's for the install
+   chain, `bob.schema_migrations` for the rest) hold exactly the pinned commit's
    versions (F-15), and the read-only role guards of P5 §6.3 that need no
    fixture.
 6. **Record it** in `Documentation/contract-amendments.md`, with the CLI
