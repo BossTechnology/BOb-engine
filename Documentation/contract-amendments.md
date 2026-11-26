@@ -4181,7 +4181,7 @@ and `admin` and `analyst` are still given by `scripts/provision-user.mjs`.
   holds EXECUTE: it is revoked from PUBLIC, anon, authenticated, service_role,
   bob_feeder and bob_ai_ro by name. It inserts `(p_user, claim org_id, p_email,
   'viewer', true)` with `ON CONFLICT DO NOTHING`. It never takes a role or an
-  organization from the caller. It does nothing with no claim, an unknown
+  organization from the caller. It stores the email trimmed and in lower case. It does nothing with no claim, an unknown
   organization, no id or a blank email. A row that exists, by id or by email,
   in this organization or another, inactive or not, is left as it is. `bob_app`
   still holds no INSERT on `bob.users`.
@@ -4196,6 +4196,7 @@ and `admin` and `analyst` are still given by `scripts/provision-user.mjs`.
 - **Tests, each seen red first.** In `tests/users-access.test.mjs`:
   - a new account gets an active viewer row in the claim's organization, and a
     second visit changes nothing;
+  - an active admin stays an active admin;
   - an inactive analyst row stays inactive analyst;
   - another organization's row is untouched, and so is an email held by
     another account;
