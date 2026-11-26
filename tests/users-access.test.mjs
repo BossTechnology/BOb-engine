@@ -214,7 +214,7 @@ describe('bob.claim_viewer_seat · a signed-in account takes a viewer seat, noth
   test('a new account gets an active viewer row in the claim\'s organization', async () => {
     await seatThenRead(async (take, read) => {
       const id = randomUUID()
-      assert.equal(await take(id, 'first.visit@example.test'), true)
+      assert.equal(await take(id, '  First.Visit@Example.test '), true)
       assert.deepEqual(await read(id),
         [{ org_id: TENANT_A, role: 'viewer', active: true, email: 'first.visit@example.test' }])
     })
@@ -226,6 +226,15 @@ describe('bob.claim_viewer_seat · a signed-in account takes a viewer seat, noth
       assert.equal(await take(id, 'twice@example.test'), true)
       assert.equal(await take(id, 'changed@example.test'), false)
       assert.deepEqual((await read(id)).map((r) => [r.email, r.role]), [['twice@example.test', 'viewer']])
+    })
+  })
+
+  test('an active admin stays an active admin', async () => {
+    await seatThenRead(async (take, read) => {
+      const before = await read(USER_A)
+      assert.equal(before[0].role, 'admin')
+      assert.equal(await take(USER_A, 'someone.else@example.test'), false)
+      assert.deepEqual(await read(USER_A), before)
     })
   })
 

@@ -13,6 +13,7 @@
 --   - the organization is the caller's org_id claim, which bob-web sets from
 --     the box's configuration (BOB_ORG_ID), never an argument;
 --   - the role is viewer and active is true, never an argument;
+--   - the email is stored trimmed and in lower case, as GoTrue keeps it;
 --   - the id and the email are the ones GoTrue answered for the session: bob-web
 --     asks GoTrue for the user on every request and never reads an unverified
 --     token or header;
@@ -40,7 +41,7 @@ SET search_path = bob, pg_temp
 AS $$
 DECLARE
   v_org UUID := nullif(auth.jwt() ->> 'org_id', '')::uuid;
-  v_email TEXT := nullif(btrim(p_email), '');
+  v_email TEXT := nullif(lower(btrim(p_email)), '');
   v_rows INTEGER;
 BEGIN
   IF v_org IS NULL OR p_user IS NULL OR v_email IS NULL THEN
