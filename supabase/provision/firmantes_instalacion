@@ -8,11 +8,15 @@
 #   verify-required  the signature must be touched (UP, 0x01) and verify its
 #                    user with a PIN or biometric (UV, 0x04): a FIDO2 key with
 #                    a PIN.
-#   presence-only    the signature must be touched (UP, 0x01); UV is not
+#   presence-only    the signature's flags must carry UP (0x01); UV is not
 #                    required, and the line says so in the open. For a key
-#                    that cannot report UV: the Secure Enclave with Touch ID,
-#                    whose provider refuses verify-required and signs with UV
-#                    off. docs/adr/0001-firma-instalacion-solo-presencia.md.
+#                    that cannot report UV: the Secure Enclave, whose
+#                    provider refuses verify-required and signs with UV off.
+#                    For that key the flags are most likely set by macOS's
+#                    provider, not the enclave (not measured), so UP proves
+#                    little: that a person was there rests on the key's
+#                    access policy and macOS's prompt, which no box sees.
+#                    docs/adr/0001-firma-instalacion-solo-presencia.md.
 # Neither, both, or one twice is refused. Only a security key (sk-) is
 # accepted; cert-authority, no-touch-required and any other option are
 # refused. UV follows the line of the key that signed.

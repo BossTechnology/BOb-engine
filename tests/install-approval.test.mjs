@@ -342,7 +342,7 @@ describe('on a box', () => {
     b.done()
   })
 
-  test('caja-prueba reads presence-only like caja: accepted alone, refused with verify-required', () => {
+  test('caja-prueba parses a presence-only line (flags unchecked there): accepted alone, refused with verify-required', () => {
     const b = box({ signers: `ci namespaces="bob-install-chain",presence-only ${PUB}\n` }); b.approve('a'.repeat(64))
     const res = b.caja(); assert.equal(res.out.status, 0, res.out.stdout + res.out.stderr); b.done()
     const c = box({ signers: `ci namespaces="bob-install-chain",verify-required,presence-only ${PUB}\n` }); c.approve('a'.repeat(64))

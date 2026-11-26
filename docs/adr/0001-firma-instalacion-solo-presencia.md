@@ -58,22 +58,41 @@ ninguna de las dos. Henry usa `henry namespaces="bob-install-chain",presence-onl
 sk-ecdsa-sha2-nistp256@openssh.com AAAA…`.
 
 ## Consecuencias
-- **Qué se pierde.** La caja ya no puede comprobar que la firma de Henry pidió
-  Touch ID: la firma lo dice con UV, y esta llave lo deja en 0. Lo único que la
-  caja comprueba es que la llave privada del Secure Enclave firmó y que hubo
-  presencia (UP). La garantía de que hubo Touch ID viene del Secure Enclave
-  (la llave no sale de él, y macOS lo pidió en cada firma medida) y del registro
-  de Henry de cada firma que hace, no de la firma misma. Un proceso con acceso a
-  la sesión de Henry podría pedir una firma, pero no completarla sin que Henry
-  dé el Touch ID que macOS le pide.
+- **Qué se pierde.** La caja ya no puede comprobar que hubo una persona. Lo
+  que comprueba es que firmó la llave privada de la línea de Henry, en la
+  namespace correcta, sobre el par base → nueva, y que el byte de flags trae
+  UP. Con esta llave, ese UP casi no dice nada:
+  - *Inferencia, no medida.* Con `/usr/lib/ssh-keychain.dylib`, el byte de
+    flags y el contador muy probablemente los arma esa librería, que es
+    software de macOS; el Secure Enclave solo firma un resumen P-256. Los
+    indicios: el contador fijo en 1 y los flags siempre en 0x21. Si es así, el
+    UP que comprueba la caja es casi una constante del proveedor, no la prueba
+    de que alguien tocó algo.
+  - *La medición que lo confirmaría*, para Henry (crear llaves es cosa suya):
+    crear con este proveedor una llave de prueba con `-O no-touch-required`,
+    firmar con ella y ver si la firma también sale con 0x21. Si sale igual, el
+    UP lo pone la librería.
+  - Lo que garantiza que hubo una persona es la política de acceso de la llave
+    en el Secure Enclave y el aviso de macOS: Touch ID, o la contraseña de la
+    Mac si la política lo admite. La caja no lo ve, y no hay atestación que lo
+    pruebe. Descansa en esa política y en el registro de Henry de cada firma
+    que hace, no en la firma misma.
+  - El aviso de Touch ID no muestra qué se firma. Quien controle la sesión de
+    Henry o su `PATH` podría hacerle firmar otra cosa con el mismo toque.
+    Mitigación, parcial: `firmar-instalacion.sh` muestra el diff, los dos
+    digests del par y la orden de `ssh-keygen` (el programa, `-w` y `-f`)
+    antes de pedir `firmo`, y Henry corre `/usr/bin/ssh-keygen` por ruta
+    absoluta. Una sesión comprometida también puede falsear lo que se muestra
+    en la terminal.
 - **El contador.** El proveedor deja el contador en 1 siempre. `verificar` no lo
   lee y nunca lo leyó, así que no se pierde nada que BOb usara; pero una llave
   clonada no se puede detectar por el contador. La repetición de una firma vieja
   ya la cierra el par base → nueva del mensaje y la lista de revocadas, no el
   contador.
 - **Por qué se acepta.** No hay presupuesto para una FIDO2 ni otra máquina, y la
-  firma sigue siendo de una persona, en hardware, con presencia, dicho a la
-  vista en el archivo que revisa CODEOWNERS.
+  firma sigue siendo con una llave que no sale del Secure Enclave y que macOS
+  solo usa tras el aviso de su política. Que eso basta lo dice esta ADR, a la
+  vista en el archivo que revisa CODEOWNERS, no la caja.
 - **Cómo se revierte.** Cuando haya una FIDO2 con PIN: crear la llave con
   `ssh-keygen -t ed25519-sk -O verify-required`, cambiar en
   `firmantes_instalacion` la línea de Henry por la nueva con `verify-required`,
@@ -82,4 +101,5 @@ sk-ecdsa-sha2-nistp256@openssh.com AAAA…`.
   a necesitar UV. Una ADR nueva reemplaza a esta.
 - **Qué vigilar.** Que ninguna otra línea use `presence-only` sin una ADR que lo
   diga, y que `firmar-instalacion.sh` firme con la llave del Secure Enclave
-  (`FIRMA_LLAVE`), no con otra.
+  (`--llave`, con `--proveedor /usr/lib/ssh-keychain.dylib` y
+  `--ssh-keygen /usr/bin/ssh-keygen`), no con otra.

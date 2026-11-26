@@ -4115,3 +4115,17 @@ of his could verify.
   default key, no self-check), each red.
 - **Not measured:** a signature by Henry's Secure Enclave key through
   `firmar-instalacion.sh` and `verificar` (needs his Touch ID).
+- **Independent security review of `ca7239d`, applied (docs only).** The code
+  is unchanged. ADR 0001 and the header of `firmantes_instalacion` claimed
+  more than a box checks. With `/usr/lib/ssh-keychain.dylib`, the flags byte
+  and the counter are most likely set by that library, which is macOS
+  software, not by the Secure Enclave, which only signs a P-256 digest. The
+  signs: the counter is always 1 and the flags always 0x21. So for this key
+  the UP a box checks is close to a constant. This is inferred, not
+  measured. The measurement, for Henry: a test key made with this provider
+  and `-O no-touch-required`, to see whether its signatures also carry 0x21.
+  What shows a person was there is the key's access policy and macOS's
+  prompt, and no box sees either. The prompt does not show what is signed.
+  `firmar-instalacion.sh` printing the diff, the two digests and the
+  ssh-keygen command is a partial mitigation. The `caja-prueba` test was
+  renamed to say it checks parsing only: flags are not read there.
