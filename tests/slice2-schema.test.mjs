@@ -539,7 +539,7 @@ describe('F-21 · the feeder reads its two views, and nothing else', () => {
       assert.deepEqual(channels.rows.map((r) => r.org_id).sort(), [TENANT_A, TENANT_B])
       const cols = Object.keys((await db.query('SELECT * FROM bob.v_feeder_channel_map LIMIT 1')).rows[0])
       assert.deepEqual(cols, ['channel_id', 'org_id', 'tenant_slug', 'source_key',
-        'lag_seconds', 'adapter_kind', 'idle_bound_seconds', 'capabilities'])
+        'lag_seconds', 'adapter_kind', 'idle_bound_seconds', 'capabilities', 'actor_types'])
       const actors = await db.query('SELECT DISTINCT org_id::text FROM bob.v_feeder_actor_map')
       assert.deepEqual(actors.rows.map((r) => r.org_id).sort(), [TENANT_A, TENANT_B])
     })
@@ -737,13 +737,20 @@ function trackedCode() {
 const NAMESPACE_LITERAL =
   /(['"`])[a-z][a-z0-9_.-]*:\1\s*(\|\||\+)|`[a-z][a-z0-9_.-]*:\$\{|\bconcat\(\s*'[a-z][a-z0-9_.-]*:'/i
 
+// Slice 3 §3: a cell's reason carries its argument after a colon
+// (`capability_not_declared:queue`, `no_definition:D-15`). That is a reason
+// code, not a ref. Named here by hand, so a new prefix turns this guard red
+// until someone looks at it.
+const REASON_PREFIXES = ['capability_not_declared', 'no_definition']
+const REASON_LITERAL = new RegExp(`(['"\`])(${REASON_PREFIXES.join('|')}):\\1\\s*(\\|\\||\\+)`, 'g')
+
 function namespaceLiteralFindings(files, read) {
   const findings = []
   for (const f of files) {
     if (f === 'tests/slice2-schema.test.mjs') continue   // this guard's own pattern
     read(f).split('\n').forEach((line, i) => {
       if (line.trimStart().startsWith('--') || line.trimStart().startsWith('//')) return
-      if (NAMESPACE_LITERAL.test(line)) findings.push(`${f}:${i + 1}: ${line.trim()}`)
+      if (NAMESPACE_LITERAL.test(line.replace(REASON_LITERAL, ''))) findings.push(`${f}:${i + 1}: ${line.trim()}`)
     })
   }
   return findings
@@ -779,9 +786,11 @@ describe('§10 · nothing typed that must be declared', () => {
       'c.mjs': "const ref = 'asa-platform:' + deployment",
       'd.sql': "SELECT concat('ycloud:', phone)",
       'ok.mjs': 'const ref = `${channel.source_key}:${id}`',
+      'reason.sql': `SELECT 'capability_not_declared:' || cap FROM caps`,
+      'e.sql': `SELECT 'capability_not_declared:' || cap, 'pbx:' || ext FROM caps`,
     }
     const found = namespaceLiteralFindings(Object.keys(probes), (f) => probes[f])
-    assert.deepEqual(found.map((x) => x.split(':')[0]), ['a.sql', 'b.mjs', 'c.mjs', 'd.sql'])
+    assert.deepEqual(found.map((x) => x.split(':')[0]), ['a.sql', 'b.mjs', 'c.mjs', 'd.sql', 'e.sql'])
   })
 
   test('no code path, view, function or seed derives capabilities from channel_type', async () => {
@@ -792,8 +801,14 @@ describe('§10 · nothing typed that must be declared', () => {
          AND pg_get_viewdef(v.oid) ~ 'channel_capabilities'
          AND pg_get_viewdef(v.oid) ~ 'channel_type'
       UNION ALL
+      -- A BEGIN ATOMIC body (Slice 3) leaves prosrc empty and lives in
+      -- prosqlbody, so the definition is read whole.
       SELECT p.oid::regprocedure::text FROM pg_proc p
-       WHERE p.prosrc ~ 'channel_capabilities' AND p.prosrc ~ 'channel_type'`)
+       WHERE p.prokind IN ('f', 'p')
+         AND p.pronamespace NOT IN (SELECT oid FROM pg_namespace
+                                     WHERE nspname LIKE 'pg\\_%' OR nspname = 'information_schema')
+         AND pg_get_functiondef(p.oid) ~ 'channel_capabilities'
+         AND pg_get_functiondef(p.oid) ~ 'channel_type'`)
     assert.deepEqual(rows, [])
   })
 

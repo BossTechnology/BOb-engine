@@ -17,7 +17,7 @@ import {
 } from './helpers/db.mjs'
 import {
   BOB_ROLES, rolesWithPrivilegeInBob, threeRolesFindings, egressFunctions,
-  egressFindings, oneOrganizationFindings,
+  egressFindings, oneOrganizationFindings, restoreCycleFindings,
 } from '../scripts/box-checks.mjs'
 
 let db
@@ -158,11 +158,10 @@ describe('P5 §6.3 · bob_ai_ro reads views only (IR-1)', () => {
     assert.deepEqual(rows.map((r) => r.qualified), [], 'bob_ai_ro can write')
   })
 
-  // No v_ai_* view exists yet (P5 §3.2). An absent set must not pass as a
-  // checked one: while there is none, bob_ai_ro reads nothing at all, and the
-  // day one appears this test asks for the views to be readable and for
-  // nothing else to be.
-  test('bob_ai_ro reads exactly the v_ai_* views, and today that is none', async (t) => {
+  // An absent set must not pass as a checked one: bob_ai_ro reads the v_ai_*
+  // views (P5 §3.2) and nothing else. Slice 3 added the first,
+  // bob.v_ai_cell_state (R6); the test asks for exactly the views found.
+  test('bob_ai_ro reads exactly the v_ai_* views', async (t) => {
     const views = await aiViews()
     const { rows } = await db.query(`
       SELECT format('%I.%I', n.nspname, c.relname) AS qualified
@@ -309,6 +308,33 @@ describe('P5 objection 3 · the box check: one organization, slug = bzzz.tenant'
       assert.ok(findings.some((f) => /holds 0 rows/.test(f)), findings.join('\n'))
     })
     assert.deepEqual(await oneOrganizationFindings(db, ''), ['the box tenant (bzzz.tenant) was not given'])
+  })
+})
+
+describe('P5 §4.3 · the bob-alone restore: nothing in bob depends on bob through another schema', () => {
+  test('installed, no object in bob depends on something outside it that depends on bob', async () => {
+    assert.deepEqual(await restoreCycleFindings(db), [])
+  })
+
+  test('the guard sees a view, and a column default, reaching bob through public', async () => {
+    await inTx(async () => {
+      await db.query(`CREATE FUNCTION public.p5_probe_orgs() RETURNS bigint
+        LANGUAGE sql STABLE BEGIN ATOMIC SELECT count(*) FROM bob.organizations; END`)
+      await db.query('CREATE VIEW bob.p5_probe_v AS SELECT public.p5_probe_orgs() AS n')
+      await db.query('CREATE TABLE bob.p5_probe_t (n bigint DEFAULT public.p5_probe_orgs())')
+      const found = (await restoreCycleFindings(db)).filter((f) => f.includes('p5_probe'))
+      assert.equal(found.length, 2, found.join('\n'))
+      assert.ok(found.some((f) => f.startsWith('view bob.p5_probe_v depends on function public.p5_probe_orgs()')))
+      assert.ok(found.some((f) => f.startsWith('table bob.p5_probe_t depends on function public.p5_probe_orgs()')))
+    })
+  })
+
+  test('the guard leaves a helper outside bob alone when it does not reach bob', async () => {
+    await inTx(async () => {
+      await db.query(`CREATE VIEW bob.p5_probe_v AS
+        SELECT public.bob_source_key_unset(source_key) AS unset FROM bob.channels`)
+      assert.deepEqual((await restoreCycleFindings(db)).filter((f) => f.includes('p5_probe')), [])
+    })
   })
 })
 

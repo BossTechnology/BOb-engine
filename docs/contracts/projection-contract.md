@@ -4,9 +4,99 @@
 0.5.3 add corrections that building Slice 2 found and Henry accepted. BzzzBX
 route-plan task 3.7 implements against this version.
 
-**Proposed after 0.5.3, not a version yet** (P5 Q6 (a), Henry, 2026-11-21;
-F-41). Marked **[PROPOSED, F-41]** where it lands, in §7.2, §7.3a, §7.4 and
-§10. It takes a version number when it is accepted:
+**Proposed 0.6 (Slice 3), not accepted yet.** The text below is what Slice 3
+was built against (BOb-engine#40, spec `docs/slice-3-absent-not-zero.md`,
+amendments F-28 to F-34, F-38, F-39). It goes into the sections it names when
+Federico accepts it on Relevo task 6. Until then the version stays 0.5.3.
+Marked **[PROPOSED 0.6]** where it lands. The three points that needed Henry
+were decided by him on 25 Nov; each is marked **[DECIDED · Henry, 25 Nov]**.
+
+**How this version stands** (Henry, 25 Nov: «Sí, fusionar igual»). If
+Federico has not accepted by the Monday 30 Nov window, BOb-engine#40 merges with
+this block as **0.6 proposed, accepted by Henry**. The header stays at 0.5.3
+until Federico accepts. Anything he changes comes back later as a migration.
+
+- **F-28 · §5, §8 · Liveness and the observed zero.** Liveness has two sources
+  for one bucket of one channel: **traffic** (an interaction with activity in
+  the bucket) and **probe** (`proj_channel_health` with `observed = true`,
+  from `health_uptime`, Q9). At seal, for every bucket with liveness, the
+  feeder writes the observed zero for every metric the channel declares:
+  `proj_metric_counts` with `event_count = 0`, and `proj_durations` with
+  `n = 0`, `sum_ms = 0`, `hist_offset = 0`, an empty histogram and
+  `min_ms`/`max_ms` NULL. Never on an undeclared capability, never without
+  liveness. The zero row's `session_count` is the metric's own denominator in
+  the bucket; a probe-only bucket writes 0.
+  - **No zero for a metric with a precondition** (corrected 21 Nov):
+    `hallucinations` never, under F-28 (the feeder cannot see the ground truth,
+    D-29); `abandoned` not while `idle_bound_seconds` is NULL (§9.2). The list
+    is closed; a metric that gains a precondition joins it in the same change.
+  - **No zero for a metric the feeder does not count** (review of #40,
+    approved by Henry 21 Nov). A zero claims the count ran. The reference
+    feeder counts `resolved`, `escalations`, `response_time` and
+    `interaction_duration`; `abandoned`, `disambiguation` and
+    `abandoned_in_queue` get no row and render `not_observed`. 3.7 owes the
+    same rule for whatever it does not count.
+  - The label failures stay under §4.1. 3.7 owes F-28 as the reference feeder
+    does.
+  - **[DECIDED · Henry, 25 Nov]** «Sí, en 0.6», with the wording above. Both
+    rules go to Federico as part of 0.6, and 3.7 owes them. The notices posted
+    on task 6 (20 and 21 Nov) did not carry them. The first rule is that a
+    zero row's `session_count` is the metric's own denominator in the bucket.
+    The second is that a metric the feeder does not count gets no zero.
+- **F-29 · §9.1 · Three capabilities.** `disambiguation`, `escalation`,
+  `queue`. Presence only, declared per channel, never mapped from
+  `channel_type` or from `channel_actor_mix`. Ten become thirteen.
+- **F-39 · §9.1, §6.3.** `interaction_duration` requires `resolution`: it
+  lands at the close, and `resolution` declares that a close exists.
+- **F-30 · §9.1 · Union plus coverage.** The union of capabilities over the
+  selected channels decides whether a row is shown. A multi-channel total sums
+  only the observed cells and carries coverage: "n of m channels", each
+  excluded channel with its state and reasons.
+- **F-31 · §5 · The cell vocabulary (extends D-14).** Six states, evaluated in
+  order: `not_applicable`, `not_configured`, `pending`, `not_observed`,
+  `observed`; `off_shift` only in the per-actor drill-down. Each cell carries
+  an ordered list of reasons; `provisional` is a flag on `observed` (O1).
+  D-14's markers come first: `telemetry_started_at` (D-18) and
+  `bob_source_key_unset()` (D-19). The em dash serves `not_observed` (D-14)
+  and `off_shift` (task 10), told apart by state, never by glyph.
+  - **Where it lives**, one implementation, in `bob`: the invoker function
+    `bob.bob_cell_state(org, channels[], from, to)` under RLS (R4, in place of
+    a view `v_cell_state`), `bob.bob_cell_rollup` with coverage,
+    `bob.bob_available_state`, `bob.bob_actor_cell_state`, and BObee's
+    `bob.v_ai_cell_state`, a definer view over the current day, filtered on the
+    caller's `org_id` claim, granted to `bob_ai_ro` alone (R6). The
+    application only paints.
+  - `pending` on a cell with no row follows today's lag and watermark (R3).
+    `no_channels_selected` is `not_applicable` (R7).
+- **F-32 · §5.** An actor declared absent in `channel_actor_mix`
+  (`present = false`) is `observed` 0 with `actor_not_present`. An undeclared
+  mix is `not_configured` with `mix_not_declared`. FR-11 and UI-03 hold
+  together.
+- **F-33 · §6.1.** `resolved`, `disambiguation` and `escalations` never
+  attribute to `user`: those cells are `not_applicable`, and a guard fails if
+  such a row is written.
+- **F-38 · §7.4, §5.** `v_feeder_channel_map` gains `actor_types TEXT[]`: the
+  channel's mix rows with `present = true`, sorted, empty when none. Zeros go
+  only to those actor types and only to applicable pairs; degenerate metrics
+  write `user` only. Still two views.
+- **F-34 · §7.2.** How an AREP ref resolves is open, outside Slice 3.
+- **Rules and consumers** (Federico on Relevo task 7, 23 Nov). The rules are four:
+  FR-32, UI-03, PR-10, SR-2. The consumers are seven: the charts, the
+  Performance matrix, the sentiment panel, BObee, the Slice 7 drill-downs, the
+  Slice 4 classifier-failure count and the Slice 5 unfounded-claims row. The
+  last three read the same functions when their slice is built; the scope map
+  carries the list, not a count.
+- **F-41 is in 0.6** (**[DECIDED · Henry, 25 Nov]**: «Dentro de 0.6», no
+  separate 0.5.4). Federico accepted it on task 6 on 23 Nov: `first_seen` and
+  `last_seen` fall inside the frame, the CHECK stays, and the sweep is daily,
+  off each organization's peak. Its text is the **[PROPOSED, F-41]** block
+  below.
+- **Merging before Federico accepts** (**[DECIDED · Henry, 25 Nov]**: «Sí,
+  fusionar igual»): see "How this version stands" at the top of this block.
+
+**F-41, part of 0.6** (P5 Q6 (a), Henry, 2026-11-21; accepted by Federico on
+23 Nov; in 0.6 by Henry's decision of 25 Nov). Marked **[PROPOSED, F-41]**
+where it lands, in §7.2, §7.3a, §7.4 and §10:
 - **§7.2, §7.3a.** The reconciliation's window no longer reads the truth
   store. The feeder container calls `member_refs_seen(frame)` and stages what
   it returns in a new table, `bob.member_refs_seen`. `bob_app` reads the

@@ -3,6 +3,8 @@
 Una línea por cambio entregado, en lenguaje de usuario.
 
 ## Sin publicar
+- BObee: el guard de sus vistas revisa todas las `v_ai_*` y sus funciones, y también corre sobre la base tal como la instala `bob_migrador`. La aplicación ya no puede crear, cambiar ni borrar organizaciones (`bob_app` solo lee la suya). P5 deja escrito qué tiene que cumplir el servicio de inferencia antes de poder conectarse.
+- Slice 3: el texto de la 0.6 del contrato está escrito como propuesta, con las preguntas abiertas para Henry; sus dos migraciones entran como `bob_migrador` con la cadena de instalación de O-3 (medido en Postgres 17.6), y el guard de BObee ya no supone que el dueño de la vista es `postgres`.
 - P5 recoge que D62 quedó firmada (bzzz#457) y que el ensayo de lab-02 ya corrió; §5.2 pasa a D77: la aplicación y el feeder van al lado de la caja en `/opt/bob/`, el feeder lee por `bzzz-vecinos` y no tiene rol de ClickHouse.
 - BOb se instala en una caja con `scripts/instalar-bob.sh`, como se decidió para O-3 (D77):
   - `postgres` instala una vez la cadena actual, fijada archivo por archivo;
@@ -14,6 +16,7 @@ Una línea por cambio entregado, en lenguaje de usuario.
 - El ensayo de P5 corrió en lab-02: 41 comprobaciones, todas como se esperaba, con la cadena aplicada y `auth.users` sin tocar. El kit compara inventarios sin depender del idioma de la caja.
 - Restaurar `bob` solo ya no se lleva las funciones de `public` que dependen de él: el procedimiento y el kit del ensayo las guardan antes de borrar `bob` y las reponen después (`scripts/bob-dependientes.sh`). `service_role` ya no puede drenar el outbox (F-47).
 - Ningún rol con el que corre la aplicación puede vaciar una tabla de un golpe (TRUNCATE), algo que se saltaba la separación entre organizaciones.
+- Slice 3: cada celda de las gráficas, la matriz y BObee dice si es un cero observado, no observado, pendiente, no configurado o no aplica, con los motivos de por qué y qué declarar; los totales de varios canales dicen cuántos canales cubren. El alimentador escribe el cero solo cuando el canal estaba vivo y la métrica declarada. Las funciones de la celda viven en `bob`, así que restaurar `bob` solo las trae consigo. Contrato 0.6 sin aceptar todavía.
 - El registro de auditoría tampoco se puede escribir con la sesión de un usuario: solo se lee.
 - El registro de auditoría ya no se puede escribir desde la aplicación: `bob_app` solo lo lee.
 - P5 Q6, opción (a), construida: el alimentador deja en `bob.member_refs_seen` los miembros que ve en el almacén de verdad, con permiso solo para insertar y bajo el tenant de cada fila, y BOb crea los fantasmas desde esa tabla y borra lo que consumió. El alimentador sigue sin leer más que sus dos vistas y sin crear actores. Enmienda del contrato §7.2 y §7.3a propuesta (F-41). D62 sigue sin firmar.

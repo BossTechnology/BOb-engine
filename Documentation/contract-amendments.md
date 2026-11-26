@@ -3126,6 +3126,11 @@ discovered guard: no object in `bob` depends on an object outside `bob` that
 depends on `bob`. Until PR #40 lands that way, the rehearsal on lab-02 is
 run from a `main` without it.
 
+**Closed in PR #40.** The five functions are created in `bob`, and
+`restoreCycleFindings` (`scripts/box-checks.mjs`, run by `box-check` and by
+`tests/p5-roles.test.mjs`) is the guard, seen red on the `public` layout and
+green after the move. See "In `bob`, so `bob` restores alone" under Slice 3.
+
 Limit: Postgres lists at most 100 objects in the CASCADE's notice. The kit's
 count check would fail past that, loudly, not silently.
 
@@ -3158,6 +3163,228 @@ publicaciones=4 archivo=bob.sql.gz`, the 33 tables matching what is live. The
 nightly backup is still the installed one. Deploying Bzzz `main` there is
 separate: its plan brings up `compose/l7-bob.yml`, which needs a bob-web
 image lab-02 does not have.
+
+## Slice 3 · The absent-not-zero state, built
+
+Built from `docs/slice-3-absent-not-zero.md` with F-28 (corrected), F-29 to
+F-34, F-38 and F-39. **The contract stays at 0.5.3**: Federico has not
+accepted 0.6, so its text is not written into the contract here. It goes in
+when he accepts, and anything he changes comes back as a migration.
+
+Two migrations, append-only, numbered after `20261121190000` (PR #41): lab-02
+has the chain applied through it, and `supabase db push` refuses a file older
+than the last one applied unless told `--include-all`.
+
+- `20261121200000_slice3_catalog_and_feeder_map.sql`: the three capabilities
+  (F-29, thirteen in all), `bob.cell_catalog` (one row per metric: source,
+  actor grain, applicable actor types, required capabilities, precondition,
+  degenerate, undefined-by), and `actor_types` on `v_feeder_channel_map`
+  (F-38), still granted to `bob_feeder` only.
+- `20261121200100_slice3_cell_state.sql`: `bob.bob_cell_state(org,
+  channels[], from, to)`, `bob_cell_rollup` with coverage (F-30),
+  `bob_available_state` (FR-23's reasons translated, `no_channels_selected` to
+  `not_applicable`), `bob_actor_cell_state` (the per-actor drill-down with
+  `off_shift`), and BObee's `bob.v_ai_cell_state`. Every one is `LANGUAGE sql`
+  with a `BEGIN ATOMIC` body, so `pg_depend` records what it reads. The cell
+  functions are invoker and run under RLS. BObee's view is a definer view over a
+  definer function that filters on the caller's `org_id` claim (R6), granted to
+  `bob_ai_ro` only. All of them live in `bob` (see "In `bob`, so `bob`
+  restores alone" below).
+
+The reference feeder writes the observed zero at seal (F-28): only with
+liveness (traffic, or an uptime probe), only on a declared capability, never
+for a preconditioned metric (`ZERO_PRECONDITIONS`: `hallucinations`,
+`abandoned`), and only for the actor types the channel declares present (F-38),
+`user` only for the degenerate metrics. It now also writes `proj_durations`
+(response time, interaction duration; OTel exponential histogram at scale 4)
+and `proj_channel_health` from probes, which lifts two of the limits recorded
+for Slice 2.
+
+### F-45 · Website MECA is `pending`, not `not_observed` — spec vs R3, fixed in the spec
+
+Spec §8.2 expects the website's MECA cell to be `not_observed`. The fixture's
+website has `lag_seconds` NULL, and R3 (decided after the spec's table was
+written) makes a no-row cell with an undeclared lag `pending` with
+`lag_not_declared`: the bucket can never be known sealed. The test asserts
+`pending`, and the chat channel (which declares a lag and meca_rum, and gets no
+RUM row) carries `not_observed` instead, so the state still appears. No
+contract change. **Corrected** (Henry, 21 Nov): the spec's §8 FR-32 bullet
+now says `pending` (`lag_not_declared`) for the website.
+
+### F-46 · `bob_app` could not read its own organization — finding, fixed
+
+`bob.organizations` had no policy reaching `bob_app`, so an invoker function
+reading `telemetry_started_at` as `bob_app` got no row and every cell came back
+empty. The tenancy guard did not see it: it discovers tenant tables by
+`org_id`, and `organizations` is keyed by `id`. The second migration adds
+`bob_app_reads_own_org` (FOR SELECT TO bob_app, `id` equal to the claim).
+Extending the discovery to tables keyed by their own `id` is left open.
+
+### In `bob`, so `bob` restores alone — closes F-47's open case
+
+The first cut put the cell functions in `public`, beside `bob_availability()`.
+The P5 restore (`docs/p5-failed-migration-procedure.md` §4.3) drops `bob` with
+CASCADE and restores `pg_dump -n bob`: `bob.v_ai_cell_state` read
+`public.bob_ai_cell_state()`, which read `bob` through a `BEGIN ATOMIC` body,
+so the CASCADE took the function, the dump did not carry it, and the view
+could not be restored. Found by running the lab-02 rehearsal kit locally, on
+a throwaway tree with PR #41 merged in; not by a run on lab-02 itself.
+Henry's ruling: "Both in bob".
+
+- `bob_cell_state`, `bob_cell_rollup`, `bob_available_state`,
+  `bob_actor_cell_state` and `bob_ai_cell_state` are created in `bob`, with the
+  same `BEGIN ATOMIC` bodies and the same grants: `bob_app` and
+  `authenticated` on the four, `bob_ai_ro` alone on BObee's, nothing to
+  `service_role`. `bob` has no default privileges; the revoke names every role
+  anyway.
+- They still call three helpers in `public`: `bob_source_key_unset()` and
+  `bob_shift_is_live()` read no table, and `bob_availability()` is plpgsql,
+  which records no dependency. All three survive the CASCADE.
+- No caller in this repository reached them through PostgREST in `public`:
+  they exist only in this PR. bob-web was not read from here (it is outside
+  this repository, CLAUDE.md); whatever it writes against the spec should call
+  `bob.bob_cell_state` and the others through the `bob` schema.
+- **New guard, discovered:** `restoreCycleFindings` in `scripts/box-checks.mjs`,
+  run by `scripts/box-check.mjs` and tested in `tests/p5-roles.test.mjs`. From
+  `pg_depend`: no object in `bob` depends on an object outside `bob` (system
+  schemas and extension members aside) that itself reaches `bob`. A rule,
+  default, trigger, policy or constraint counts as its table. Seen red on the
+  `public` layout with exactly one finding (`bob.v_ai_cell_state` →
+  `public.bob_ai_cell_state()`), green after the move. Its probes create a view
+  and a column default that reach `bob` through `public` (both found) and a view
+  over `bob_source_key_unset()` (not found).
+- **The lab-02 rehearsal read `bob.cell_catalog` as fixture rows.** Step 5's
+  "sin filas del fixture en bob" expected every non-projection table in `bob`
+  to be empty, and the catalog's 20 rows are configuration the chain seeds.
+  `scripts/ensayo-migracion-lab.sh` now records the counts right after the
+  chain is applied, before any fixture, and step 5 checks that `bob` is back to
+  exactly those. Still discovered, and a fixture row left anywhere (including
+  `organizations`) still fails it.
+- **The rehearsal, end to end.** `probar-local.sh` with Supabase CLI 2.120.0,
+  on this branch with PR #41 merged in (throwaway tree, not pushed): every case
+  matches, the bob-alone restore included.
+
+### Build choices — confirmed by Henry, 21 Nov
+
+Henry confirmed all thirteen as built ("Confirmar todas"). The merge still
+waits for Federico to accept 0.6 in task 6.
+
+- **A feeder writes the zero only for a metric it has a counting path for**
+  (the review of PR #40, approved by Henry). The first cut wrote zeros for
+  every metric of `ZERO_RULES`, including `abandoned`, `disambiguation` and
+  `abandoned_in_queue`, which the reference feeder never counts: it has no
+  idle detection, no disambiguation event and no queue event. WhatsApp
+  declares all three (with an idle bound), so every live, sealed bucket read
+  "observed, none" even if an abandonment happened. `MEASURED`
+  (`feeder/event-mapping.mjs`) now gates the zero: `resolved`, `escalations`,
+  `response_time`, `interaction_duration`. The other three get no row and
+  render `not_observed`. A metric joins `MEASURED` in the change that gives it
+  a counting path. The tests see each `MEASURED` metric counted above zero from
+  the fixture, no row at all for the others, and their WhatsApp cells
+  `not_observed` on a live, sealed bucket. **3.7 must copy this:** no zero for
+  a metric it does not count.
+- A zero row's `session_count` is the metric's own denominator (closes in the
+  bucket), not "the bucket's interactions".
+- When a bucket has neither traffic nor a probe row, `liveness_source` falls
+  back to `traffic` on an observed row (the row itself is the activity).
+- The tenant's watermark for R3 is the greatest `source_watermark` across its
+  projections.
+- Channel-grain metrics carry `actor_type` NULL.
+- UI-03 is asserted over every cell except `not_applicable`, which §3 gives no
+  reasons.
+- `no_ground_truth` is unconditional: there is no table for D-29's knowledge
+  note yet, so `hallucinations` is `not_configured` everywhere.
+- In the per-actor cells, `off_shift` comes before `pending` for a no-row cell,
+  judged at `bucket_start`.
+- `value` is the additive figure: the count, or `n` for durations.
+- `bob_available_state` covers `user`, `asa` and `human`, the actors
+  `bob_availability` already returns.
+- Probe rows write `health_latency` and `health_errors` as 0.
+- The claim BObee filters on is the one `bob_ai_ro`'s connection sets itself,
+  the same shape as F-21.
+
+### Performance
+
+`EXPLAIN ANALYZE` on the fixture, tenant A, five channels:
+
+| Frame | Cells | Time |
+|---|---|---|
+| 1 hour | 3,240 | 13 ms |
+| 15 hours | 48,600 | 149 ms |
+| 18 days | 1,399,680 | 3.4 s |
+
+The first cut took 2.1 s for 15 hours. The planner inlined the per-channel
+declaration CTE and ran the capability anti-join once per cell (32,400
+loops); `declared AS MATERIALIZED` judges it once per channel, metric and
+actor. Materializing `bob_cell_state` itself (spec §10) is not needed at this
+size.
+
+**Re-measured on 23 Nov, with the functions in `bob`** (Postgres 15.19, the
+same fixture and frames). The plan keeps its shape: `declared` is materialized
+once (270 rows), and the capability subquery runs 270 times, once per channel,
+metric and actor, not once per cell. The deployed body, read back with
+`pg_get_functiondef` and explained the way the table above was: 15 hours in
+84 ms. The machine was loaded at the time (load average 35 to 52 on 8 cores,
+from other projects), so calls through the function, five runs each, varied
+widely, as the owner and as `bob_app` under the claim: 1 hour 17 to 316 ms, 15
+hours 126 to 455 ms, 18 days 2.8 to 13 s. The minimums match the table; the
+spread is the machine, not the move.
+
+### Verified by sabotage
+
+Each guard was seen failing, then restored and seen passing.
+
+| # | Sabotage | Turned red |
+|---|---|---|
+| S1 | The sentinel re-implemented instead of calling `bob_source_key_unset()` | SR-2 `pg_depend` |
+| S2 | Declared-absent moved after `pending` | FR-11, G8, the fuzz property |
+| S3 | The mix reaches the degenerate metrics | The degenerate-metric test |
+| S4 | `pending` ignores the current lag | R3, the fuzz property |
+| S5 | The rollup sums every cell | FR-32 rollup, the sum test |
+| S6 | BObee's function drops the claim filter | Tenancy R6 |
+| S7 | The rollup with a plpgsql body | `pg_depend`, `BEGIN ATOMIC` discovery |
+| S8 | The catalog loses `handled` | Catalog completeness |
+| S9 | The feeder ignores `ZERO_PRECONDITIONS` | Preconditioned metrics, liveness and capability |
+| S10 | Zeros without liveness | PR-10, the liveness test |
+| S11 | A zero on an undeclared capability | The liveness and capability test |
+| S12 | Actor types fixed per metric | The F-38 tests |
+| S13 | Applicability ignored | The never-`user` test (F-33) |
+| S14 | `ZERO_PRECONDITIONS` loses `abandoned` | Catalog equality, the abandoned test |
+| S15 | The feeder drops the `MEASURED` filter | No row for an unmeasured metric; their cells `not_observed` |
+| S16 | `MEASURED` gains `abandoned`, which nothing counts | The counting-path test, and the two above |
+
+The fuzz test draws 160 seeded cases (lags, marks, mixes, capabilities) and
+compares `bob_cell_state` with a JavaScript oracle of §3's order.
+
+### Two Slice 2 guards caught the new files once they were tracked
+
+Both scan tracked files only, so they stayed green until the commit.
+
+- **The namespace-literal guard** read `'capability_not_declared:' || cap`
+  and `'no_definition:' || …` as refs with a literal namespace. These are §3's
+  reason codes, not refs. The guard now names the two reason prefixes it skips
+  (`REASON_PREFIXES`), so a new one turns it red until someone looks. A new
+  probe checks that a real namespace on the same line is still found.
+- **The capability-from-type guard** split the fuzz test on `;` and found a
+  channel insert naming `channel_type` beside a capability insert. The
+  capability there is drawn at random. The insert now ends its statement, with
+  a note saying so. The guard is unchanged.
+
+### Counts
+
+After merging `main` (with #35, #37, #39 and #41), on a fresh `supabase db
+reset --no-seed` of a stack of its own: `pnpm test` 354 tests, 351 pass, 0
+fail, 3 `todo` (with the move to `bob`, the restore guard and `MEASURED`). pgTAP over `supabase/tests/database`: 18 of 18. The shared stack was
+not touched.
+
+After merging `main` at `5600867` (#44, #45 and #46): 354 tests, 352 pass, 0
+fail, 2 `todo` (#44 turned the installed-egress probe from a `todo` into a
+test). pgTAP 18 of 18.
+
+The rehearsal bench (`scripts/ensayo-migracion-lab/probar-local.sh`, CLI
+2.120.0, a disposable copy of lab-02's identity stack) at `7542401`, after
+`MEASURED` and the renumbering: every case matches, the bob-alone restore and
+the nine sabotages included. Not a run on lab-02.
 
 ---
 
@@ -3645,3 +3872,101 @@ and minors; each was verified first.
   `instalar-bob.sh` in a signed tree requires an absolute `BOB_PSQL`; the screen
   shows the `MIGRADOR_USUARIO` read from the file; the chain list is read once
   into a variable instead of `chain_files | grep -q` under pipefail.
+
+## Slice 3 · Fitted to the O-3 install chain (#48)
+
+Measured on 25 Nov: #40 merged without committing into #48 (`a54723b`), on
+the box's image (`supabase/postgres:17.6.1.136`), a disposable local stack,
+CLI 2.119.0. CI's pinned 2.120.0 was not used. Steps as #48's CI job runs
+them: `instalar-bob.sh cadena`, `alta-ci.sql` with its `supabase_admin` half,
+then `instalar-bob.sh resto`.
+- **How the two migrations go in.** `20261121200000` and `20261121200100` are
+  not in `install-chain.sha256`, so step 3 (`resto`) applies them as
+  `bob_migrador`, after the chain, in version order, and records them in
+  `bob.schema_migrations`. `2 applied, 0 already recorded.` Neither file has a
+  backslash, both are under the 120 000-byte limit (10 KB and 32 KB), and
+  their `BEGIN;`/`COMMIT;` are on their first and last lines, which `resto`
+  blanks. `owner-chain-check.mjs`: `35 migration file(s), 33 in the install
+  chain, 33 in the CLI's history, 2 in bob.schema_migrations`, no findings.
+- **lab-02.** It has the chain through `20261121190000` from `db push`. With
+  #48 in, `cadena` is a no-op there and `resto` applies only these two.
+  Nothing renumbers.
+- **The definer view runs as its owner.** With the files applied by
+  `bob_migrador`, `bob.v_ai_cell_state` and `bob.bob_ai_cell_state()` are owned
+  by it. `tests/slice3-cell-state.test.mjs` on that database: 45 of 45. The
+  R6 tenancy tests read the view as `bob_ai_ro` under one tenant's claim and
+  see its rows only, so `bob_migrador` can execute everything the view
+  reaches.
+- **One guard named the owner.** The R6 test "nothing else reads it"
+  excluded `postgres` by name, and failed on that layout with `bob_migrador`
+  listed. It now excludes the view's owner from `pg_class`, so it behaves the
+  same on both layouts. Seen red: `bob_app` granted the view and the function
+  by hand gives `['bob_ai_ro', 'bob_app']`. Revoked, green.
+- **Not from #40.** On that layout the suites need a fixture loader that can
+  write `bob` (`postgres` no longer owns it; they were run as
+  `supabase_admin`). The F-44 default-privileges test then reads
+  `supabase_admin`'s defaults. Both come from where the suite is run, not
+  from the migrations.
+- **Expected when `main` brings #48 into this PR.** One textual conflict,
+  `ESTADO.md`. And #48's CI step "resto applies a file whole or not at all"
+  asserts `^0 applied, 2 already recorded\.$` and says every migration is in
+  the chain. With Slice 3 there are four recorded: the two Slice 3 files and
+  the two samples. The tree digest also changes, so Henry signs a new
+  base-to-new pair for each box before its window.
+- **Done on 25 Nov, when #48 merged (`6d88bd6`).** `main` was merged in. It
+  conflicted in `ESTADO.md`, `CHANGELOG.md` and this file, and all three keep
+  both sides. The CI line no longer says `2`. It counts the files that are
+  not in `install-chain.sha256` and expects `0 applied, <that> already
+  recorded.`, so the next migration does not break it.
+
+## Slice 3 · Independent security review of #40 (`cca541e`), applied
+
+No blockers. Measured with two organizations: no cross-tenant read through
+any cell function, and none through F-46's policy.
+- **I-1 · the claim is the whole boundary of `v_ai_cell_state`, written down.**
+  `bob.bob_ai_cell_state()` takes the tenant from `auth.jwt()`, which reads the
+  GUCs `request.jwt.claim` and `request.jwt.claims`. Any role can set either
+  one, even with `set_config` inside a SELECT. Measured by the review:
+  `bob_ai_ro` with A's claim reads B's 918 rows after setting B's, and the
+  singular `request.jwt.claim` takes precedence. Not usable today, because
+  `bob_ai_ro` is NOLOGIN with CONNECTION LIMIT 0. P5 §3.3 and §4 now make three
+  things the condition for giving it LOGIN (tasks 5.7 and 5.9): the model never
+  composes SQL; the claim is set with `set_config(…, true)` per transaction;
+  and `request.jwt.claim` is cleared in the same transaction.
+- **M-1 · the R6 guard discovers.** "Only bob_ai_ro reads it" covered one view
+  and one function, by name. It now covers every `v_ai_*` view, and for each
+  one every SECURITY DEFINER function its rewrite rule depends on (from
+  `pg_depend`). `aiViews()` used to drop a view without `org_id`, which left
+  that view unchecked. Now such a view fails.
+- **M-2 · owners.** Each `v_ai_*` view and its definer functions share one
+  owner, either `postgres` or `bob_migrador`. A test checks that
+  `v_ai_cell_state` has a definer function, so the owner check always has
+  something to check. The R6 and F-46 groups also run in
+  "Chain applies as bob_migrador (O-3)", on the database `bob_migrador`
+  installs, with `supabase_admin` loading the fixture.
+- **M-3.** P5 §3.3 said the `v_ai_*` views are invoker. They are definer (R6),
+  and the text now says so.
+- **M-5 · migration `20261121200200`.** It revokes INSERT, UPDATE and DELETE
+  on `bob.organizations` from `bob_app`, granted in Slice 1. The only
+  `bob_app` policy there is F-46's SELECT, so RLS already refused the writes.
+  Nothing in BOb-engine or bob-web writes an organization as `bob_app`. The
+  demo's signup and seed go through the service role. `resto` applies it as
+  `bob_migrador` (`3 applied`).
+- **Seen red**, each against the `bob_migrador` layout (17.6.1.136, local):
+
+  | Sabotage | Caught by |
+  |---|---|
+  | `bob_ai_cell_state()` handed to `postgres` | the owner test, and "only bob_ai_ro reads it" |
+  | `bob_app` granted the view and the function | "only bob_ai_ro reads it" |
+  | a `v_ai_*` view with no `org_id` | discovery, and the name test |
+  | `bob_app` granted UPDATE on `organizations` | the F-46 write test |
+
+  Clean, before and after: 8 of 8. A first run was red on the guard itself:
+  `regprocedure` prints a function without its schema when the schema is on
+  the `search_path`. The function name is now built from `pg_namespace`.
+- **To follow up, not built:**
+  - **M-4.** `bob_available_state` answers the same for an organization that
+    is not the caller's: it does not refuse a foreign `org`. It leaks nothing
+    measured, but it does not say "not yours" either.
+  - **M-6.** PUBLIC holds TEMP on the database, so any role can create
+    temporary objects.

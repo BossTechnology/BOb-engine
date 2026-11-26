@@ -11,9 +11,16 @@
 // event-mapping.mjs: customer and business turns, ORGA labels, conversation
 // closes, detections and delivery attempts. That fills proj_metric_counts,
 // proj_sentiment, proj_actor_metrics, proj_detections and proj_deliveries.
-// Durations, channel health and RUM need instrumentation the fixture does not
-// model; the reference feeder writes none of their rows rather than invent
-// zeros it did not observe (§5).
+//
+// Slice 3 (spec §5, §8.1; F-28, F-38 and F-39, proposed for 0.6): it also
+// writes proj_durations (response time, and interaction duration at the close)
+// and proj_channel_health from an uptime probe, and at seal it writes the
+// observed zero: for every sealed bucket with liveness (traffic or probe),
+// every metric of ZERO_RULES that it MEASURES (has a counting path for) and
+// whose capability the channel declares, and the actor types the channel
+// declares present. Never for a metric of
+// ZERO_PRECONDITIONS whose precondition it cannot see met. RUM stays
+// unwritten: that is Slice 4.
 //
 // And one more write, P5 Q6 (a) (Henry, 2026-11-21): stageMemberRefs asks the
 // truth store for member_refs_seen (§7.3a) and stages the refs in
@@ -22,6 +29,7 @@
 
 import {
   MEMBER_REF, kindOf, LABEL_STATES, LABEL_FAILURES, CLOSE_METRIC,
+  ZERO_RULES, ZERO_PRECONDITIONS, MEASURED, TRAFFIC_KINDS,
 } from './event-mapping.mjs'
 
 export const DEFAULT_FEEDER_VERSION = 'reference-feeder/0.1'
@@ -87,8 +95,29 @@ function emptyTenant(orgId) {
   return {
     orgId,
     metric: new Map(), sentiment: new Map(), actor: new Map(),
+    durations: new Map(), health: new Map(), live: new Map(),
     detections: [], deliveries: [],
   }
+}
+
+// §6.3: an OTel exponential histogram at scale 4. A value v > 0 falls in the
+// bucket of index ceil(log2(v) * 2^scale) - 1; a zero goes to the zero count.
+export const HIST_SCALE = 4
+export function histogram(values) {
+  const idx = values.filter((v) => v > 0)
+    .map((v) => Math.ceil(Math.log2(v) * 2 ** HIST_SCALE) - 1)
+  const zero = values.filter((v) => v <= 0).length
+  if (!idx.length) return { offset: 0, counts: [], zero }
+  const lo = Math.min(...idx); const hi = Math.max(...idx)
+  const counts = new Array(hi - lo + 1).fill(0)
+  for (const i of idx) counts[i - lo]++
+  return { offset: lo, counts, zero }
+}
+
+function liveness(T, ch, b) {
+  const k = `${ch.channel_id}|${b}`
+  if (!T.live.has(k)) T.live.set(k, { channel: ch, bucket: b, traffic: false, probe: false })
+  return T.live.get(k)
 }
 
 function bump(map, key, base, field, by = 1) {
@@ -130,8 +159,43 @@ export function project(events, maps, watermark, { from, to, boxTenant = null })
     const T = tenants.get(ch.org_id)
     const kind = kindOf(e)
     const ckey = `${ch.org_id}|${ch.channel_id}|${e.correlation_id}`
-    if (!convs.has(ckey)) convs.set(ckey, { actors: new Map(), lastState: null })
+    if (!convs.has(ckey)) {
+      convs.set(ckey, { actors: new Map(), lastState: null, firstAt: null, waitingSince: null })
+    }
     const conv = convs.get(ckey)
+    const t = new Date(e.event_time).getTime()
+
+    // F-28 · liveness. An interaction's activity is traffic for its bucket;
+    // an uptime probe is a probe, on a channel that declares health_uptime.
+    if (TRAFFIC_KINDS.has(kind)) {
+      liveness(T, ch, iso(bucketOf(e.event_time))).traffic = true
+      if (conv.firstAt === null) conv.firstAt = t
+    }
+
+    // §6.3 · response time: a business turn answering the oldest unanswered
+    // customer turn, attributed to the answering actor type, in its bucket.
+    if (kind === 'customer_turn' && conv.waitingSince === null) conv.waitingSince = t
+    if (kind === 'business_turn' && conv.waitingSince !== null) {
+      if (ch.capabilities.includes('response_time')) {
+        const b = iso(bucketOf(e.event_time))
+        const type = e.attributes['actor.type']
+        const k = `response_time|${type}|${ch.channel_id}|${b}`
+        if (!T.durations.has(k)) {
+          T.durations.set(k, { channel: ch, bucket: b, measure: 'response_time', actorType: type, values: [] })
+        }
+        T.durations.get(k).values.push(t - conv.waitingSince)
+      }
+      conv.waitingSince = null
+    }
+
+    if (kind === 'probe' && ch.capabilities.includes('health_uptime')) {
+      const b = iso(bucketOf(e.event_time))
+      liveness(T, ch, b).probe = true
+      const k = `${ch.channel_id}|${b}`
+      if (!T.health.has(k)) T.health.set(k, { channel: ch, bucket: b, uptime: 0, observedSeconds: 0 })
+      T.health.get(k).uptime += Number(e.attributes.uptime_seconds ?? 0)
+      T.health.get(k).observedSeconds += Number(e.attributes.observed_seconds ?? 0)
+    }
 
     if (kind === 'business_turn' || kind === 'close') {
       const who = resolveRef(maps, ch.org_id, e.attributes['actor.ref'], e.event_time)
@@ -183,6 +247,15 @@ export function project(events, maps, watermark, { from, to, boxTenant = null })
       if (who) {
         bump(T.actor, `${metric}|${who.actorId}|${who.rung}|${ch.channel_id}|${b}`,
           { channel: ch, bucket: b, actor: who, rung: who.rung, metric, n: 0 }, 'n')
+      }
+      // F-39 · interaction duration lands at the close, on a channel that
+      // declares resolution. It belongs to the conversation: `user` (O2).
+      if (ch.capabilities.includes('resolution') && conv.firstAt !== null) {
+        const k = `interaction_duration|user|${ch.channel_id}|${b}`
+        if (!T.durations.has(k)) {
+          T.durations.set(k, { channel: ch, bucket: b, measure: 'interaction_duration', actorType: 'user', values: [] })
+        }
+        T.durations.get(k).values.push(t - conv.firstAt)
       }
     }
 
@@ -238,11 +311,61 @@ function rowsOf(T, watermark) {
     }
   }
 
+  const durationRows = [...T.durations.values()].map((d) => {
+    const h = histogram(d.values)
+    return { channel: d.channel, bucket: d.bucket, measure: d.measure, actorType: d.actorType,
+      n: d.values.length, sum: d.values.reduce((a, v) => a + v, 0),
+      min: Math.min(...d.values), max: Math.max(...d.values), hist: h }
+  })
+
+  // F-28, F-38 · the observed zero, at seal. For every sealed bucket with
+  // liveness, every metric it counts and whose capability the channel declares, for the
+  // actor types present on it (degenerate metrics: `user`), where no row was
+  // counted. Never for a precondition it cannot see met.
+  const have = new Set([
+    ...metricRows.map((r) => `${r.channel.channel_id}|${r.actorType}|${r.metric}|${r.bucket}`),
+    ...durationRows.map((r) => `${r.channel.channel_id}|${r.actorType}|${r.measure}|${r.bucket}`),
+  ])
+  for (const l of T.live.values()) {
+    if (!(l.traffic || l.probe) || !sealed(l.channel, l.bucket)) continue
+    const ch = l.channel
+    const session = closes.get(`${ch.channel_id}|${l.bucket}`) ?? 0
+    for (const [m, rule] of Object.entries(ZERO_RULES)) {
+      if (!MEASURED.has(m)) continue
+      const pre = ZERO_PRECONDITIONS[m]
+      if (pre === 'ground_truth') continue
+      if (pre === 'idle_bound' && ch.idle_bound_seconds === null) continue
+      if (rule.capability !== null && !ch.capabilities.includes(rule.capability)) continue
+      const actors = rule.degenerate ? ['user']
+        : rule.actors.filter((a) => (ch.actor_types ?? []).includes(a))
+      for (const a of actors) {
+        if (have.has(`${ch.channel_id}|${a}|${m}|${l.bucket}`)) continue
+        if (rule.table === 'proj_metric_counts') {
+          metricRows.push({ channel: ch, bucket: l.bucket, metric: m, actorType: a, n: 0, session })
+        } else {
+          durationRows.push({ channel: ch, bucket: l.bucket, measure: m, actorType: a,
+            n: 0, sum: 0, min: null, max: null, hist: { offset: 0, counts: [], zero: 0 } })
+        }
+      }
+    }
+  }
+
   return {
     orgId: T.orgId,
     proj_metric_counts: metricRows.map((r) => ({
       channel_id: r.channel.channel_id, actor_type: r.actorType, metric_id: r.metric,
       bucket_start: r.bucket, event_count: r.n, session_count: r.session,
+      sealed: sealed(r.channel, r.bucket),
+    })),
+    proj_durations: durationRows.map((r) => ({
+      channel_id: r.channel.channel_id, actor_type: r.actorType, measure: r.measure,
+      bucket_start: r.bucket, n: r.n, sum_ms: r.sum, min_ms: r.min, max_ms: r.max,
+      hist_scale: HIST_SCALE, hist_offset: r.hist.offset, hist_counts: r.hist.counts,
+      hist_zero_count: r.hist.zero, sealed: sealed(r.channel, r.bucket),
+    })),
+    proj_channel_health: [...T.health.values()].map((r) => ({
+      channel_id: r.channel.channel_id, bucket_start: r.bucket,
+      uptime_seconds: r.uptime, observed_seconds: r.observedSeconds, observed: true,
       sealed: sealed(r.channel, r.bucket),
     })),
     proj_sentiment: [...T.sentiment.values()].map((r) => ({

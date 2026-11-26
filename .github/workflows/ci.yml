@@ -122,6 +122,10 @@ jobs:
         env:
           SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
         run: node --test --test-concurrency=1 tests/slice2-feeder.test.mjs
+      - name: Slice 3 · the absent-not-zero cell, FR-32, UI-03, PR-10, SR-2, against one implementation; the feeder's zeros
+        env:
+          SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+        run: node --test --test-concurrency=1 tests/slice3-cell-state.test.mjs
       - name: P5 §6.3 · three roles, bob_ai_ro reads views only, no egress; the box check of objection 3
         env:
           SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
@@ -246,7 +250,17 @@ jobs:
           ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
           MIGRADOR_PASSWORD: bob_migrador-local-test
         run: CHAIN_DIR=supabase/migrations node scripts/owner-chain-check.mjs
-      # Today every migration is in the install chain, so step 3 applies nothing.
+      # The definer views on the layout a box has: bob_migrador owns them, so the
+      # R6 and F-46 guards run here too, not only on CI's postgres-owned chain.
+      # supabase_admin loads the fixture, because postgres owns nothing in bob
+      # any more. Only these two groups: the rest of tenancy.test.mjs reads the
+      # connecting role's defaults, which here are supabase_admin's.
+      - name: R6 and F-46 on the bob_migrador layout (review of #40, M-2)
+        env:
+          SUPABASE_DB_URL: postgresql://supabase_admin:postgres@127.0.0.1:54322/postgres
+        run: node --test --test-concurrency=1 --test-name-pattern='^(R6|F-46) ' tests/tenancy.test.mjs
+      # Step 3 applies what came after the install chain (Slice 3's two files
+      # today), then the samples below.
       # Sample migrations show what it does with one, after the check so they
       # never reach it: good files apply and are recorded in bob.schema_migrations
       # in one transaction; a failing one leaves neither; a backslash anywhere is
@@ -319,7 +333,10 @@ jobs:
           # What a COMMIT inside a file had already run stays: detection, said in the failure.
           ok "SELECT to_regclass('bob.ci_before_6') IS NOT NULL" "measured: what ran before a stray COMMIT is committed"
           scripts/instalar-bob.sh resto | tee "$RUNNER_TEMP/resto-again.log"
-          grep -q '^0 applied, 2 already recorded\.$' "$RUNNER_TEMP/resto-again.log" || { echo "::error::resto run again changed something"; exit 1; }
+          # Every file in the directory and not in the install chain is recorded
+          # by now: the migrations after the chain and the two good samples.
+          later=$(ls $m/*.sql | xargs -n1 basename | grep -vxF -f <(grep -v '^#' supabase/provision/install-chain.sha256 | awk '{ print $2 }') | wc -l | tr -d ' ')
+          grep -qx "0 applied, $later already recorded\." "$RUNNER_TEMP/resto-again.log" || { echo "::error::resto run again changed something (expected 0 applied, $later already recorded)"; exit 1; }
           scripts/instalar-bob.sh cadena
           [ "$(psql "$ADMIN_URL" -X -A -t -c 'SELECT string_agg(version, $$,$$ ORDER BY version) FROM supabase_migrations.schema_migrations')" = "$cli_before" ] \
             || { echo "::error::the CLI's history changed"; exit 1; }

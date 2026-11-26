@@ -361,7 +361,29 @@ A-05b's choice with the first route handler. It does not change the matrix.
 
 **`bob_ai_ro`** **[PROPOSED]**. The inference service scopes every request to
 one tenant (task 5.9: "scope by token, tenant and role") and sets that claim.
-The `v_ai_*` views are invoker views, so RLS applies through them.
+The `v_ai_*` views are **definer** views (Slice 3, R6; contract 0.6): `bob_ai_ro`
+reads no table, so RLS cannot hold them. Each view filters on the caller's
+`org_id` claim itself, and the tenancy suite proves it for every `v_ai_*` view
+(`tests/tenancy.test.mjs`, R6).
+
+**The claim is the whole boundary, and any session can set it** (review of
+PR #40, I-1). `auth.jwt()` reads the GUCs `request.jwt.claim` and
+`request.jwt.claims`, and any role can set them, even inside a SELECT with
+`set_config`. Measured on #40 (`cca541e`): `bob_ai_ro` with tenant A's claim
+that then sets tenant B's reads B's 918 cells, and the singular
+`request.jwt.claim` wins over `request.jwt.claims`. It cannot be used today,
+because `bob_ai_ro` is NOLOGIN with CONNECTION LIMIT 0. **Condition for giving
+`bob_ai_ro` LOGIN (tasks 5.7 and 5.9):**
+- the inference service never lets the model compose SQL. It runs a fixed set
+  of queries over the `v_ai_*` views, and the model's output never reaches the
+  SQL text;
+- it sets the claim with `set_config('request.jwt.claims', …, true)`, so the
+  claim lasts one transaction, once per transaction, from the tenant of the
+  request's token;
+- it clears `request.jwt.claim` (the singular) in the same transaction, because
+  `auth.jwt()` prefers it.
+
+Until those three hold, `bob_ai_ro` stays NOLOGIN, CONNECTION LIMIT 0.
 
 ### 3.4 What no running component holds
 
@@ -415,6 +437,8 @@ asks.
 - **The LOGIN step.** A role becomes LOGIN and gets its password when the box is
   provisioned, not in a migration. A migration cannot invent a password
   (`20260902100300`, A-05).
+  `bob_ai_ro` gets LOGIN only once the inference service meets the claim
+  conditions of §3.3 (I-1).
 
 ---
 
