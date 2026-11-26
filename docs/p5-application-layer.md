@@ -102,7 +102,7 @@ not be read as permission to apply them to any box.
 | The box applies them with the same CLI CI uses, lab first | **[PROPOSED]** | §6.2 |
 | A rehearsed failed migration on lab-02 and a written procedure, before the first window (not before the signature) | **[DECIDED]** as a condition (Federico) | §6.2 |
 | Two defects in the feeder's access as built | **[FINDING]** F-21, F-22. Fixed in Slice 2 (PR #20) and run against a database by the reference feeder (PR #21); each guard seen failing | §3.3 |
-| Who schedules the ghost reconciliation, and where it reads the tenant list | ~~**[DECIDED]** (Henry, 19 Nov) the BOb container, with the box's single `org_id` and slug from provisioning (F-26)~~ **[DECIDED]** (Henry, 2026-11-21): «El feeder», the feeder container, which already reads ClickHouse. How: option (a), Henry, 2026-11-21: the feeder writes `member_refs_seen` to a `bob` table, and `bob_app` reconciles from it (F-40) | §7, Q6 |
+| Who schedules the ghost reconciliation, and where it reads the tenant list | ~~**[DECIDED]** (Henry, 19 Nov) the BOb container, with the box's single `org_id` and slug from provisioning (F-26)~~ **[DECIDED]** (Henry, 2026-11-21): «El feeder», the feeder container, which already reads what the box knows (through `bzzz-vecinos` since D77, 77.3; §5.2). How: option (a), Henry, 2026-11-21: the feeder writes `member_refs_seen` to a `bob` table, and `bob_app` reconciles from it (F-40) | §7, Q6 |
 | The seven objections of the devil's-advocate review | **[DECIDED]** (Henry, 19 Nov), all seven answered. The lab-02 rehearsal comes before the signature | §8 |
 
 ---
@@ -158,7 +158,7 @@ exist are the three of Handoff §4.3. They were created in Slice 0, in
 
 | Role | Purpose (from its `COMMENT ON ROLE`) | Who holds the credential | Route-plan name |
 |---|---|---|---|
-| `bob_app` | The application. Reads and writes configuration and live state; read-only on projections. PR-4 | **[PROPOSED]** The BOb application, one container in the box | `bzzz/apps` |
+| `bob_app` | The application. Reads and writes configuration and live state; read-only on projections. PR-4 | **[PROPOSED]** The BOb application, one container beside the box (`bob-web`, D77; §5.2) | `bzzz/apps` |
 | `bob_feeder` | The feeder. Writes projections. No read on configuration | **[DECIDED]** The reference feeder first; 3.7 takes the same credential later (contract §1). Henry, BZZ-19, 18 Nov | not in Plan v2 §9.2 |
 | `bob_ai_ro` | The reasoning tier. Read-only on named `v_ai_*` views and nothing else. IR-1 | **[PROPOSED]** The inference service, task 5.3 | `bzzz/supabase-ro` |
 
@@ -424,7 +424,7 @@ asks.
 | none (new) | BOb's migration owner | `/opt/bob/secrets/migrador.env` | The migration step of §6.2, and nothing else |
 | `bzzz/supabase-ro` | `bob_ai_ro` login | `/opt/bob/secrets/ai-ro.env` | The inference service |
 | `bzzz/apps` | `bob_app` login | `/opt/bob/secrets/app.env` | The BOb container |
-| none (new) | `bob_feeder` login | `/opt/bob/secrets/feeder.env` | The reference feeder first, then 3.7 (§3.1). From 2026-11-21 its container also runs the ghost reconciliation's ClickHouse read (Q6) |
+| none (new) | `bob_feeder` login | `/opt/bob/secrets/feeder.env` | The reference feeder first, then 3.7 (§3.1). From 2026-11-21 its container also runs the ghost reconciliation's read of `member_refs_seen` (Q6), through `bzzz-vecinos` since D77 (§5.2) |
 
 - *2026-11-21 (Q6):* Henry moved the ghost reconciliation to the feeder
   container («El feeder»), and chose option (a) of §7, Q6, so the feeder
@@ -457,10 +457,15 @@ GoTrue's `auth`. There is no second Postgres. The reasons:
 - **The pieces are already there.** The box's GoTrue issues the JWT that BOb's
   `org_id` claim rides on, and `supabase-db` already sits on `bzzz-app` and never
   on `bzzz-edge` (task 3.3).
-- **A direct connection fits only inside the box.** BOb would reach Postgres on
-  `bzzz-app` and never across the internet. So BOb's application runs in the box
-  too, which is stage 4 and D41\*'s question. Until then, no production BOb
-  connects to the box.
+- **A direct connection fits only on the box's machine.** BOb reaches Postgres
+  on its own `internal` network with the box, `bzzz-vecina-bob`, and never on
+  `bzzz-app` or across the internet. So BOb's application runs beside the box,
+  from `/opt/bob/` (D77; §5.2).
+  - *Before D77, this bullet read:* «So BOb's application runs in the box
+    too, which is stage 4 and D41\*'s question. Until then, no production BOb
+    connects to the box.» Rewritten per D77 (Henry, 2026-11-25): under D77,
+    production BOb runs beside the box (`/opt/bob`) and reaches `supabase-db`
+    over `bzzz-vecina-bob`, never across the internet.
 - **The tenancy model is already settled.** Relevo task 7, ruling (d) made `org_id` the
   tenant key. **[DECIDED]** (Federico, Q2): for BOb, `organizations` and
   `org_id` replace runbook §7.3's `tenants` and `app_entities` (task 3.4),
@@ -491,20 +496,24 @@ The reasons:
 
 **D77** (BOb v1 beside the box, signed 2026-11-24; 77.3, 77.5, 77.8) moved
 BOb's application and feeder **beside the box**, not into it. Both run from
-BOb's own compose in `/opt/bob/`, outside Bzzz. The database (`bob` in the
+BOb's own compose in `/opt/bob/`, outside Bzzz, as two containers: `bob-web`
+(the application) and `bob-feeder` (the feeder). The database (`bob` in the
 box's `supabase-db`) and GoTrue stay the box's (§5.1). The feeder reads what
 BzzzBX knows through **`bzzz-vecinos`**, the box's read service for its
 neighbour applications (the same one as OPR-6), and never joins `bzzz-data`.
-The chain is applied by `bob_migrador` (O-3, 77.21; §6.2), after `postgres`
-installs it once.
+The chain is applied by its own owner role, `bob_migrador` (D77 §2.8, 77.17;
+O-3, 77.21; §6.2), after `postgres` installs it once. The running containers
+connect as the three roles of §3, `bob_app` (`bob-web`) and `bob_feeder`
+(`bob-feeder`), with `bob_ai_ro` for the inference service; none holds the
+service role or `bob_migrador`'s credential (§3.4).
 
 | Component | `bzzz-vecina-bob` (`internal`) | `bzzz-app` | `bzzz-data` (ClickHouse) | `bzzz-edge` |
 |---|---|---|---|---|
 | `supabase-db` (the box's) | yes | yes | no | never |
 | `supabase-auth`, GoTrue (the box's) | yes | yes | no | yes |
-| `bzzz-vecinos` (the box's) | yes | — | yes, reading ClickHouse with `bob_lector` | — |
-| BOb application | yes | never | never | yes, through the box's gate (Traefik) only |
-| Feeder | yes | never | never, it reads through `bzzz-vecinos` | no, and no Traefik labels |
+| `bzzz-vecinos` (the box's) | yes | — | no: it reads ClickHouse with `bob_lector` on its own `internal` network, `bzzz-vecinos`, which only ClickHouse shares (77.23) | — |
+| BOb application (`bob-web`) | yes | never | never | yes, through the box's gate (Traefik) only |
+| Feeder (`bob-feeder`) | yes | never | never, it reads through `bzzz-vecinos` | no, and no Traefik labels |
 
 - `bzzz-vecina-bob` is BOb's own `internal` network with the box (77.5).
   Only `supabase-db`, `supabase-auth`, `bzzz-vecinos` and BOb's containers are
@@ -789,18 +798,57 @@ sudo install -d -o root -g root -m 755 /opt/bob /opt/bob/bin /opt/bob/aprobacion
 sudo install -o root -g root -m 755 scripts/firma-instalacion.sh /opt/bob/bin/firma-instalacion
 sudo install -o root -g root -m 644 supabase/provision/firmantes_instalacion /opt/bob/firmantes_instalacion
 sudo install -o root -g root -m 644 /dev/null /opt/bob/aprobaciones-revocadas
-echo <database container name> | sudo tee /opt/bob/hosts-permitidos   # only if a host is not loopback
+printf '%s\n' <IP of bzzz-supabase-db on bzzz-app> bzzz-supabase-db | sudo tee /opt/bob/hosts-permitidos
 echo <digest> | sudo tee /opt/bob/instalacion-firmada && sudo chmod 644 /opt/bob/instalacion-firmada
+sudo install -d -o root -g root -m 700 /root/bob-install
+sudo install -o root -g root -m 600 /dev/null /root/bob-install/postgres.env   # then write POSTGRES_PASSWORD=… in it
 ```
 
 `instalacion-firmada` holds the digest of what the box runs today
-(`scripts/firma-instalacion.sh huella <that commit>`). **Never give this
+(`scripts/firma-instalacion.sh huella <that commit>`).
+
+- **TODO (H4).** On a box that runs no BOb yet, there is no commit to take the
+  digest of. Henry decided «Defined empty base» (2026-11-25). The
+  firma-instalacion-verify session implements it in
+  `scripts/firma-instalacion.sh`; it is not in BossTechnology/BOb-engine#51 as
+  of this writing. When its PR lands, this line names that PR and the digest
+  it defines. This file does not write a digest.
+- **How root on the host reaches the database (B3).** `bzzz-supabase-db`
+  publishes no port, and its container name does not resolve on the host. So
+  `POSTGRES_HOST` is its IP on `bzzz-app`:
+
+  ```
+  docker inspect -f '{{(index .NetworkSettings.Networks "bzzz-app").IPAddress}}' bzzz-supabase-db
+  ```
+
+  Both that IP and `bzzz-supabase-db` (the alta's `MIGRADOR_HOST`) go in
+  `hosts-permitidos`. **Not yet measured through `firma-instalacion`**: it is
+  measured at the lab-02 rehearsal. The IP can change when the container is
+  recreated, so read it again before each install.
+- **The `postgres` password file (B2) lives outside `/opt/bob/secrets/`.**
+  Bob-New's `deploy.sh` (`deploy/caja/lib.sh`, the `secrets/` check) refuses
+  any root-owned file in `secrets/` other than `migrador.env`. The proposed
+  location is `/root/bob-install/postgres.env`: directory 700, file 600, both
+  root's, with one key, `POSTGRES_PASSWORD`.
+
+**Before an install (H5).** `firma-instalacion caja` needs, on the box:
+- to be run **through `sudo` from Henry's own user**, not from a root shell:
+  it reads `SUDO_UID` and refuses without it;
+- the **Supabase CLI at the version CI pins** (2.120.0 today) on its fixed
+  `PATH` (`/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/sbin:/usr/local/bin`), for
+  `cadena`;
+- **psql 16 or newer** under `/usr/lib/postgresql/<v>/bin/` (it takes the
+  newest there, not Debian's `/usr/bin/psql` wrapper; 16 for
+  `PGREQUIREAUTH`), plus **`git`, `setpriv` and `flock`**;
+- a **tmpfs** (`$XDG_RUNTIME_DIR` or `/dev/shm`) for the password files, or
+  `instalar-bob.sh` stops rather than write them to disk;
+- the commit as its **full 40-character SHA** (`git rev-parse HEAD`). **Never give this
 command `SETENV` or `env_keep` in sudoers**: the connection settings go as
 arguments. Every install:
 
 ```
-sudo /opt/bob/bin/firma-instalacion caja <repo> <commit> cadena POSTGRES_ENV=/opt/bob/secrets/postgres.env
-sudo /opt/bob/bin/firma-instalacion caja <repo> <commit> resto  POSTGRES_ENV=/opt/bob/secrets/postgres.env
+sudo /opt/bob/bin/firma-instalacion caja <repo> <commit> cadena POSTGRES_ENV=/root/bob-install/postgres.env POSTGRES_HOST=<that IP>
+sudo /opt/bob/bin/firma-instalacion caja <repo> <commit> resto  POSTGRES_ENV=/root/bob-install/postgres.env POSTGRES_HOST=<that IP>
 ```
 
 It:
@@ -1228,6 +1276,10 @@ Ordered from the most damaging to the least.
      stands as written. The other option was rejected: BOb on Vercel reading
      the box through an exposed read path. It would break §5.1 and §5.2 and
      N-04, and the projections would leave the box (D59, R-05).
+   - *D77 (signed 2026-11-24) replaces this answer (A):* BOb's application and
+     feeder run beside the box, in `/opt/bob/`, not inside it, and the
+     consequence below that put its compose on `bzzz-app` no longer holds
+     (§5.2; D62, «Relación con D77»). The answer above stays as it was given.
    - **Consequences, still to be scheduled. This answer does not decide
      them.** A minimum of stage 4 is pulled forward for Febor alone, ahead of
      the route plan's dates (2027-01-25 → 2027-04-16):
