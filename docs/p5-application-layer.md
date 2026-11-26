@@ -463,8 +463,9 @@ GoTrue's `auth`. There is no second Postgres. The reasons:
   from `/opt/bob/` (D77; §5.2).
   - *Before D77, this bullet read:* «So BOb's application runs in the box
     too, which is stage 4 and D41\*'s question. Until then, no production BOb
-    connects to the box.» D77 answers where the application runs. Whether the
-    last sentence's condition still applies under D77 is not answered here.
+    connects to the box.» Rewritten per D77 (Henry, 2026-11-25): under D77,
+    production BOb runs beside the box (`/opt/bob`) and reaches `supabase-db`
+    over `bzzz-vecina-bob`, never across the internet.
 - **The tenancy model is already settled.** Relevo task 7, ruling (d) made `org_id` the
   tenant key. **[DECIDED]** (Federico, Q2): for BOb, `organizations` and
   `org_id` replace runbook §7.3's `tenants` and `app_entities` (task 3.4),
@@ -1236,6 +1237,10 @@ Ordered from the most damaging to the least.
      stands as written. The other option was rejected: BOb on Vercel reading
      the box through an exposed read path. It would break §5.1 and §5.2 and
      N-04, and the projections would leave the box (D59, R-05).
+   - *D77 (signed 2026-11-24) replaces this answer (A):* BOb's application and
+     feeder run beside the box, in `/opt/bob/`, not inside it, and the
+     consequence below that put its compose on `bzzz-app` no longer holds
+     (§5.2; D62, «Relación con D77»). The answer above stays as it was given.
    - **Consequences, still to be scheduled. This answer does not decide
      them.** A minimum of stage 4 is pulled forward for Febor alone, ahead of
      the route plan's dates (2027-01-25 → 2027-04-16):
