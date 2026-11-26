@@ -250,6 +250,15 @@ jobs:
           ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
           MIGRADOR_PASSWORD: bob_migrador-local-test
         run: CHAIN_DIR=supabase/migrations node scripts/owner-chain-check.mjs
+      # The definer views on the layout a box has: bob_migrador owns them, so the
+      # R6 and F-46 guards run here too, not only on CI's postgres-owned chain.
+      # supabase_admin loads the fixture, because postgres owns nothing in bob
+      # any more. Only these two groups: the rest of tenancy.test.mjs reads the
+      # connecting role's defaults, which here are supabase_admin's.
+      - name: R6 and F-46 on the bob_migrador layout (review of #40, M-2)
+        env:
+          SUPABASE_DB_URL: postgresql://supabase_admin:postgres@127.0.0.1:54322/postgres
+        run: node --test --test-concurrency=1 --test-name-pattern='^(R6|F-46) ' tests/tenancy.test.mjs
       # Step 3 applies what came after the install chain (Slice 3's two files
       # today), then the samples below.
       # Sample migrations show what it does with one, after the check so they

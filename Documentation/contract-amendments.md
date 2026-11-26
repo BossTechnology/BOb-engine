@@ -3918,3 +3918,55 @@ then `instalar-bob.sh resto`.
   both sides. The CI line no longer says `2`. It counts the files that are
   not in `install-chain.sha256` and expects `0 applied, <that> already
   recorded.`, so the next migration does not break it.
+
+## Slice 3 · Independent security review of #40 (`cca541e`), applied
+
+No blockers. Measured with two organizations: no cross-tenant read through
+any cell function, and none through F-46's policy.
+- **I-1 · the claim is the whole boundary of `v_ai_cell_state`, written down.**
+  `bob.bob_ai_cell_state()` takes the tenant from `auth.jwt()`, which reads the
+  GUCs `request.jwt.claim` and `request.jwt.claims`. Any role can set either
+  one, even with `set_config` inside a SELECT. Measured by the review:
+  `bob_ai_ro` with A's claim reads B's 918 rows after setting B's, and the
+  singular `request.jwt.claim` takes precedence. Not usable today, because
+  `bob_ai_ro` is NOLOGIN with CONNECTION LIMIT 0. P5 §3.3 and §4 now make three
+  things the condition for giving it LOGIN (tasks 5.7 and 5.9): the model never
+  composes SQL; the claim is set with `set_config(…, true)` per transaction;
+  and `request.jwt.claim` is cleared in the same transaction.
+- **M-1 · the R6 guard discovers.** "Only bob_ai_ro reads it" covered one view
+  and one function, by name. It now covers every `v_ai_*` view, and for each
+  one every SECURITY DEFINER function its rewrite rule depends on (from
+  `pg_depend`). `aiViews()` used to drop a view without `org_id`, which left
+  that view unchecked. Now such a view fails.
+- **M-2 · owners.** Each `v_ai_*` view and its definer functions share one
+  owner, either `postgres` or `bob_migrador`. A test checks that
+  `v_ai_cell_state` has a definer function, so the owner check always has
+  something to check. The R6 and F-46 groups also run in
+  "Chain applies as bob_migrador (O-3)", on the database `bob_migrador`
+  installs, with `supabase_admin` loading the fixture.
+- **M-3.** P5 §3.3 said the `v_ai_*` views are invoker. They are definer (R6),
+  and the text now says so.
+- **M-5 · migration `20261121200200`.** It revokes INSERT, UPDATE and DELETE
+  on `bob.organizations` from `bob_app`, granted in Slice 1. The only
+  `bob_app` policy there is F-46's SELECT, so RLS already refused the writes.
+  Nothing in BOb-engine or bob-web writes an organization as `bob_app`. The
+  demo's signup and seed go through the service role. `resto` applies it as
+  `bob_migrador` (`3 applied`).
+- **Seen red**, each against the `bob_migrador` layout (17.6.1.136, local):
+
+  | Sabotage | Caught by |
+  |---|---|
+  | `bob_ai_cell_state()` handed to `postgres` | the owner test, and "only bob_ai_ro reads it" |
+  | `bob_app` granted the view and the function | "only bob_ai_ro reads it" |
+  | a `v_ai_*` view with no `org_id` | discovery, and the name test |
+  | `bob_app` granted UPDATE on `organizations` | the F-46 write test |
+
+  Clean, before and after: 8 of 8. A first run was red on the guard itself:
+  `regprocedure` prints a function without its schema when the schema is on
+  the `search_path`. The function name is now built from `pg_namespace`.
+- **To follow up, not built:**
+  - **M-4.** `bob_available_state` answers the same for an organization that
+    is not the caller's: it does not refuse a foreign `org`. It leaks nothing
+    measured, but it does not say "not yours" either.
+  - **M-6.** PUBLIC holds TEMP on the database, so any role can create
+    temporary objects.
