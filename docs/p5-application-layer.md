@@ -798,18 +798,57 @@ sudo install -d -o root -g root -m 755 /opt/bob /opt/bob/bin /opt/bob/aprobacion
 sudo install -o root -g root -m 755 scripts/firma-instalacion.sh /opt/bob/bin/firma-instalacion
 sudo install -o root -g root -m 644 supabase/provision/firmantes_instalacion /opt/bob/firmantes_instalacion
 sudo install -o root -g root -m 644 /dev/null /opt/bob/aprobaciones-revocadas
-echo <database container name> | sudo tee /opt/bob/hosts-permitidos   # only if a host is not loopback
+printf '%s\n' <IP of bzzz-supabase-db on bzzz-app> bzzz-supabase-db | sudo tee /opt/bob/hosts-permitidos
 echo <digest> | sudo tee /opt/bob/instalacion-firmada && sudo chmod 644 /opt/bob/instalacion-firmada
+sudo install -d -o root -g root -m 700 /root/bob-install
+sudo install -o root -g root -m 600 /dev/null /root/bob-install/postgres.env   # then write POSTGRES_PASSWORD=… in it
 ```
 
 `instalacion-firmada` holds the digest of what the box runs today
-(`scripts/firma-instalacion.sh huella <that commit>`). **Never give this
+(`scripts/firma-instalacion.sh huella <that commit>`).
+
+- **TODO (H4).** On a box that runs no BOb yet, there is no commit to take the
+  digest of. Henry decided «Defined empty base» (2026-11-25). The
+  firma-instalacion-verify session implements it in
+  `scripts/firma-instalacion.sh`; it is not in BossTechnology/BOb-engine#51 as
+  of this writing. When its PR lands, this line names that PR and the digest
+  it defines. This file does not write a digest.
+- **How root on the host reaches the database (B3).** `bzzz-supabase-db`
+  publishes no port, and its container name does not resolve on the host. So
+  `POSTGRES_HOST` is its IP on `bzzz-app`:
+
+  ```
+  docker inspect -f '{{(index .NetworkSettings.Networks "bzzz-app").IPAddress}}' bzzz-supabase-db
+  ```
+
+  Both that IP and `bzzz-supabase-db` (the alta's `MIGRADOR_HOST`) go in
+  `hosts-permitidos`. **Not yet measured through `firma-instalacion`**: it is
+  measured at the lab-02 rehearsal. The IP can change when the container is
+  recreated, so read it again before each install.
+- **The `postgres` password file (B2) lives outside `/opt/bob/secrets/`.**
+  Bob-New's `deploy.sh` (`deploy/caja/lib.sh`, the `secrets/` check) refuses
+  any root-owned file in `secrets/` other than `migrador.env`. The proposed
+  location is `/root/bob-install/postgres.env`: directory 700, file 600, both
+  root's, with one key, `POSTGRES_PASSWORD`.
+
+**Before an install (H5).** `firma-instalacion caja` needs, on the box:
+- to be run **through `sudo` from Henry's own user**, not from a root shell:
+  it reads `SUDO_UID` and refuses without it;
+- the **Supabase CLI at the version CI pins** (2.120.0 today) on its fixed
+  `PATH` (`/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/sbin:/usr/local/bin`), for
+  `cadena`;
+- **psql 16 or newer** under `/usr/lib/postgresql/<v>/bin/` (it takes the
+  newest there, not Debian's `/usr/bin/psql` wrapper; 16 for
+  `PGREQUIREAUTH`), plus **`git`, `setpriv` and `flock`**;
+- a **tmpfs** (`$XDG_RUNTIME_DIR` or `/dev/shm`) for the password files, or
+  `instalar-bob.sh` stops rather than write them to disk;
+- the commit as its **full 40-character SHA** (`git rev-parse HEAD`). **Never give this
 command `SETENV` or `env_keep` in sudoers**: the connection settings go as
 arguments. Every install:
 
 ```
-sudo /opt/bob/bin/firma-instalacion caja <repo> <commit> cadena POSTGRES_ENV=/opt/bob/secrets/postgres.env
-sudo /opt/bob/bin/firma-instalacion caja <repo> <commit> resto  POSTGRES_ENV=/opt/bob/secrets/postgres.env
+sudo /opt/bob/bin/firma-instalacion caja <repo> <commit> cadena POSTGRES_ENV=/root/bob-install/postgres.env POSTGRES_HOST=<that IP>
+sudo /opt/bob/bin/firma-instalacion caja <repo> <commit> resto  POSTGRES_ENV=/root/bob-install/postgres.env POSTGRES_HOST=<that IP>
 ```
 
 It:
