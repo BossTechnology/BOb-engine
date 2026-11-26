@@ -812,13 +812,17 @@ the box really stands at. Two more files are never written by hand.
 reached its state with: running the same digest again, as `resto` after
 `cadena`, accepts that pair alone, verified again. A box that already stands
 at a digest and has no such record (installed before it existed, as lab-02
-for its `resto`) runs it again only with an approval `<digest>-<digest>`,
-which Henry signs like any other (`scripts/firmar-instalacion.sh <commit>
---base <commit>` signs `d → d`; there is no diff). `instalacion-en-curso`
+for its `resto`) runs it again only with an approval `<digest>-<digest>`
+that names that box: `scripts/firmar-instalacion.sh <commit> --base <commit>
+--caja <machine-id>`, where the machine-id is `cat /etc/machine-id` on the box.
+There is no diff. Without `--caja` the script refuses the same digest twice,
+so a wrong revision does not become a `d → d`, and an approval for one box
+runs no other. `instalacion-en-curso`
 (`instalar-bob.sh`'s, at the path `caja` gives it) is a `cadena` from the
-empty base whose database check passed and that has not ended well: it is
-written only after that check, holds exactly `<empty base>-<digest>`, and its
-retry must install the same digest. A refused check, or a database it cannot
+empty base whose database check passed and that has not ended well. It is
+written only after that check and holds exactly `<empty base>-<digest>`, then
+the database checked (`db <system_identifier>/<name>/<oid>`). Its retry must
+install the same digest into that same database. A refused check, or a database it cannot
 reach, leaves no such file, so the next run checks afresh. If `caja` stops
 between moving the state and removing it, the next run sees both records
 agree and removes it.

@@ -101,9 +101,24 @@ huella() {
   if [ "$lista" = --lista ]; then cat "$t/lista"; else sha < "$t/lista"; fi
 }
 
+# mensaje <base> <nueva> [<caja>]: d → d (the same digest again, on a box with
+# no record of how it got there) names the box it is for, by its machine-id,
+# so it runs that box alone; no other pair names one.
 mensaje() {
   [[ "$1" =~ ^[0-9a-f]{64}$ && "$2" =~ ^[0-9a-f]{64}$ ]] || fail "two digests"
-  printf '%s 1\nbase %s\nnueva %s\n' "$NS" "$1" "$2"
+  if [ "$1" = "$2" ]; then
+    [[ "${3:-}" =~ ^[0-9a-f]{32}$ ]] || fail "d → d names the box: its machine-id, 32 hex"
+    printf '%s 1\nbase %s\nnueva %s\ncaja %s\n' "$NS" "$1" "$2" "$3"
+  else
+    [ -z "${3:-}" ] || fail "only d → d names a box"
+    printf '%s 1\nbase %s\nnueva %s\n' "$NS" "$1" "$2"
+  fi
+}
+# marca <file> <pair>: instalar-bob.sh's mark, exactly: the pair, then the
+# database it checked (instalar-bob.sh compares that line on the retry).
+marca() {
+  [ "$(wc -l < "$1" | tr -d ' ')" = 2 ] && [ "$(sed -n 1p "$1")" = "$2" ] \
+    && [[ "$(sed -n 2p "$1")" =~ ^db\ [0-9]+/[a-z_][a-z0-9_]*/[0-9]+$ ]]
 }
 
 # The signers file is BOb's, not ssh-keygen's: verify-required on a line is
@@ -383,7 +398,7 @@ caja() {
     # A cadena from the empty base that ended well, interrupted between
     # moving the state and removing this file: both records say so.
     propio "$raiz/instalacion-en-curso" "$uid"
-    if [ "$(cat "$raiz/instalacion-en-curso")" = "$VACIA-$prev" ] && [ -f "$raiz/instalacion-aprobacion" ] \
+    if marca "$raiz/instalacion-en-curso" "$VACIA-$prev" && [ -f "$raiz/instalacion-aprobacion" ] \
        && [ "$(cat "$raiz/instalacion-aprobacion")" = "$VACIA-$prev" ]; then
       echo "the cadena from the empty base to $prev ended well: removing $raiz/instalacion-en-curso it left"
       rm -f "$raiz/instalacion-en-curso"
@@ -413,7 +428,7 @@ caja() {
     # The retry of a cadena from the empty base whose check passed: to the
     # same digest only.
     propio "$raiz/instalacion-en-curso" "$uid"
-    [ "$(cat "$raiz/instalacion-en-curso")" = "$VACIA-$d" ] \
+    marca "$raiz/instalacion-en-curso" "$VACIA-$d" \
       || fail "$raiz/instalacion-en-curso is not a cadena from the empty base to $d: a retry installs the same commit, refused"
     vacia=reanuda
   fi
@@ -443,7 +458,12 @@ caja() {
          && G --git-dir="$gd" cat-file blob "$commit:$EXCLUIDO$c.sig" > "$WORK/sig" 2>/dev/null; then
       src="the commit"
     else continue; fi
-    cmp -s "$WORK/msg" <(mensaje "$base" "$d") || fail "$c is not the text of $base → $d: refused"
+    if [ "$base" = "$d" ]; then
+      if [ "$relajado" = relajado ]; then f=$raiz/machine-id; propio "$f" "$uid"; else f=/etc/machine-id; fi
+      h=$(cat "$f" 2>/dev/null) || h=""
+      [[ "$h" =~ ^[0-9a-f]{32}$ ]] || fail "$f does not hold this box's machine-id: d → d names the box"
+    else h=""; fi
+    cmp -s "$WORK/msg" <(mensaje "$base" "$d" $h) || fail "$c is not the text of $base → $d${h:+ for this box ($h)}: refused"
     ! revocada "$raiz/aprobaciones-revocadas" "$base" "$d" || fail "$base → $d is revoked in $raiz/aprobaciones-revocadas: refused"
     verificar "$raiz/firmantes_instalacion" "$WORK/msg" "$WORK/sig" "$relajado"
     ok=$base; break
@@ -511,7 +531,7 @@ limpio() {
 cmd=${1:-}; shift || true
 case "$cmd" in
   huella) huella "${1:?rev}" "${2:-.}" "${3:-}" ;;
-  mensaje) mensaje "${1:?}" "${2:?}" ;;
+  mensaje) mensaje "${1:?}" "${2:?}" "${3:-}" ;;
   vacia) echo "$VACIA" ;;
   verificar) verificar "${1:?}" "${2:?}" "${3:?}" ;;
   herramienta) if [ -d "${1:?path}" ]; then directorio_propio "$1"; else cadena_propia "$1"; fi; echo "root's along its whole path: $1" ;;

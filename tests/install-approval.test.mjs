@@ -47,6 +47,7 @@ const run = (args, opts = {}) => spawnSync('bash', [F, ...args], { encoding: 'ut
 const sha256 = (b) => createHash('sha256').update(b).digest('hex')
 const tmp = (p) => realpathSync(mkdtempSync(join(tmpdir(), p)))
 
+const ID = '0123456789abcdef0123456789abcdef'
 const STUB = [
   '#!/bin/sh',
   '# test stub: records where it ran, with what',
@@ -57,7 +58,7 @@ const STUB = [
   '# refuse before the mark ($HOME/rehusa), or write it and fail after ($HOME/falla).',
   'printf "%s|%s|%s\\n" "${BOB_BASE_VACIA-}" "${BOB_EN_CURSO-}" "${BOB_EN_CURSO_PAR-}" > "$HOME/vacia"',
   '[ ! -f "$HOME/rehusa" ] || exit 1',
-  '[ -z "${BOB_EN_CURSO-}" ] || printf "%s\\n" "$BOB_EN_CURSO_PAR" > "$BOB_EN_CURSO"',
+  '[ -z "${BOB_EN_CURSO-}" ] || printf "%s\\ndb 1/postgres/5\\n" "$BOB_EN_CURSO_PAR" > "$BOB_EN_CURSO"',
   '[ ! -f "$HOME/falla" ] || exit 3',
   '',
 ].join('\n')
@@ -211,6 +212,8 @@ describe('on a box', () => {
     if (cli) r.put('.github/workflows/ci.yml', 'env:\n  SUPABASE_CLI_VERSION: 9.9.9\n')
     r.commit()
     const raiz = tmp('raiz-'); chmodSync(raiz, 0o755)
+    // The box's identity (caja-prueba reads <raiz>/machine-id; caja, /etc/machine-id).
+    writeFileSync(join(raiz, 'machine-id'), ID + '\n'); chmodSync(join(raiz, 'machine-id'), 0o644)
     if (cli) { mkdirSync(join(raiz, 'bin'), { mode: 0o755 }); writeFileSync(join(raiz, 'bin/supabase'), '#!/bin/sh\n# test stub\necho 9.9.9\n'); chmodSync(join(raiz, 'bin/supabase'), 0o755) }
     writeFileSync(join(raiz, 'firmantes_instalacion'), signers); chmodSync(join(raiz, 'firmantes_instalacion'), 0o644)
     if (prev) { writeFileSync(join(raiz, 'instalacion-firmada'), prev + '\n'); chmodSync(join(raiz, 'instalacion-firmada'), 0o644) }
@@ -219,9 +222,9 @@ describe('on a box', () => {
       writeFileSync(join(raiz, 'secrets/migrador.env'), 'MIGRADOR_USUARIO=bob_migrador\nMIGRADOR_HOST=127.0.0.1\nMIGRADOR_RED=bzzz-data\n'); chmodSync(join(raiz, 'secrets/migrador.env'), 0o600)
     }
     if (revocadas !== null) { writeFileSync(join(raiz, 'aprobaciones-revocadas'), revocadas); chmodSync(join(raiz, 'aprobaciones-revocadas'), 0o644) }
-    const approve = (base, nueva = r.huella()) => {
+    const approve = (base, nueva = r.huella(), caja) => {
       const a = `${A}/${base}-${nueva}.aprobacion`
-      r.put(a, run(['mensaje', base, nueva]).stdout); sign(join(r.d, a)); return r.commit()
+      r.put(a, run(['mensaje', base, nueva, ...(caja ? [caja] : [])]).stdout); rmSync(join(r.d, a + '.sig'), { force: true }); sign(join(r.d, a)); return r.commit()
     }
     const caja = (commit = r.git('rev-parse', 'HEAD'), { env = {}, args = [], input = 'instalo\n', step = 'resto' } = {}) => {
       rmSync(join(raiz, 'ran'), { force: true })
@@ -443,7 +446,7 @@ describe('on a box', () => {
   test('a cadena that fails after the check passed is retried as reanuda, to the same digest, and ends well', () => {
     const b = box({ prev: VACIA, cli: true }); const d = b.r.huella(); b.approve(VACIA); put(b, 'falla', 'x')
     assert.equal(b.caja(undefined, { step: 'cadena' }).out.status, 1)
-    assert.equal(st(b, 'instalacion-en-curso'), `${VACIA}-${d}`); assert.equal(st(b, 'instalacion-firmada'), VACIA)
+    assert.equal(st(b, 'instalacion-en-curso'), `${VACIA}-${d}\ndb 1/postgres/5`); assert.equal(st(b, 'instalacion-firmada'), VACIA)
     assert.equal(b.caja(undefined, { step: 'cadena' }).out.status, 1); assert.equal(st(b, 'vacia').split('|')[0], 'reanuda')
     rmSync(join(b.raiz, 'falla'))
     const ok = b.caja(undefined, { step: 'cadena' }); assert.equal(ok.out.status, 0, ok.out.stderr)
@@ -463,13 +466,13 @@ describe('on a box', () => {
   })
   test('a crash between moving the state and removing the mark does not leave the box stuck', () => {
     const b = box({ prev: VACIA, cli: true }); const d = b.r.huella(); b.approve(VACIA)
-    put(b, 'instalacion-firmada', d); put(b, 'instalacion-aprobacion', `${VACIA}-${d}`); put(b, 'instalacion-en-curso', `${VACIA}-${d}`)
+    put(b, 'instalacion-firmada', d); put(b, 'instalacion-aprobacion', `${VACIA}-${d}`); put(b, 'instalacion-en-curso', `${VACIA}-${d}\ndb 1/postgres/5`)
     const res = b.caja()
     assert.equal(res.out.status, 0, res.out.stdout + res.out.stderr); assert.match(res.out.stdout, /ended well: removing/)
     assert.equal(st(b, 'instalacion-en-curso'), null); assert.equal(res.state, d)
     // A crash one step earlier (the record written, the state not): still at the empty base, retried as reanuda.
     const c = box({ prev: VACIA, cli: true }); const e = c.r.huella(); c.approve(VACIA)
-    put(c, 'instalacion-aprobacion', `${VACIA}-${e}`); put(c, 'instalacion-en-curso', `${VACIA}-${e}`)
+    put(c, 'instalacion-aprobacion', `${VACIA}-${e}`); put(c, 'instalacion-en-curso', `${VACIA}-${e}\ndb 1/postgres/5`)
     assert.equal(c.caja(undefined, { step: 'cadena' }).out.status, 0); assert.equal(st(c, 'vacia').split('|')[0], 'reanuda')
     b.done(); c.done()
   })
@@ -480,9 +483,27 @@ describe('on a box', () => {
     const b = box(); const d = b.r.huella(); put(b, 'instalacion-firmada', d)
     const none = b.caja(); refusedBefore(none, /no approval from/); assert.match(none.out.stdout, /no record .*only an approval [0-9a-f]{64} → [0-9a-f]{64} runs it again/)
     b.approve('a'.repeat(64)); refusedBefore(b.caja(), /no approval from/)
-    b.approve(d)
+    // Follow-up of #54, (2): d → d names the box it is for, so it cannot run another box at d.
+    b.approve(d); refusedBefore(b.caja(), /is not the text of/)
+    b.approve(d, d, 'f'.repeat(32)); refusedBefore(b.caja(), /is not the text of/)
+    b.approve(d, d, ID)
     const res = b.caja(); assert.equal(res.out.status, 0, res.out.stdout + res.out.stderr)
-    assert.equal(st(b, 'instalacion-aprobacion'), `${d}-${d}`); b.done()
+    assert.equal(st(b, 'instalacion-aprobacion'), `${d}-${d}`)
+    const again = b.caja(); assert.equal(again.out.status, 0, again.out.stderr); b.done()
+  })
+  test('the text of d → d holds the box, and only d → d does', () => {
+    const d = 'd'.repeat(64)
+    assert.equal(run(['mensaje', d, d, ID]).stdout, `${NS} 1\nbase ${d}\nnueva ${d}\ncaja ${ID}\n`)
+    assert.equal(run(['mensaje', 'a'.repeat(64), d, ID]).status, 1, 'a box only on d → d')
+    assert.equal(run(['mensaje', d, d, 'xyz']).status, 1, 'a box id is 32 hex')
+  })
+  // (1): the leftover mark is removed only when the record says the box got
+  // to d from the empty base; any other record, the mark stands and refuses.
+  test('a mark VACIA-d on a box at d whose record is another pair: refused, not removed', () => {
+    const b = box({ cli: true }); const d = b.r.huella(); b.approve('a'.repeat(64))
+    put(b, 'instalacion-firmada', d); put(b, 'instalacion-aprobacion', `${'a'.repeat(64)}-${d}`); put(b, 'instalacion-en-curso', `${VACIA}-${d}\ndb 1/postgres/5`)
+    refusedBefore(b.caja(), /en-curso exists, but this box is not at the empty base/)
+    assert.ok(st(b, 'instalacion-en-curso'), 'the mark stays'); b.done()
   })
   test('a commit that is not a full sha: refused', () => {
     const b = box(); b.approve('a'.repeat(64)); refusedBefore(b.caja('HEAD'), /full sha/); b.done()
@@ -501,6 +522,28 @@ describe('on a box', () => {
   test('caja proper needs root', () => {
     const r = run(['caja', '/x', '0'.repeat(40), 'resto'])
     assert.equal(r.status, 1); assert.match(r.stderr, /run as root/)
+  })
+})
+
+describe('firmar-instalacion.sh, before the key', () => {
+  // A clean checkout at its origin/main, holding main's two scripts.
+  const checkout = () => {
+    const r = repo()
+    for (const f of ['scripts/firmar-instalacion.sh', 'scripts/firma-instalacion.sh']) { r.put(f, readFileSync(join(REPO_ROOT, f))); chmodSync(join(r.d, f), 0o755) }
+    const c = r.commit(); const o = tmp('origen-')
+    execFileSync('git', ['init', '-q', '--bare', o]); r.git('remote', 'add', 'origin', o); r.git('push', '-q', 'origin', 'HEAD:main'); r.git('fetch', '-q', 'origin')
+    r.git('branch', '-q', '--set-upstream-to=origin/main')
+    return { r, c, o, done: () => { rmSync(r.d, { recursive: true }); rmSync(o, { recursive: true }) } }
+  }
+  const firmar = (r, args) => spawnSync('bash', [join(r.d, 'scripts/firmar-instalacion.sh'), ...args], { cwd: r.d, encoding: 'utf8', input: 'no\n', env: { ...process.env, FIRMA_LLAVE: '/nonexistent' } })
+  // Follow-up of #54, (2): a wrong revision must not become a d → d with no diff.
+  test('the same digest twice needs --caja <machine-id>; another pair refuses it', () => {
+    const { r, c, done } = checkout()
+    const a = firmar(r, [c, '--base', c]); assert.equal(a.status, 2, a.stdout + a.stderr); assert.match(a.stderr, /same digest.*--caja/)
+    const b = firmar(r, [c, '--base', c, '--caja', 'xyz']); assert.equal(b.status, 2); assert.match(b.stderr, /machine-id/)
+    const v = firmar(r, [c, '--base', 'vacia', '--caja', ID]); assert.equal(v.status, 2, v.stdout + v.stderr); assert.match(v.stderr, /only for the same digest/)
+    const ok = firmar(r, [c, '--base', c, '--caja', ID]); assert.match(ok.stdout, new RegExp(`d → d.*${ID}`)); assert.match(ok.stdout, /Not signed/)
+    done()
   })
 })
 
@@ -638,8 +681,19 @@ describe('the empty base, against the database', () => {
   test('the mark: written once the check passed, with exactly the pair caja gave', async () => {
     rmSync(mark, { force: true })
     const db = await scratch(`CREATE SCHEMA bob; CREATE TABLE bob.actors (x int); ${history(chain[0])}`)
+    // Follow-up of #54, (3): the retry is of this database; the mark says which.
+    const ident = async (name) => { const u = new URL(DB_URL); u.pathname = `/${name}`; const c = new pg.Client({ connectionString: u.toString() }); await c.connect()
+      const { rows } = await c.query("SELECT (SELECT system_identifier FROM pg_control_system())::text || '/' || datname || '/' || oid AS i FROM pg_database WHERE datname = current_database()"); await c.end(); return rows[0].i }
+    writeFileSync(mark, `${par}\ndb 1/otra/5\n`)
+    const r = cadena({ BOB_BASE_VACIA: 'reanuda', INSTALAR_PRUEBA_DB: db, BOB_EN_CURSO: mark, BOB_EN_CURSO_PAR: par })
+    assert.equal(r.status, 1, r.stdout + r.stderr); assert.match(r.stderr, /another database/); assert.equal(r.pushed, false)
+    writeFileSync(mark, `${par}\ndb ${await ident(db)}\n`)
     passed(cadena({ BOB_BASE_VACIA: 'reanuda', INSTALAR_PRUEBA_DB: db, BOB_EN_CURSO: mark, BOB_EN_CURSO_PAR: par }))
-    assert.equal(marked(), par)
+    assert.equal(marked(), `${par}\ndb ${await ident(db)}`)
+    // A fresh check writes it (no mark before): from a database with no BOb but the cluster's roles, which fresh refuses; so reanuda from none is refused too.
+    rmSync(mark, { force: true })
+    const n = cadena({ BOB_BASE_VACIA: 'reanuda', INSTALAR_PRUEBA_DB: db, BOB_EN_CURSO: mark, BOB_EN_CURSO_PAR: par })
+    assert.equal(n.status, 1, n.stdout + n.stderr); assert.match(n.stderr, /reanuda.*no mark|no mark.*reanuda/); assert.equal(n.pushed, false)
   })
   test('the mark: not written when the check refuses', () => {
     rmSync(mark, { force: true })
@@ -653,6 +707,14 @@ describe('the empty base, against the database', () => {
       const r = cadena({ BOB_BASE_VACIA: 'reanuda', INSTALAR_PRUEBA_DB: db, BOB_EN_CURSO: p, BOB_EN_CURSO_PAR: v })
       assert.equal(r.status, 2, r.stdout + r.stderr); assert.match(r.stderr, /not caja's/); assert.equal(r.pushed, false); assert.equal(marked(), null)
     }
+  })
+  // Follow-up of #54, (4): column names are not BOb's objects; a neighbour's
+  // table named as one of BOb's columns (a RENAME COLUMN … TO among them) is not found.
+  test('names of BOb\'s columns are not looked for', async () => {
+    const db = await scratch(`CREATE TABLE public.verified_at (x int); CREATE TABLE public.scope_kind (x int); CREATE TABLE public.org_id (x int); ${history()}`.replace('VALUES ;', 'SELECT 1 WHERE false;'))
+    const r = cadena({ BOB_BASE_VACIA: '1', INSTALAR_PRUEBA_DB: db })
+    const found = r.stderr.split('\n').filter((l) => l.startsWith('  '))
+    assert.ok(found.length > 0 && found.every((l) => l.startsWith('  role ')), found.join('\n'))
   })
   test('names a migration gives by RENAME TO, and BOb\'s indexes, are found too', async () => {
     const db = await scratch(`CREATE SCHEMA otro; CREATE TABLE otro.autobotz (x int); CREATE TABLE public.vecina (x int);

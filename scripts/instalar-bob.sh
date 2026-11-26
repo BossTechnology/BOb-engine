@@ -161,8 +161,24 @@ if [ "$step" = cadena ]; then
     names=$(grep -o -E '(create( or replace)?( unique)?( unlogged)? (table|view|materialized view|function|procedure|type|domain|sequence|index)( concurrently)?( if not exists)? [a-z0-9_".]+|rename to [a-z0-9_"]+)' <<<"$sql" | nombre) || names=""
     sch=$( { echo bob; grep -o -E '(create schema( if not exists)? [a-z0-9_"]+|set schema [a-z0-9_"]+)' <<<"$sql"; } | nombre) || sch=bob
     [[ "$vs" =~ ^[0-9,]+$ && "$cv" =~ ^[0-9,]+$ && "$names" =~ ^[a-z0-9_,]+$ && "$sch" =~ ^[a-z0-9_,]+$ ]] || { echo "cannot read BOb's migrations from the tree" >&2; exit 2; }
+    # The mark (BOB_EN_CURSO, caja's path and pair): on a box caja always
+    # gives it. It names the database checked: the retry is of that one.
+    if [ -n "${BOB_EN_CURSO:-}" ]; then
+      [[ "$BOB_EN_CURSO" =~ ^/[A-Za-z0-9_./-]+/instalacion-en-curso$ && "${BOB_EN_CURSO_PAR:-}" =~ ^[0-9a-f]{64}-[0-9a-f]{64}$ ]] \
+        || { echo "BOB_EN_CURSO or BOB_EN_CURSO_PAR is not caja's: nothing installed" >&2; exit 2; }
+    elif signed_tree; then
+      echo "BOB_BASE_VACIA without BOB_EN_CURSO: caja gives both; nothing installed" >&2; exit 2
+    fi
     hist=$(as_postgres -A -t -c "SELECT to_regclass('supabase_migrations.schema_migrations') IS NOT NULL") \
       || { echo "cannot read the database to check the empty base: nothing installed" >&2; exit 1; }
+    ident=$(as_postgres -A -t -c "SELECT (SELECT system_identifier FROM pg_control_system())::text || '/' || datname || '/' || oid FROM pg_database WHERE datname = current_database()") \
+      || { echo "cannot read the database to check the empty base: nothing installed" >&2; exit 1; }
+    [[ "$ident" =~ ^[0-9]+/[a-z_][a-z0-9_]*/[0-9]+$ ]] || { echo "this database's identity is '$ident': nothing installed" >&2; exit 1; }
+    if [ "$BOB_BASE_VACIA" = reanuda ] && [ -n "${BOB_EN_CURSO:-}" ]; then
+      [ -f "$BOB_EN_CURSO" ] || { echo "BOB_BASE_VACIA=reanuda, but there is no mark at $BOB_EN_CURSO: nothing installed" >&2; exit 1; }
+      m=$(sed -n 2p "$BOB_EN_CURSO")
+      [ "$m" = "db $ident" ] || { echo "the mark is of another database ('${m#db }'); this is $ident: a retry is of the database checked, nothing installed" >&2; exit 1; }
+    fi
     q="WITH sa AS (SELECT oid FROM pg_roles WHERE rolname = 'supabase_admin'),
       nm AS (SELECT unnest(string_to_array('$names', ',')) AS name),
       obj AS (SELECT relname AS name, relnamespace AS ns, 'relation' AS k FROM pg_class WHERE relkind IN ('r','v','m','p','f','S','i','I')
@@ -199,9 +215,7 @@ if [ "$step" = cadena ]; then
     # Only now, the check passed: caja's mark that this cadena from the empty
     # base may be retried (BOB_BASE_VACIA=reanuda) if it does not end well.
     if [ -n "${BOB_EN_CURSO:-}" ]; then
-      [[ "$BOB_EN_CURSO" =~ ^/[A-Za-z0-9_./-]+/instalacion-en-curso$ && "${BOB_EN_CURSO_PAR:-}" =~ ^[0-9a-f]{64}-[0-9a-f]{64}$ ]] \
-        || { echo "BOB_EN_CURSO or BOB_EN_CURSO_PAR is not caja's: nothing installed" >&2; exit 2; }
-      printf '%s\n' "$BOB_EN_CURSO_PAR" > "$BOB_EN_CURSO.nuevo" && chmod 644 "$BOB_EN_CURSO.nuevo" && mv -f "$BOB_EN_CURSO.nuevo" "$BOB_EN_CURSO" \
+      printf '%s\ndb %s\n' "$BOB_EN_CURSO_PAR" "$ident" > "$BOB_EN_CURSO.nuevo" && chmod 644 "$BOB_EN_CURSO.nuevo" && mv -f "$BOB_EN_CURSO.nuevo" "$BOB_EN_CURSO" \
         || { echo "cannot write $BOB_EN_CURSO: nothing installed" >&2; exit 1; }
     fi
   fi
