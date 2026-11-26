@@ -14,8 +14,11 @@
 //   - a security key's signature (emulated in software, tests/helpers/sk.mjs):
 //     a line with verify-required verifies when the signature is touched and
 //     user verified (UV); without UV, without the touch, with a flag set after
-//     signing, without verify-required on the line, another namespace, another
-//     option or a principal that is a pattern, it is refused;
+//     signing, with neither verify-required nor presence-only on the line,
+//     another namespace, another option or a principal that is a pattern, it
+//     is refused. A presence-only line (docs/adr/0001) verifies when touched,
+//     UV or not, and is refused untouched or with verify-required beside it;
+//     UV follows the line of the key that signed;
 //   - the box (caja-prueba: the same code, not as root, any listed key, a
 //     directory for /opt/bob) runs the committed tree and nothing of the
 //     checkout (not a modified file, a skip-worktree file, a corrupt index or
@@ -23,7 +26,8 @@
 //     after an install that ends well and only from where it stands: a new
 //     unsigned migration, a replayed approval, a missing state, signers or a
 //     root writable by others are refused before anything runs;
-//   - the repository: no key yet (Henry adds his), CODEOWNERS over all of it,
+//   - the repository: only security keys, each verify-required or
+//     presence-only, lines verificar accepts, CODEOWNERS over all of it,
 //     the approval workflow running from main on the right events.
 // Not measured here: a signature by a physical key or the Secure Enclave
 // (that a person touched it), and caja as root on a box (Henry's first
@@ -194,6 +198,46 @@ describe('a security key\'s signature', () => {
     rmSync(join(d, 'verify-required'))
     no(r, /option \*/)
   })
+  // presence-only (docs/adr/0001): a line that says, in the open, that its key
+  // gives presence (UP) and not verification (UV): Henry's Secure Enclave key,
+  // whose provider refuses verify-required and signs with flags 0x21.
+  const po = 'namespaces="bob-install-chain",presence-only'
+  for (const kind of ['ecdsa', 'ed25519']) {
+    const p = skKey(kind)
+    test(`${kind}: a presence-only line, touched, verifies without UV`, () => ok(check(line(p, po), p.sign(msg, NS, UP))))
+    test(`${kind}: a presence-only line, touched and verified, verifies`, () => ok(check(line(p, po), p.sign(msg, NS, UP | UV))))
+    test(`${kind}: a presence-only line, not touched, is refused`, () => no(check(line(p, po), p.sign(msg, NS, UV)), /touch|user present|UP/))
+    test(`${kind}: a presence-only line, neither flag, is refused`, () => no(check(line(p, po), p.sign(msg, NS, 0)), /touch|user present|UP/))
+  }
+  test('Henry\'s measured flags, 0x21 (UP and bit 5, no UV) with the counter at 1, verify on a presence-only line', () => {
+    const p = skKey('ecdsa'); ok(check(line(p, po), p.sign(msg, NS, 0x21, 1)))
+  })
+  test('a line with neither verify-required nor presence-only is refused, and says both', () => no(check(line(k, 'namespaces="bob-install-chain"'), k.sign(msg)), /verify-required.*presence-only|presence-only.*verify-required/))
+  test('verify-required and presence-only together are refused', () => {
+    no(check(line(k, 'namespaces="bob-install-chain",verify-required,presence-only'), k.sign(msg)), /both|together/)
+    no(check(line(k, 'namespaces="bob-install-chain",presence-only,verify-required'), k.sign(msg)), /both|together/)
+  })
+  test('presence-only twice is refused', () => no(check(line(k, 'namespaces="bob-install-chain",presence-only,presence-only'), k.sign(msg, NS, UP)), /twice/))
+  test('presence-only with no-touch-required, cert-authority or an unknown option is refused', () => {
+    no(check(line(k, `${po},no-touch-required`), k.sign(msg, NS, UP)), /no-touch-required/)
+    no(check(line(k, `cert-authority,${po}`), k.sign(msg, NS, UP)), /cert-authority/)
+    no(check(line(k, `${po},valid-before="29990101"`), k.sign(msg, NS, UP)), /option/)
+    no(check(line(k, `${po},presence-only=1`), k.sign(msg, NS, UP)), /option/)
+  })
+  test('presence-only still needs a security key and the namespace', () => {
+    no(check(`henry ${po} ${PUB}\n`, k.sign(msg, NS, UP)), /not a security key/)
+    no(check(line(k, 'presence-only'), k.sign(msg, NS, UP)), /namespaces/)
+    const p = skKey('ecdsa'); no(check(line(p, po), p.sign(msg, 'file', UP)), /not in namespace bob-install-chain/)
+  })
+  test('UV follows the line of the key that signed: a verify-required key next to a presence-only one still needs UV', () => {
+    const p = skKey('ecdsa')
+    const both = line(k) + line(p, po, 'otro')
+    no(check(both, k.sign(msg, NS, UP)), /user verified|UV/)
+    const r = check(both, p.sign(msg, NS, UP)); assert.equal(r.status, 0, r.stdout + r.stderr); assert.match(r.stdout, /signature for otro with ECDSA-SK key/)
+  })
+  test('the same key on a verify-required line and a presence-only line: UV is required', () => {
+    no(check(line(k) + line(k, po, 'otro'), k.sign(msg, NS, UP)), /user verified|UV/)
+  })
   test('a signature whose reserved field is not empty is refused', () => no(check(line(k), k.sign(msg, NS, UP | UV, 1, 'x')), /reserved/))
   test('armored text that is not base64 says so', () => no(check(line(k), '-----BEGIN SSH SIGNATURE-----\nAAAA=\nAAA\n-----END SSH SIGNATURE-----\n'), /not base64/))
   test('a signature file that is not one armored sshsig is refused', () => {
@@ -296,6 +340,13 @@ describe('on a box', () => {
     b.r.put(a, run(['mensaje', 'b'.repeat(64), d]).stdout); sign(join(b.r.d, a)); b.r.commit()
     refusedBefore(b.caja(), /is not the text of/)
     b.done()
+  })
+
+  test('caja-prueba reads presence-only like caja: accepted alone, refused with verify-required', () => {
+    const b = box({ signers: `ci namespaces="bob-install-chain",presence-only ${PUB}\n` }); b.approve('a'.repeat(64))
+    const res = b.caja(); assert.equal(res.out.status, 0, res.out.stdout + res.out.stderr); b.done()
+    const c = box({ signers: `ci namespaces="bob-install-chain",verify-required,presence-only ${PUB}\n` }); c.approve('a'.repeat(64))
+    refusedBefore(c.caja(), /both|together/); c.done()
   })
 
   test('a signature by a key that is not listed is refused', () => {
@@ -548,10 +599,16 @@ describe('firmar-instalacion.sh, before the key', () => {
 })
 
 describe('the repository', () => {
-  test('the signers file holds no key until Henry adds his, and only security keys with verify-required', () => {
-    const lines = readFileSync(join(REPO_ROOT, 'supabase/provision/firmantes_instalacion'), 'utf8')
-      .split('\n').filter((l) => l.trim() && !l.trim().startsWith('#'))
-    for (const l of lines) assert.match(l, /^\S+ namespaces="bob-install-chain",verify-required sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh\.com \S+/, l)
+  test('the signers file holds only security keys, each with verify-required or presence-only, and verificar accepts it', () => {
+    const f = join(REPO_ROOT, 'supabase/provision/firmantes_instalacion')
+    const lines = readFileSync(f, 'utf8').split('\n').filter((l) => l.trim() && !l.trim().startsWith('#'))
+    for (const l of lines) assert.match(l, /^\S+ namespaces="bob-install-chain",(verify-required|presence-only) sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh\.com \S+$/, l)
+    // The file's own lines pass verificar's line checks: a bad signature is what fails, never the file.
+    if (lines.length) {
+      const d = tmp('repo-firmantes-'); writeFileSync(join(d, 'm'), 'x'); writeFileSync(join(d, 'm.sig'), skKey('ecdsa').sign('x', NS, UP))
+      const r = run(['verificar', f, join(d, 'm'), join(d, 'm.sig')])
+      assert.equal(r.status, 1); assert.match(r.stderr, /by no key|does not verify/, r.stderr)
+    }
   })
   test('the digest of this commit is computable, and CODEOWNERS covers all of it', () => {
     const r = run(['huella', 'HEAD', REPO_ROOT, '--lista'])

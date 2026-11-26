@@ -3,7 +3,9 @@
 // It makes what a FIDO authenticator makes: an sk-ecdsa-sha2-nistp256 or
 // sk-ssh-ed25519 public key, and an SSH signature (sshsig, the format of
 // `ssh-keygen -Y sign`) whose authenticator flags are whatever the test says:
-// 0x01 user present (touched), 0x04 user verified (PIN or biometric). The
+// 0x01 user present (touched), 0x04 user verified (PIN or biometric); Henry's
+// Secure Enclave key signs with 0x21 (UP and bit 5, no UV) and counter 1, its
+// line is presence-only (docs/adr/0001). The
 // signature is real: ssh-keygen -Y verify checks it like one from a key, flags
 // included, since the authenticator signs them. What no software can show is
 // that a person touched anything; that is what Henry's first signature

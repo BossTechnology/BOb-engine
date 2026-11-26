@@ -948,14 +948,20 @@ there on every box.
 
 **The verifier**, the same in CI and on the box, accepts only
 `sk-ssh-ed25519@openssh.com` or `sk-ecdsa-sha2-nistp256@openssh.com` keys
-bound to `namespaces="bob-install-chain"`, with `verify-required`, never
-`no-touch-required` and never `cert-authority`; the verify output must name an
+bound to `namespaces="bob-install-chain"`, with exactly one of
+`verify-required` or `presence-only`, never `no-touch-required` and never
+`cert-authority`; the verify output must name an
 `-SK` key. No key, or any doubt, fails. `verify-required` is BOb's mark, not an
 ssh-keygen option: ssh-keygen refuses it in an allowed_signers file, and
 accepts an sk signature with neither the touch nor the verification flag set
 (measured 25 Nov, OpenSSH 10.3 and 10.6p2). So the verifier hands ssh-keygen a
 copy of the file without it, and reads the flags from the signature itself:
-user present (0x01) and user verified (UV, 0x04) must both be set. `sk-` does not prove hardware, and
+user present (0x01) must be set, and user verified (UV, 0x04) too when the
+line of the key that signed says `verify-required`. `presence-only` is BOb's
+mark for a key that cannot report UV, said in the open on its line: Henry's
+Secure Enclave key, whose provider refuses `verify-required` and signs with
+flags 0x21 and the counter fixed at 1 (measured 26 Nov). What that gives up
+and how to go back is `docs/adr/0001-firma-instalacion-solo-presencia.md`. `sk-` does not prove hardware, and
 FIDO attestation is not verified here; to keep that proof, generate the key
 with `ssh-keygen -t ed25519-sk -O verify-required -O write-attestation=<file>`.
 
@@ -970,8 +976,11 @@ never required: ordinary PRs need no key.
 machine:
 
 ```
-henry namespaces="bob-install-chain",verify-required sk-ssh-ed25519@openssh.com AAAA…
+henry namespaces="bob-install-chain",presence-only sk-ecdsa-sha2-nistp256@openssh.com AAAA…
 ```
+
+(with a FIDO2 key that has a PIN, `verify-required` instead of
+`presence-only`; ADR 0001).
 
 He checks the fingerprint (`ssh-keygen -lf`) against the one the physical key
 shows when it signs. Each box takes its copy at bootstrap; a later key change

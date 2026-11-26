@@ -1,18 +1,26 @@
 # Who may sign a change to what installs BOb on a box (O-3, P5 §6.2;
 # scripts/firma-instalacion.sh verificar). ONE PUBLIC KEY per line, never a
 # private one:
-#   henry namespaces="bob-install-chain",verify-required sk-ecdsa-sha2-nistp256@openssh.com AAAA...
-# (or sk-ssh-ed25519@openssh.com). The principal is one plain name; the only
-# options are namespaces="bob-install-chain" and verify-required, both
-# required. Only a security key is accepted (Secure Enclave with Touch ID
-# included); cert-authority, no-touch-required and any other option are
-# refused.
+#   henry namespaces="bob-install-chain",verify-required sk-ssh-ed25519@openssh.com AAAA...
+#   henry namespaces="bob-install-chain",presence-only sk-ecdsa-sha2-nistp256@openssh.com AAAA...
+# The principal is one plain name. The options are namespaces="bob-install-chain"
+# (required) and exactly one of:
+#   verify-required  the signature must be touched (UP, 0x01) and verify its
+#                    user with a PIN or biometric (UV, 0x04): a FIDO2 key with
+#                    a PIN.
+#   presence-only    the signature must be touched (UP, 0x01); UV is not
+#                    required, and the line says so in the open. For a key
+#                    that cannot report UV: the Secure Enclave with Touch ID,
+#                    whose provider refuses verify-required and signs with UV
+#                    off. docs/adr/0001-firma-instalacion-solo-presencia.md.
+# Neither, both, or one twice is refused. Only a security key (sk-) is
+# accepted; cert-authority, no-touch-required and any other option are
+# refused. UV follows the line of the key that signed.
 # This is BOb's format, not ssh-keygen's: ssh-keygen refuses verify-required
 # in an allowed_signers file ("bad options: unknown key option", OpenSSH 10.3
-# and 10.6p2). verificar checks every line, gives ssh-keygen a copy of its own
-# without verify-required, and itself requires both flags in the signature:
-# the key was touched (0x01) and verified its user with a PIN or biometric
-# (UV, 0x04). Do not hand this file to ssh-keygen directly.
+# and 10.6p2) and knows no presence-only. verificar checks every line, gives
+# ssh-keygen a copy of its own without either, and itself reads the flags from
+# the signature. Do not hand this file to ssh-keygen directly.
 # CI reads this file from main, never from the PR. A box reads its own copy,
 # /opt/bob/firmantes_instalacion (root's, 644), never the checkout's. The key is
 # this file's alone, not the one in firmantes_imagen.
