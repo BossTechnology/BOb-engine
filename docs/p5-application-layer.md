@@ -778,13 +778,20 @@ it stands.
 of `main`, with the key at hand:
 
 ```
-scripts/firmar-instalacion.sh <commit-to-install> --base <commit-the-box-runs>
+scripts/firmar-instalacion.sh <commit-to-install> --base <commit-the-box-runs> \
+  --llave ~/.ssh/id_ecdsa_sk_rk_henry-bob-install \
+  --proveedor /usr/lib/ssh-keychain.dylib --ssh-keygen /usr/bin/ssh-keygen
 ```
 
-It runs `main`'s `firma-instalacion.sh` on both commits as git objects, shows
+The key, the security key provider (`ssh-keygen -w`) and the `ssh-keygen` to
+run are given, never assumed (also `FIRMA_LLAVE`, `SSH_SK_PROVIDER`,
+`FIRMA_SSH_KEYGEN`). Henry's key is resident in the Secure Enclave, so it needs
+Apple's provider and Apple's `ssh-keygen`: Homebrew's has no such provider. It runs `main`'s `firma-instalacion.sh` on both commits as git objects, shows
 the log and the whole diff between them (no external diff, no textconv), asks
 for `firmo`, and signs the pair with `ssh-keygen -Y sign -n bob-install-chain`
-(the touch and the PIN). It writes the two files into a new directory under
+(the touch; with a FIDO2 key, the PIN too). Before it says «Signed», it checks
+the signature as a box would, with `firma-instalacion.sh verificar` and
+`main`'s signers file: one a box would refuse is reported and removed. It writes the two files into a new directory under
 `$TMPDIR` (never the checkout) and commits nothing. Henry copies them to the box's `/opt/bob/aprobaciones/`, as
 root. An approval may also be committed under `supabase/provision/aprobaciones/`;
 the box reads either. The namespace is its own: **this key is not the one in

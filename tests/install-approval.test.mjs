@@ -577,16 +577,21 @@ describe('on a box', () => {
 })
 
 describe('firmar-instalacion.sh, before the key', () => {
-  // A clean checkout at its origin/main, holding main's two scripts.
-  const checkout = () => {
+  // A clean checkout at its origin/main, holding main's two scripts (and, when given, a signers file).
+  const checkout = (signers) => {
     const r = repo()
     for (const f of ['scripts/firmar-instalacion.sh', 'scripts/firma-instalacion.sh']) { r.put(f, readFileSync(join(REPO_ROOT, f))); chmodSync(join(r.d, f), 0o755) }
+    if (signers) r.put('supabase/provision/firmantes_instalacion', signers)
     const c = r.commit(); const o = tmp('origen-')
     execFileSync('git', ['init', '-q', '--bare', o]); r.git('remote', 'add', 'origin', o); r.git('push', '-q', 'origin', 'HEAD:main'); r.git('fetch', '-q', 'origin')
     r.git('branch', '-q', '--set-upstream-to=origin/main')
     return { r, c, o, done: () => { rmSync(r.d, { recursive: true }); rmSync(o, { recursive: true }) } }
   }
-  const firmar = (r, args) => spawnSync('bash', [join(r.d, 'scripts/firmar-instalacion.sh'), ...args], { cwd: r.d, encoding: 'utf8', input: 'no\n', env: { ...process.env, FIRMA_LLAVE: '/nonexistent' } })
+  const noKey = tmp('firmar-llave-'); writeFileSync(join(noKey, 'k'), 'not a key\n')
+  const firmar = (r, args, { input = 'no\n', env = { FIRMA_LLAVE: join(noKey, 'k') } } = {}) => {
+    const e = { ...process.env }; delete e.FIRMA_LLAVE; delete e.SSH_SK_PROVIDER; delete e.FIRMA_SSH_KEYGEN
+    return spawnSync('bash', [join(r.d, 'scripts/firmar-instalacion.sh'), ...args], { cwd: r.d, encoding: 'utf8', input, env: { ...e, ...env } })
+  }
   // Follow-up of #54, (2): a wrong revision must not become a d → d with no diff.
   test('the same digest twice needs --caja <machine-id>; another pair refuses it', () => {
     const { r, c, done } = checkout()
@@ -595,6 +600,101 @@ describe('firmar-instalacion.sh, before the key', () => {
     const v = firmar(r, [c, '--base', 'vacia', '--caja', ID]); assert.equal(v.status, 2, v.stdout + v.stderr); assert.match(v.stderr, /only for the same digest/)
     const ok = firmar(r, [c, '--base', c, '--caja', ID]); assert.match(ok.stdout, new RegExp(`d → d.*${ID}`)); assert.match(ok.stdout, /Not signed/)
     done()
+  })
+})
+
+// Henry signs with the Secure Enclave key of his Mac (docs/adr/0001):
+//   /usr/bin/ssh-keygen -Y sign -w /usr/lib/ssh-keychain.dylib -f ~/.ssh/id_ecdsa_sk_rk_henry-bob-install
+// Homebrew's ssh-keygen has no such provider. So firmar takes the key, the
+// provider and the ssh-keygen to run, assumes no key, and checks the signature
+// it made with verificar and main's signers before it says «Signed». Here a
+// stand-in for ssh-keygen signs with an emulated security key (sk.mjs) and
+// records how it was called; nothing real is signed.
+describe('firmar-instalacion.sh, signing', () => {
+  const NSS = 'bob-install-chain'
+  const setup = (flags = UP | 0x20) => {
+    const k = skKey('ecdsa')
+    const d = tmp('firmar-sk-')
+    writeFileSync(join(d, 'llave'), k.pem)
+    writeFileSync(join(d, 'ssh-keychain.dylib'), '') // stands for /usr/lib/ssh-keychain.dylib, which only a Mac has
+    const fake = join(d, 'ssh-keygen')
+    writeFileSync(fake, [
+      '#!/usr/bin/env node',
+      `const { skKey } = await import(${JSON.stringify(join(REPO_ROOT, 'tests/helpers/sk.mjs'))})`,
+      "const fs = await import('node:fs')",
+      'const a = process.argv.slice(2)',
+      `fs.writeFileSync(${JSON.stringify(join(d, 'argv'))}, JSON.stringify(a))`,
+      "const f = a[a.indexOf('-f') + 1], file = a[a.length - 1]",
+      `const k = skKey('ecdsa', 'ssh:', fs.readFileSync(f, 'utf8'))`,
+      `fs.writeFileSync(file + '.sig', k.sign(fs.readFileSync(file), ${JSON.stringify(NSS)}, ${flags}, 1))`,
+      '',
+    ].join('\n'))
+    chmodSync(fake, 0o755)
+    const signers = `henry namespaces="bob-install-chain",presence-only ${k.line}\n`
+    return { k, d, fake, signers, argv: () => JSON.parse(readFileSync(join(d, 'argv'), 'utf8')) }
+  }
+  const checkout = (signers) => {
+    const r = repo()
+    for (const f of ['scripts/firmar-instalacion.sh', 'scripts/firma-instalacion.sh']) { r.put(f, readFileSync(join(REPO_ROOT, f))); chmodSync(join(r.d, f), 0o755) }
+    r.put('supabase/provision/firmantes_instalacion', signers)
+    const c = r.commit(); const o = tmp('origen-')
+    execFileSync('git', ['init', '-q', '--bare', o]); r.git('remote', 'add', 'origin', o); r.git('push', '-q', 'origin', 'HEAD:main'); r.git('fetch', '-q', 'origin')
+    r.git('branch', '-q', '--set-upstream-to=origin/main')
+    r.put('otro.txt', 'x\n'); const c2 = r.commit(); r.git('push', '-q', 'origin', 'HEAD:main'); r.git('fetch', '-q', 'origin')
+    return { r, c, c2 }
+  }
+  const firmar = (r, args, env = {}) => {
+    const e = { ...process.env }; delete e.FIRMA_LLAVE; delete e.SSH_SK_PROVIDER; delete e.FIRMA_SSH_KEYGEN
+    return spawnSync('bash', [join(r.d, 'scripts/firmar-instalacion.sh'), ...args], { cwd: r.d, encoding: 'utf8', input: 'firmo\n', env: { ...e, ...env } })
+  }
+  const signed = (res, s, out) => {
+    assert.equal(res.status, 0, res.stdout + res.stderr)
+    assert.match(res.stdout, /Signed:/)
+    const sigs = readdirSync(out).filter((f) => f.endsWith('.aprobacion.sig')); assert.equal(sigs.length, 1, String(sigs))
+  }
+
+  test('Henry\'s invocation: --ssh-keygen, --proveedor and --llave reach ssh-keygen as -w and -f, and the signature passes verificar', () => {
+    const s = setup(); const { r, c, c2 } = checkout(s.signers); const out = join(s.d, 'out')
+    const res = firmar(r, [c2, '--base', c, '--llave', join(s.d, 'llave'), '--proveedor', join(s.d, 'ssh-keychain.dylib'), '--ssh-keygen', s.fake, '--salida', out])
+    signed(res, s, out)
+    const a = s.argv()
+    assert.deepEqual(a.slice(0, 2), ['-Y', 'sign'])
+    assert.equal(a[a.indexOf('-w') + 1], join(s.d, 'ssh-keychain.dylib'))
+    assert.equal(a[a.indexOf('-f') + 1], join(s.d, 'llave'))
+    assert.equal(a[a.indexOf('-n') + 1], 'bob-install-chain')
+    assert.match(res.stdout, /Good "bob-install-chain" signature for henry with ECDSA-SK key/)
+  })
+  test('the same through the environment: FIRMA_LLAVE, SSH_SK_PROVIDER, FIRMA_SSH_KEYGEN', () => {
+    const s = setup(); const { r, c, c2 } = checkout(s.signers); const out = join(s.d, 'out')
+    const res = firmar(r, [c2, '--base', c, '--salida', out], { FIRMA_LLAVE: join(s.d, 'llave'), SSH_SK_PROVIDER: join(s.d, 'ssh-keychain.dylib'), FIRMA_SSH_KEYGEN: s.fake })
+    signed(res, s, out)
+    const a = s.argv(); assert.equal(a[a.indexOf('-w') + 1], join(s.d, 'ssh-keychain.dylib')); assert.equal(a[a.indexOf('-f') + 1], join(s.d, 'llave'))
+  })
+  test('no provider given: no -w', () => {
+    const s = setup(); const { r, c, c2 } = checkout(s.signers); const out = join(s.d, 'out')
+    signed(firmar(r, [c2, '--base', c, '--llave', join(s.d, 'llave'), '--ssh-keygen', s.fake, '--salida', out]), s, out)
+    assert.ok(!s.argv().includes('-w'), String(s.argv()))
+  })
+  test('no key given: refused before anything, never ~/.ssh/id_ed25519_sk', () => {
+    const s = setup(); const { r, c, c2 } = checkout(s.signers)
+    // The old default exists and would sign: still refused.
+    mkdirSync(join(s.d, '.ssh')); writeFileSync(join(s.d, '.ssh/id_ed25519_sk'), s.k.pem)
+    const res = firmar(r, [c2, '--base', c, '--ssh-keygen', s.fake], { HOME: s.d })
+    assert.equal(res.status, 2, res.stdout + res.stderr); assert.match(res.stderr, /none is assumed/)
+    assert.ok(!existsSync(join(s.d, 'argv')), 'ssh-keygen ran')
+  })
+  test('a key path that does not exist, or a provider that does not: refused before anything', () => {
+    const s = setup(); const { r, c, c2 } = checkout(s.signers)
+    const a = firmar(r, [c2, '--base', c, '--llave', join(s.d, 'nada'), '--ssh-keygen', s.fake])
+    assert.equal(a.status, 2, a.stdout + a.stderr); assert.match(a.stderr, /key/)
+    const b = firmar(r, [c2, '--base', c, '--llave', join(s.d, 'llave'), '--proveedor', join(s.d, 'nada.dylib'), '--ssh-keygen', s.fake])
+    assert.equal(b.status, 2, b.stdout + b.stderr); assert.match(b.stderr, /provider/)
+    assert.ok(!existsSync(join(s.d, 'argv')), 'ssh-keygen ran')
+  })
+  test('a signature a box would refuse (not touched) is reported as such, not as signed', () => {
+    const s = setup(0); const { r, c, c2 } = checkout(s.signers); const out = join(s.d, 'out')
+    const res = firmar(r, [c2, '--base', c, '--llave', join(s.d, 'llave'), '--ssh-keygen', s.fake, '--salida', out])
+    assert.equal(res.status, 1, res.stdout + res.stderr); assert.doesNotMatch(res.stdout, /Signed:/); assert.match(res.stderr, /would refuse/)
   })
 })
 
