@@ -2,7 +2,21 @@
 # Henry signs what a box is about to install (O-3, P5 §6.2). He signs when he
 # installs («Al instalar en la caja»), on his own machine, with the key.
 #
-#   scripts/firmar-instalacion.sh <rev-nueva> --base <rev-base>|vacia [--caja <machine-id>] [--salida <dir>]
+#   scripts/firmar-instalacion.sh <rev-nueva> --base <rev-base>|vacia --llave <key>
+#       [--proveedor <provider>] [--ssh-keygen <program>] [--caja <machine-id>] [--salida <dir>]
+#
+# Henry, with the Secure Enclave key of his Mac (docs/adr/0001):
+#   scripts/firmar-instalacion.sh <rev-nueva> --base <rev-base> \
+#     --llave ~/.ssh/id_ecdsa_sk_rk_henry-bob-install \
+#     --proveedor /usr/lib/ssh-keychain.dylib --ssh-keygen /usr/bin/ssh-keygen
+# Apple's ssh-keygen, since Homebrew's has no such provider.
+#
+# --llave <key> (or FIRMA_LLAVE): the key file ssh-keygen signs with; for a
+# resident key, its handle. Required: no key is assumed.
+# --proveedor <provider> (or SSH_SK_PROVIDER): the security key provider,
+# handed to ssh-keygen as -w. Without one, ssh-keygen's own.
+# --ssh-keygen <program> (or FIRMA_SSH_KEYGEN): the ssh-keygen that signs;
+# default the one on PATH. verificar checks the result with the one on PATH.
 #
 # --caja, only when both have the same digest: d → d, for a box that stands
 # at d with no record of how it got there; it names that box (its
@@ -15,23 +29,34 @@
 # checkout of main, at origin/main: the tools that compute and show what is
 # signed are main's. Both revisions are read from git objects; nothing of them
 # runs. It shows the whole diff and the log between them, asks before the
-# touch, and signs the pair base → new with the security key (FIRMA_LLAVE,
-# default ~/.ssh/id_ed25519_sk) in the namespace bob-install-chain, which is
+# touch, and signs the pair base → new with the security key (--llave) in
+# the namespace bob-install-chain, which is
 # this approval's alone: the key is not the one in Bzzz's
 # config/bob/firmantes_imagen. It writes <base>-<nueva>.aprobacion and its
 # .sig into <dir> (default a new directory under $TMPDIR, never the
 # checkout), to copy to the box's
-# /opt/bob/aprobaciones/ as root. Nothing is committed.
+# /opt/bob/aprobaciones/ as root, but only after checking them as a box would
+# (firma-instalacion.sh verificar, against main's signers file): a signature a
+# box would refuse is reported here, never as «Signed». Nothing is committed.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-new_rev=${1:?Usage: $0 <rev-nueva> --base <rev-base> [--salida <dir>]}; shift
+new_rev=${1:?Usage: $0 <rev-nueva> --base <rev-base> --llave <key> [--proveedor <provider>] [--ssh-keygen <program>] [--salida <dir>]}; shift
 base_rev=""; out=""; caja=""
+KEY=${FIRMA_LLAVE:-}; PROVIDER=${SSH_SK_PROVIDER:-}; KEYGEN=${FIRMA_SSH_KEYGEN:-ssh-keygen}
 while [ $# -gt 0 ]; do
-  case "$1" in --base) base_rev=${2:?}; shift 2 ;; --caja) caja=${2:?}; shift 2 ;; --salida) out=${2:?}; shift 2 ;; *) echo "unknown: $1" >&2; exit 2 ;; esac
+  case "$1" in --base) base_rev=${2:?}; shift 2 ;; --caja) caja=${2:?}; shift 2 ;; --salida) out=${2:?}; shift 2 ;;
+    --llave) KEY=${2:?}; shift 2 ;; --proveedor) PROVIDER=${2:?}; shift 2 ;; --ssh-keygen) KEYGEN=${2:?}; shift 2 ;;
+    *) echo "unknown: $1" >&2; exit 2 ;; esac
 done
 [ -z "$caja" ] || [[ "$caja" =~ ^[0-9a-f]{32}$ ]] || { echo "--caja: the box's machine-id (cat /etc/machine-id there), 32 hex" >&2; exit 2; }
 [ -n "$base_rev" ] || { echo "--base <rev>: what the box runs today" >&2; exit 2; }
-KEY=${FIRMA_LLAVE:-$HOME/.ssh/id_ed25519_sk}
+[ -n "$KEY" ] || { echo "--llave <key> (or FIRMA_LLAVE): the key to sign with; none is assumed" >&2; exit 2; }
+[ -f "$KEY" ] || { echo "--llave: no key file at $KEY" >&2; exit 2; }
+[ -z "$PROVIDER" ] || [ -f "$PROVIDER" ] || { echo "--proveedor: no security key provider at $PROVIDER" >&2; exit 2; }
+command -v "$KEYGEN" > /dev/null || { echo "--ssh-keygen: $KEYGEN cannot be run" >&2; exit 2; }
+sign_args=(-Y sign -q)
+[ -z "$PROVIDER" ] || sign_args+=(-w "$PROVIDER")
+sign_args+=(-f "$KEY" -n bob-install-chain)
 F=scripts/firma-instalacion.sh
 git fetch -q origin
 [ -z "$(git status --porcelain --untracked-files=all)" ] && [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] \
@@ -57,12 +82,18 @@ git --no-pager -c core.attributesFile=/dev/null diff --no-ext-diff --no-textconv
 echo
 echo "base  $b"
 echo "nueva $n"
+echo "signs with: $KEYGEN ${sign_args[*]} <aprobacion>"
 read -r -p "Type 'firmo' to sign this pair with the key at $KEY: " ok
 [ "$ok" = firmo ] || { echo "Not signed."; exit 1; }
 [ -n "$out" ] || out=$(mktemp -d "${TMPDIR:-/tmp}/bob-aprobacion.XXXXXX")
 mkdir -p "$out"
 a=$out/$b-$n.aprobacion
 "$F" mensaje "$b" "$n" $caja > "$a"
-ssh-keygen -Y sign -q -f "$KEY" -n bob-install-chain "$a"
+rm -f "$a.sig"
+"$KEYGEN" "${sign_args[@]}" "$a"
+# What a box does with it, against main's signers file: a signature it would
+# refuse (another key, no touch, a line that wants UV) is never «Signed».
+"$F" verificar supabase/provision/firmantes_instalacion "$a" "$a.sig" \
+  || { echo "The signature in $a.sig does not pass verificar: a box would refuse it. Not signed." >&2; rm -f "$a.sig"; exit 1; }
 echo "Signed: $a and $a.sig. On the box, as root:"
 echo "  install -o root -g root -m 644 $a $a.sig /opt/bob/aprobaciones/"

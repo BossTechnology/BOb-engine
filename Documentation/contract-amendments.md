@@ -4073,3 +4073,59 @@ any cell function, and none through F-46's policy.
     measured, but it does not say "not yours" either.
   - **M-6.** PUBLIC holds TEMP on the database, so any role can create
     temporary objects.
+
+## O-3 · The install signature accepts a presence-only key (ADR 0001)
+
+Henry decided on 26 Nov that the install approval is signed with the Secure
+Enclave key of his Mac: there will be no FIDO2 key with a PIN. Measured that
+day with `/usr/bin/ssh-keygen -Y sign -n bob-install-chain -w
+/usr/lib/ssh-keychain.dylib`: the key is `sk-ecdsa-sha2-nistp256@openssh.com`,
+resident; creating it with `-O verify-required` fails ("requested feature not
+supported"); two test signatures carry flags 0x21 (UP on, UV off) and counter
+1, and macOS asked for Touch ID both times. Under the rule of #51 no signature
+of his could verify.
+
+- **Amendment.** A line of `firmantes_instalacion` carries exactly one of
+  `verify-required` (UP and UV, unchanged) or `presence-only` (UP only, said
+  in the open). Neither, both, or one twice is refused, in `caja` and in
+  `caja-prueba` alike. Everything else stands for `presence-only`: an `sk-`
+  key, the namespace on the line and in the signature, no `no-touch-required`,
+  no `cert-authority`, no other option. UV follows the line of the key that
+  signed: a key on any `verify-required` line needs it, and a key on no line
+  is refused before ssh-keygen runs.
+- **What is given up.** The box cannot check that Touch ID was asked for; that
+  rests on the Secure Enclave and on Henry's own record. The counter stays at
+  1; `verificar` never read it. Going back: a FIDO2 key with a PIN, its line
+  with `verify-required`, the `presence-only` line removed, a new ADR.
+- **Seen red.** On main's script, 16 of the 20 new or changed cases fail (the
+  four that pass are refusals main already made for another reason). With the
+  fix, five sabotages, each red: a `verify-required` line no longer winning
+  over a `presence-only` one for the same key (6 cases), both marks allowed
+  (2), neither required (5), UP not checked (6), UV always required (4).
+- **`firmar-instalacion.sh` signs with Henry's key.** It signed with
+  `ssh-keygen -Y sign -f "${FIRMA_LLAVE:-~/.ssh/id_ed25519_sk}"` and no `-w`,
+  so it could not reach a resident Secure Enclave key. Now `--llave` (or
+  `FIRMA_LLAVE`) is required and no key is assumed; `--proveedor` (or
+  `SSH_SK_PROVIDER`) goes to ssh-keygen as `-w`; `--ssh-keygen` (or
+  `FIRMA_SSH_KEYGEN`) picks the program, for Apple's `/usr/bin/ssh-keygen`.
+  After signing it runs `verificar` against main's signers file and reports a
+  signature a box would refuse instead of «Signed». Tested with a stand-in for
+  ssh-keygen that signs with an emulated key and records its arguments: the
+  six new cases fail on the old script; three sabotages (no `-w`, the old
+  default key, no self-check), each red.
+- **Not measured:** a signature by Henry's Secure Enclave key through
+  `firmar-instalacion.sh` and `verificar` (needs his Touch ID).
+- **Independent security review of `ca7239d`, applied (docs only).** The code
+  is unchanged. ADR 0001 and the header of `firmantes_instalacion` claimed
+  more than a box checks. With `/usr/lib/ssh-keychain.dylib`, the flags byte
+  and the counter are most likely set by that library, which is macOS
+  software, not by the Secure Enclave, which only signs a P-256 digest. The
+  signs: the counter is always 1 and the flags always 0x21. So for this key
+  the UP a box checks is close to a constant. This is inferred, not
+  measured. The measurement, for Henry: a test key made with this provider
+  and `-O no-touch-required`, to see whether its signatures also carry 0x21.
+  What shows a person was there is the key's access policy and macOS's
+  prompt, and no box sees either. The prompt does not show what is signed.
+  `firmar-instalacion.sh` printing the diff, the two digests and the
+  ssh-keygen command is a partial mitigation. The `caja-prueba` test was
+  renamed to say it checks parsing only: flags are not read there.

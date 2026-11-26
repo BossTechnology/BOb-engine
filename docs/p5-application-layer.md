@@ -778,13 +778,20 @@ it stands.
 of `main`, with the key at hand:
 
 ```
-scripts/firmar-instalacion.sh <commit-to-install> --base <commit-the-box-runs>
+scripts/firmar-instalacion.sh <commit-to-install> --base <commit-the-box-runs> \
+  --llave ~/.ssh/id_ecdsa_sk_rk_henry-bob-install \
+  --proveedor /usr/lib/ssh-keychain.dylib --ssh-keygen /usr/bin/ssh-keygen
 ```
 
-It runs `main`'s `firma-instalacion.sh` on both commits as git objects, shows
+The key, the security key provider (`ssh-keygen -w`) and the `ssh-keygen` to
+run are given, never assumed (also `FIRMA_LLAVE`, `SSH_SK_PROVIDER`,
+`FIRMA_SSH_KEYGEN`). Henry's key is resident in the Secure Enclave, so it needs
+Apple's provider and Apple's `ssh-keygen`: Homebrew's has no such provider. It runs `main`'s `firma-instalacion.sh` on both commits as git objects, shows
 the log and the whole diff between them (no external diff, no textconv), asks
 for `firmo`, and signs the pair with `ssh-keygen -Y sign -n bob-install-chain`
-(the touch and the PIN). It writes the two files into a new directory under
+(the touch; with a FIDO2 key, the PIN too). Before it says «Signed», it checks
+the signature as a box would, with `firma-instalacion.sh verificar` and
+`main`'s signers file: one a box would refuse is reported and removed. It writes the two files into a new directory under
 `$TMPDIR` (never the checkout) and commits nothing. Henry copies them to the box's `/opt/bob/aprobaciones/`, as
 root. An approval may also be committed under `supabase/provision/aprobaciones/`;
 the box reads either. The namespace is its own: **this key is not the one in
@@ -948,14 +955,20 @@ there on every box.
 
 **The verifier**, the same in CI and on the box, accepts only
 `sk-ssh-ed25519@openssh.com` or `sk-ecdsa-sha2-nistp256@openssh.com` keys
-bound to `namespaces="bob-install-chain"`, with `verify-required`, never
-`no-touch-required` and never `cert-authority`; the verify output must name an
+bound to `namespaces="bob-install-chain"`, with exactly one of
+`verify-required` or `presence-only`, never `no-touch-required` and never
+`cert-authority`; the verify output must name an
 `-SK` key. No key, or any doubt, fails. `verify-required` is BOb's mark, not an
 ssh-keygen option: ssh-keygen refuses it in an allowed_signers file, and
 accepts an sk signature with neither the touch nor the verification flag set
 (measured 25 Nov, OpenSSH 10.3 and 10.6p2). So the verifier hands ssh-keygen a
 copy of the file without it, and reads the flags from the signature itself:
-user present (0x01) and user verified (UV, 0x04) must both be set. `sk-` does not prove hardware, and
+user present (0x01) must be set, and user verified (UV, 0x04) too when the
+line of the key that signed says `verify-required`. `presence-only` is BOb's
+mark for a key that cannot report UV, said in the open on its line: Henry's
+Secure Enclave key, whose provider refuses `verify-required` and signs with
+flags 0x21 and the counter fixed at 1 (measured 26 Nov). What that gives up
+and how to go back is `docs/adr/0001-firma-instalacion-solo-presencia.md`. `sk-` does not prove hardware, and
 FIDO attestation is not verified here; to keep that proof, generate the key
 with `ssh-keygen -t ed25519-sk -O verify-required -O write-attestation=<file>`.
 
@@ -970,8 +983,11 @@ never required: ordinary PRs need no key.
 machine:
 
 ```
-henry namespaces="bob-install-chain",verify-required sk-ssh-ed25519@openssh.com AAAA…
+henry namespaces="bob-install-chain",presence-only sk-ecdsa-sha2-nistp256@openssh.com AAAA…
 ```
+
+(with a FIDO2 key that has a PIN, `verify-required` instead of
+`presence-only`; ADR 0001).
 
 He checks the fingerprint (`ssh-keygen -lf`) against the one the physical key
 shows when it signs. Each box takes its copy at bootstrap; a later key change

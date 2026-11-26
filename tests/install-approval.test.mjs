@@ -14,8 +14,11 @@
 //   - a security key's signature (emulated in software, tests/helpers/sk.mjs):
 //     a line with verify-required verifies when the signature is touched and
 //     user verified (UV); without UV, without the touch, with a flag set after
-//     signing, without verify-required on the line, another namespace, another
-//     option or a principal that is a pattern, it is refused;
+//     signing, with neither verify-required nor presence-only on the line,
+//     another namespace, another option or a principal that is a pattern, it
+//     is refused. A presence-only line (docs/adr/0001) verifies when touched,
+//     UV or not, and is refused untouched or with verify-required beside it;
+//     UV follows the line of the key that signed;
 //   - the box (caja-prueba: the same code, not as root, any listed key, a
 //     directory for /opt/bob) runs the committed tree and nothing of the
 //     checkout (not a modified file, a skip-worktree file, a corrupt index or
@@ -23,7 +26,8 @@
 //     after an install that ends well and only from where it stands: a new
 //     unsigned migration, a replayed approval, a missing state, signers or a
 //     root writable by others are refused before anything runs;
-//   - the repository: no key yet (Henry adds his), CODEOWNERS over all of it,
+//   - the repository: only security keys, each verify-required or
+//     presence-only, lines verificar accepts, CODEOWNERS over all of it,
 //     the approval workflow running from main on the right events.
 // Not measured here: a signature by a physical key or the Secure Enclave
 // (that a person touched it), and caja as root on a box (Henry's first
@@ -194,6 +198,46 @@ describe('a security key\'s signature', () => {
     rmSync(join(d, 'verify-required'))
     no(r, /option \*/)
   })
+  // presence-only (docs/adr/0001): a line that says, in the open, that its key
+  // gives presence (UP) and not verification (UV): Henry's Secure Enclave key,
+  // whose provider refuses verify-required and signs with flags 0x21.
+  const po = 'namespaces="bob-install-chain",presence-only'
+  for (const kind of ['ecdsa', 'ed25519']) {
+    const p = skKey(kind)
+    test(`${kind}: a presence-only line, touched, verifies without UV`, () => ok(check(line(p, po), p.sign(msg, NS, UP))))
+    test(`${kind}: a presence-only line, touched and verified, verifies`, () => ok(check(line(p, po), p.sign(msg, NS, UP | UV))))
+    test(`${kind}: a presence-only line, not touched, is refused`, () => no(check(line(p, po), p.sign(msg, NS, UV)), /touch|user present|UP/))
+    test(`${kind}: a presence-only line, neither flag, is refused`, () => no(check(line(p, po), p.sign(msg, NS, 0)), /touch|user present|UP/))
+  }
+  test('Henry\'s measured flags, 0x21 (UP and bit 5, no UV) with the counter at 1, verify on a presence-only line', () => {
+    const p = skKey('ecdsa'); ok(check(line(p, po), p.sign(msg, NS, 0x21, 1)))
+  })
+  test('a line with neither verify-required nor presence-only is refused, and says both', () => no(check(line(k, 'namespaces="bob-install-chain"'), k.sign(msg)), /verify-required.*presence-only|presence-only.*verify-required/))
+  test('verify-required and presence-only together are refused', () => {
+    no(check(line(k, 'namespaces="bob-install-chain",verify-required,presence-only'), k.sign(msg)), /both|together/)
+    no(check(line(k, 'namespaces="bob-install-chain",presence-only,verify-required'), k.sign(msg)), /both|together/)
+  })
+  test('presence-only twice is refused', () => no(check(line(k, 'namespaces="bob-install-chain",presence-only,presence-only'), k.sign(msg, NS, UP)), /twice/))
+  test('presence-only with no-touch-required, cert-authority or an unknown option is refused', () => {
+    no(check(line(k, `${po},no-touch-required`), k.sign(msg, NS, UP)), /no-touch-required/)
+    no(check(line(k, `cert-authority,${po}`), k.sign(msg, NS, UP)), /cert-authority/)
+    no(check(line(k, `${po},valid-before="29990101"`), k.sign(msg, NS, UP)), /option/)
+    no(check(line(k, `${po},presence-only=1`), k.sign(msg, NS, UP)), /option/)
+  })
+  test('presence-only still needs a security key and the namespace', () => {
+    no(check(`henry ${po} ${PUB}\n`, k.sign(msg, NS, UP)), /not a security key/)
+    no(check(line(k, 'presence-only'), k.sign(msg, NS, UP)), /namespaces/)
+    const p = skKey('ecdsa'); no(check(line(p, po), p.sign(msg, 'file', UP)), /not in namespace bob-install-chain/)
+  })
+  test('UV follows the line of the key that signed: a verify-required key next to a presence-only one still needs UV', () => {
+    const p = skKey('ecdsa')
+    const both = line(k) + line(p, po, 'otro')
+    no(check(both, k.sign(msg, NS, UP)), /user verified|UV/)
+    const r = check(both, p.sign(msg, NS, UP)); assert.equal(r.status, 0, r.stdout + r.stderr); assert.match(r.stdout, /signature for otro with ECDSA-SK key/)
+  })
+  test('the same key on a verify-required line and a presence-only line: UV is required', () => {
+    no(check(line(k) + line(k, po, 'otro'), k.sign(msg, NS, UP)), /user verified|UV/)
+  })
   test('a signature whose reserved field is not empty is refused', () => no(check(line(k), k.sign(msg, NS, UP | UV, 1, 'x')), /reserved/))
   test('armored text that is not base64 says so', () => no(check(line(k), '-----BEGIN SSH SIGNATURE-----\nAAAA=\nAAA\n-----END SSH SIGNATURE-----\n'), /not base64/))
   test('a signature file that is not one armored sshsig is refused', () => {
@@ -296,6 +340,13 @@ describe('on a box', () => {
     b.r.put(a, run(['mensaje', 'b'.repeat(64), d]).stdout); sign(join(b.r.d, a)); b.r.commit()
     refusedBefore(b.caja(), /is not the text of/)
     b.done()
+  })
+
+  test('caja-prueba parses a presence-only line (flags unchecked there): accepted alone, refused with verify-required', () => {
+    const b = box({ signers: `ci namespaces="bob-install-chain",presence-only ${PUB}\n` }); b.approve('a'.repeat(64))
+    const res = b.caja(); assert.equal(res.out.status, 0, res.out.stdout + res.out.stderr); b.done()
+    const c = box({ signers: `ci namespaces="bob-install-chain",verify-required,presence-only ${PUB}\n` }); c.approve('a'.repeat(64))
+    refusedBefore(c.caja(), /both|together/); c.done()
   })
 
   test('a signature by a key that is not listed is refused', () => {
@@ -526,16 +577,21 @@ describe('on a box', () => {
 })
 
 describe('firmar-instalacion.sh, before the key', () => {
-  // A clean checkout at its origin/main, holding main's two scripts.
-  const checkout = () => {
+  // A clean checkout at its origin/main, holding main's two scripts (and, when given, a signers file).
+  const checkout = (signers) => {
     const r = repo()
     for (const f of ['scripts/firmar-instalacion.sh', 'scripts/firma-instalacion.sh']) { r.put(f, readFileSync(join(REPO_ROOT, f))); chmodSync(join(r.d, f), 0o755) }
+    if (signers) r.put('supabase/provision/firmantes_instalacion', signers)
     const c = r.commit(); const o = tmp('origen-')
     execFileSync('git', ['init', '-q', '--bare', o]); r.git('remote', 'add', 'origin', o); r.git('push', '-q', 'origin', 'HEAD:main'); r.git('fetch', '-q', 'origin')
     r.git('branch', '-q', '--set-upstream-to=origin/main')
     return { r, c, o, done: () => { rmSync(r.d, { recursive: true }); rmSync(o, { recursive: true }) } }
   }
-  const firmar = (r, args) => spawnSync('bash', [join(r.d, 'scripts/firmar-instalacion.sh'), ...args], { cwd: r.d, encoding: 'utf8', input: 'no\n', env: { ...process.env, FIRMA_LLAVE: '/nonexistent' } })
+  const noKey = tmp('firmar-llave-'); writeFileSync(join(noKey, 'k'), 'not a key\n')
+  const firmar = (r, args, { input = 'no\n', env = { FIRMA_LLAVE: join(noKey, 'k') } } = {}) => {
+    const e = { ...process.env }; delete e.FIRMA_LLAVE; delete e.SSH_SK_PROVIDER; delete e.FIRMA_SSH_KEYGEN
+    return spawnSync('bash', [join(r.d, 'scripts/firmar-instalacion.sh'), ...args], { cwd: r.d, encoding: 'utf8', input, env: { ...e, ...env } })
+  }
   // Follow-up of #54, (2): a wrong revision must not become a d → d with no diff.
   test('the same digest twice needs --caja <machine-id>; another pair refuses it', () => {
     const { r, c, done } = checkout()
@@ -547,11 +603,112 @@ describe('firmar-instalacion.sh, before the key', () => {
   })
 })
 
+// Henry signs with the Secure Enclave key of his Mac (docs/adr/0001):
+//   /usr/bin/ssh-keygen -Y sign -w /usr/lib/ssh-keychain.dylib -f ~/.ssh/id_ecdsa_sk_rk_henry-bob-install
+// Homebrew's ssh-keygen has no such provider. So firmar takes the key, the
+// provider and the ssh-keygen to run, assumes no key, and checks the signature
+// it made with verificar and main's signers before it says «Signed». Here a
+// stand-in for ssh-keygen signs with an emulated security key (sk.mjs) and
+// records how it was called; nothing real is signed.
+describe('firmar-instalacion.sh, signing', () => {
+  const NSS = 'bob-install-chain'
+  const setup = (flags = UP | 0x20) => {
+    const k = skKey('ecdsa')
+    const d = tmp('firmar-sk-')
+    writeFileSync(join(d, 'llave'), k.pem)
+    writeFileSync(join(d, 'ssh-keychain.dylib'), '') // stands for /usr/lib/ssh-keychain.dylib, which only a Mac has
+    const fake = join(d, 'ssh-keygen')
+    writeFileSync(fake, [
+      '#!/usr/bin/env node',
+      `const { skKey } = await import(${JSON.stringify(join(REPO_ROOT, 'tests/helpers/sk.mjs'))})`,
+      "const fs = await import('node:fs')",
+      'const a = process.argv.slice(2)',
+      `fs.writeFileSync(${JSON.stringify(join(d, 'argv'))}, JSON.stringify(a))`,
+      "const f = a[a.indexOf('-f') + 1], file = a[a.length - 1]",
+      `const k = skKey('ecdsa', 'ssh:', fs.readFileSync(f, 'utf8'))`,
+      `fs.writeFileSync(file + '.sig', k.sign(fs.readFileSync(file), ${JSON.stringify(NSS)}, ${flags}, 1))`,
+      '',
+    ].join('\n'))
+    chmodSync(fake, 0o755)
+    const signers = `henry namespaces="bob-install-chain",presence-only ${k.line}\n`
+    return { k, d, fake, signers, argv: () => JSON.parse(readFileSync(join(d, 'argv'), 'utf8')) }
+  }
+  const checkout = (signers) => {
+    const r = repo()
+    for (const f of ['scripts/firmar-instalacion.sh', 'scripts/firma-instalacion.sh']) { r.put(f, readFileSync(join(REPO_ROOT, f))); chmodSync(join(r.d, f), 0o755) }
+    r.put('supabase/provision/firmantes_instalacion', signers)
+    const c = r.commit(); const o = tmp('origen-')
+    execFileSync('git', ['init', '-q', '--bare', o]); r.git('remote', 'add', 'origin', o); r.git('push', '-q', 'origin', 'HEAD:main'); r.git('fetch', '-q', 'origin')
+    r.git('branch', '-q', '--set-upstream-to=origin/main')
+    r.put('otro.txt', 'x\n'); const c2 = r.commit(); r.git('push', '-q', 'origin', 'HEAD:main'); r.git('fetch', '-q', 'origin')
+    return { r, c, c2 }
+  }
+  const firmar = (r, args, env = {}) => {
+    const e = { ...process.env }; delete e.FIRMA_LLAVE; delete e.SSH_SK_PROVIDER; delete e.FIRMA_SSH_KEYGEN
+    return spawnSync('bash', [join(r.d, 'scripts/firmar-instalacion.sh'), ...args], { cwd: r.d, encoding: 'utf8', input: 'firmo\n', env: { ...e, ...env } })
+  }
+  const signed = (res, s, out) => {
+    assert.equal(res.status, 0, res.stdout + res.stderr)
+    assert.match(res.stdout, /Signed:/)
+    const sigs = readdirSync(out).filter((f) => f.endsWith('.aprobacion.sig')); assert.equal(sigs.length, 1, String(sigs))
+  }
+
+  test('Henry\'s invocation: --ssh-keygen, --proveedor and --llave reach ssh-keygen as -w and -f, and the signature passes verificar', () => {
+    const s = setup(); const { r, c, c2 } = checkout(s.signers); const out = join(s.d, 'out')
+    const res = firmar(r, [c2, '--base', c, '--llave', join(s.d, 'llave'), '--proveedor', join(s.d, 'ssh-keychain.dylib'), '--ssh-keygen', s.fake, '--salida', out])
+    signed(res, s, out)
+    const a = s.argv()
+    assert.deepEqual(a.slice(0, 2), ['-Y', 'sign'])
+    assert.equal(a[a.indexOf('-w') + 1], join(s.d, 'ssh-keychain.dylib'))
+    assert.equal(a[a.indexOf('-f') + 1], join(s.d, 'llave'))
+    assert.equal(a[a.indexOf('-n') + 1], 'bob-install-chain')
+    assert.match(res.stdout, /Good "bob-install-chain" signature for henry with ECDSA-SK key/)
+  })
+  test('the same through the environment: FIRMA_LLAVE, SSH_SK_PROVIDER, FIRMA_SSH_KEYGEN', () => {
+    const s = setup(); const { r, c, c2 } = checkout(s.signers); const out = join(s.d, 'out')
+    const res = firmar(r, [c2, '--base', c, '--salida', out], { FIRMA_LLAVE: join(s.d, 'llave'), SSH_SK_PROVIDER: join(s.d, 'ssh-keychain.dylib'), FIRMA_SSH_KEYGEN: s.fake })
+    signed(res, s, out)
+    const a = s.argv(); assert.equal(a[a.indexOf('-w') + 1], join(s.d, 'ssh-keychain.dylib')); assert.equal(a[a.indexOf('-f') + 1], join(s.d, 'llave'))
+  })
+  test('no provider given: no -w', () => {
+    const s = setup(); const { r, c, c2 } = checkout(s.signers); const out = join(s.d, 'out')
+    signed(firmar(r, [c2, '--base', c, '--llave', join(s.d, 'llave'), '--ssh-keygen', s.fake, '--salida', out]), s, out)
+    assert.ok(!s.argv().includes('-w'), String(s.argv()))
+  })
+  test('no key given: refused before anything, never ~/.ssh/id_ed25519_sk', () => {
+    const s = setup(); const { r, c, c2 } = checkout(s.signers)
+    // The old default exists and would sign: still refused.
+    mkdirSync(join(s.d, '.ssh')); writeFileSync(join(s.d, '.ssh/id_ed25519_sk'), s.k.pem)
+    const res = firmar(r, [c2, '--base', c, '--ssh-keygen', s.fake], { HOME: s.d })
+    assert.equal(res.status, 2, res.stdout + res.stderr); assert.match(res.stderr, /none is assumed/)
+    assert.ok(!existsSync(join(s.d, 'argv')), 'ssh-keygen ran')
+  })
+  test('a key path that does not exist, or a provider that does not: refused before anything', () => {
+    const s = setup(); const { r, c, c2 } = checkout(s.signers)
+    const a = firmar(r, [c2, '--base', c, '--llave', join(s.d, 'nada'), '--ssh-keygen', s.fake])
+    assert.equal(a.status, 2, a.stdout + a.stderr); assert.match(a.stderr, /key/)
+    const b = firmar(r, [c2, '--base', c, '--llave', join(s.d, 'llave'), '--proveedor', join(s.d, 'nada.dylib'), '--ssh-keygen', s.fake])
+    assert.equal(b.status, 2, b.stdout + b.stderr); assert.match(b.stderr, /provider/)
+    assert.ok(!existsSync(join(s.d, 'argv')), 'ssh-keygen ran')
+  })
+  test('a signature a box would refuse (not touched) is reported as such, not as signed', () => {
+    const s = setup(0); const { r, c, c2 } = checkout(s.signers); const out = join(s.d, 'out')
+    const res = firmar(r, [c2, '--base', c, '--llave', join(s.d, 'llave'), '--ssh-keygen', s.fake, '--salida', out])
+    assert.equal(res.status, 1, res.stdout + res.stderr); assert.doesNotMatch(res.stdout, /Signed:/); assert.match(res.stderr, /would refuse/)
+  })
+})
+
 describe('the repository', () => {
-  test('the signers file holds no key until Henry adds his, and only security keys with verify-required', () => {
-    const lines = readFileSync(join(REPO_ROOT, 'supabase/provision/firmantes_instalacion'), 'utf8')
-      .split('\n').filter((l) => l.trim() && !l.trim().startsWith('#'))
-    for (const l of lines) assert.match(l, /^\S+ namespaces="bob-install-chain",verify-required sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh\.com \S+/, l)
+  test('the signers file holds only security keys, each with verify-required or presence-only, and verificar accepts it', () => {
+    const f = join(REPO_ROOT, 'supabase/provision/firmantes_instalacion')
+    const lines = readFileSync(f, 'utf8').split('\n').filter((l) => l.trim() && !l.trim().startsWith('#'))
+    for (const l of lines) assert.match(l, /^\S+ namespaces="bob-install-chain",(verify-required|presence-only) sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh\.com \S+$/, l)
+    // The file's own lines pass verificar's line checks: a bad signature is what fails, never the file.
+    if (lines.length) {
+      const d = tmp('repo-firmantes-'); writeFileSync(join(d, 'm'), 'x'); writeFileSync(join(d, 'm.sig'), skKey('ecdsa').sign('x', NS, UP))
+      const r = run(['verificar', f, join(d, 'm'), join(d, 'm.sig')])
+      assert.equal(r.status, 1); assert.match(r.stderr, /by no key|does not verify/, r.stderr)
+    }
   })
   test('the digest of this commit is computable, and CODEOWNERS covers all of it', () => {
     const r = run(['huella', 'HEAD', REPO_ROOT, '--lista'])

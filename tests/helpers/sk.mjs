@@ -3,13 +3,15 @@
 // It makes what a FIDO authenticator makes: an sk-ecdsa-sha2-nistp256 or
 // sk-ssh-ed25519 public key, and an SSH signature (sshsig, the format of
 // `ssh-keygen -Y sign`) whose authenticator flags are whatever the test says:
-// 0x01 user present (touched), 0x04 user verified (PIN or biometric). The
+// 0x01 user present (touched), 0x04 user verified (PIN or biometric); Henry's
+// Secure Enclave key signs with 0x21 (UP and bit 5, no UV) and counter 1, its
+// line is presence-only (docs/adr/0001). The
 // signature is real: ssh-keygen -Y verify checks it like one from a key, flags
 // included, since the authenticator signs them. What no software can show is
 // that a person touched anything; that is what Henry's first signature
 // measures.
 
-import { generateKeyPairSync, sign, createHash } from 'node:crypto'
+import { generateKeyPairSync, createPrivateKey, createPublicKey, sign, createHash } from 'node:crypto'
 
 export const UP = 0x01
 export const UV = 0x04
@@ -23,14 +25,18 @@ const mpint = (b) => {
 }
 const sha256 = (b) => createHash('sha256').update(b).digest()
 
-// skKey('ecdsa' | 'ed25519', application) → { type, line, sign(message, namespace, flags, counter) }
-// line: '<type> <base64>', as it goes in an allowed_signers file.
-export function skKey(kind = 'ecdsa', application = 'ssh:') {
+// skKey('ecdsa' | 'ed25519', application, pem) → { type, line, pem, sign(message, namespace, flags, counter) }
+// line: '<type> <base64>', as it goes in an allowed_signers file. pem: the
+// private half, so a stand-in for ssh-keygen in another process can sign with
+// the same key (skKey(kind, application, pem)).
+export function skKey(kind = 'ecdsa', application = 'ssh:', pem = null) {
   const ecdsa = kind === 'ecdsa'
   const type = ecdsa ? 'sk-ecdsa-sha2-nistp256@openssh.com' : 'sk-ssh-ed25519@openssh.com'
-  const { publicKey, privateKey } = ecdsa
-    ? generateKeyPairSync('ec', { namedCurve: 'P-256' })
-    : generateKeyPairSync('ed25519')
+  const { publicKey, privateKey } = pem
+    ? { privateKey: createPrivateKey(pem), publicKey: createPublicKey(pem) }
+    : ecdsa
+      ? generateKeyPairSync('ec', { namedCurve: 'P-256' })
+      : generateKeyPairSync('ed25519')
   const jwk = publicKey.export({ format: 'jwk' })
   const point = ecdsa
     ? Buffer.concat([Buffer.from([4]), Buffer.from(jwk.x, 'base64url'), Buffer.from(jwk.y, 'base64url')])
@@ -57,6 +63,7 @@ export function skKey(kind = 'ecdsa', application = 'ssh:') {
 
   return {
     type,
+    pem: privateKey.export({ type: 'pkcs8', format: 'pem' }),
     line: `${type} ${pub.toString('base64')}`,
     // An armored SSH signature, as `ssh-keygen -Y sign` writes it to <file>.sig.
     sign(message, namespace = 'bob-install-chain', flags = UP | UV, counter = 1, reserved = '') {

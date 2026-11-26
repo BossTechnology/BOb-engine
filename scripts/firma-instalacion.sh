@@ -14,7 +14,8 @@
 #       The empty base (see VACIA below): what a box with no BOb stands at.
 #   firma-instalacion.sh verificar <firmantes> <mensaje> <firma>
 #       Checks the signature against BOb's signers file (see verificar): a
-#       security key, touched, with its user verified (UV).
+#       security key, touched, with its user verified (UV), or only touched
+#       when its line says presence-only (docs/adr/0001).
 #   sudo /opt/bob/bin/firma-instalacion caja <repo> <commit> cadena|resto [VAR=value …]
 #       On a box, as root. See caja() below. The connection settings go as
 #       arguments (POSTGRES_ENV=…), never through sudo's environment: no
@@ -122,7 +123,11 @@ marca() {
 }
 
 # The signers file is BOb's, not ssh-keygen's: verify-required on a line is
-# BOb's mark that the key must be used with a PIN or biometric. ssh-keygen
+# BOb's mark that the key must be used with a PIN or biometric, and
+# presence-only its mark that the key cannot say so (a Secure Enclave key:
+# Apple's provider refuses verify-required and signs with UV off), so its
+# signature needs the touch only (docs/adr/0001). Every line carries exactly one
+# of the two. ssh-keygen
 # knows that option in authorized_keys only, refuses it in an allowed_signers
 # file ("bad options: unknown key option"), and accepts an sk signature with
 # neither the touch nor the verification flag set (measured on OpenSSH 10.3 and
@@ -138,6 +143,7 @@ hx() { printf '%s' "$1" | od -An -v -tx1 | tr -d ' \n'; }
 # security key, in namespace $NS, is refused.
 firma_sk() {
   local f=$1 l b64="" n=0 fin="" H P R t s
+  SIG_PUB=
   while IFS= read -r l || [ -n "$l" ]; do
     n=$((n + 1)); l=${l%$'\r'}
     if [ "$n" = 1 ]; then [ "$l" = "-----BEGIN SSH SIGNATURE-----" ] || fail "the signature is not an armored SSH signature: refused"; continue; fi
@@ -162,6 +168,7 @@ firma_sk() {
   str                                         # the hash algorithm: ssh-keygen checks it
   str; s=$R                                   # the signature blob
   [ "$P" = $((${#H} / 2)) ] || fail "the signature has bytes after it: refused"
+  SIG_PUB=$t                                  # the signing key, whole: which line it is
   H=$t; P=0; str; SIG_KEY=$R                  # the key's type
   H=$s; P=0
   str; [ "$R" = "$SIG_KEY" ] || fail "the signature's type is not its key's: refused"
@@ -174,10 +181,11 @@ firma_sk() {
 }
 
 # verificar <firmantes> <mensaje> <firma> [relajado]: relajado (caja-prueba
-# only) accepts a key that is not a security key, and no verify-required, so
-# tests can sign.
+# only) accepts a key that is not a security key, and neither verify-required
+# nor presence-only, so tests can sign. It still refuses both on one line.
 verificar() {
-  local signers=$1 msg=$2 sig=$3 relajado=${4:-} keys=0 line principal options keytype key principals out p o v opts
+  local signers=$1 msg=$2 sig=$3 relajado=${4:-} keys=0 line principal options keytype key principals out p o v opts vr po h uv
+  local -a con_uv=() solo_up=()   # the keys (hex) whose line needs UV, and those whose line is presence-only
   [ -f "$signers" ] || fail "$signers does not exist: nobody can sign yet"
   [ -s "$sig" ] || fail "no signature"
   [ -n "$WORK" ] || WORK=$(mktemp -d)
@@ -195,17 +203,24 @@ verificar() {
     [[ "$options" != *no-touch-required* ]] || fail "the key of $principal is marked no-touch-required: refused"
     # Split on commas only: never word-split or glob (an option * would match a file).
     IFS=, read -r -a opts <<<"$options"
+    vr=0 po=0
     for o in ${opts[@]+"${opts[@]}"}; do
-      case "$o" in "namespaces=\"$NS\""|verify-required) ;;
+      case "$o" in "namespaces=\"$NS\"") ;;
+        verify-required) vr=$((vr + 1)) ;;
+        presence-only) po=$((po + 1)) ;;
         *) fail "the key of $principal has the option $o, which BOb does not use: refused" ;; esac
     done
+    (( vr <= 1 && po <= 1 )) || fail "the key of $principal has an option twice: refused"
+    (( vr + po <= 1 )) || fail "the key of $principal has both verify-required and presence-only: a key either verifies its user or says it cannot, never both: refused"
     [ -n "$key" ] || fail "the line of $principal has no key"
     [[ "$keytype" =~ ^[a-z0-9@.-]+$ && "$key" =~ ^[A-Za-z0-9+/]+=*$ ]] || fail "the key of $principal is not a key: refused"
     if [ "$relajado" != relajado ]; then
       case "$keytype" in sk-ssh-ed25519@openssh.com|sk-ecdsa-sha2-nistp256@openssh.com) ;;
         *) fail "the key of $principal in $signers is $keytype, not a security key that must be touched: refused" ;; esac
-      [[ ",$options," == *,verify-required,* ]] || fail "the key of $principal lacks verify-required (a PIN or biometric with the touch): refused"
+      (( vr + po == 1 )) || fail "the key of $principal has neither verify-required (a PIN or biometric with the touch) nor presence-only (the touch only, said in the open; docs/adr/0001): refused"
     fi
+    h=$(printf '%s' "$key" | base64 -d 2>/dev/null | od -An -v -tx1 | tr -d ' \n') || fail "the key of $principal is not base64: refused"
+    if (( po )); then solo_up+=("$h"); else con_uv+=("$h"); fi
     # What ssh-keygen reads: only what was checked here.
     printf '%s namespaces="%s" %s %s\n' "$principal" "$NS" "$keytype" "$key" >> "$v/firmantes"
     keys=$((keys + 1))
@@ -214,7 +229,13 @@ verificar() {
   if [ "$relajado" != relajado ]; then
     firma_sk "$v/sig"
     (( SIG_FLAGS & SK_UP )) || fail "the security key was not touched for this signature (user present, flag 0x01, is off): refused"
-    (( SIG_FLAGS & SK_UV )) || fail "the security key did not verify its user for this signature (user verified, UV flag 0x04, is off: no PIN or biometric): refused"
+    # UV follows the line of the key that signed. It is waived only for a key on
+    # a presence-only line and on no verify-required line.
+    uv=""
+    for h in ${solo_up[@]+"${solo_up[@]}"}; do [ "$h" != "$SIG_PUB" ] || uv=0; done
+    for h in ${con_uv[@]+"${con_uv[@]}"}; do [ "$h" != "$SIG_PUB" ] || uv=1; done
+    [ -n "$uv" ] || fail "the signature is by no key in $signers"
+    (( uv == 0 )) || (( SIG_FLAGS & SK_UV )) || fail "the security key did not verify its user for this signature (user verified, UV flag 0x04, is off: no PIN or biometric), and its line says verify-required: refused"
   fi
   principals=$(ssh-keygen -Y find-principals -s "$v/sig" -f "$v/firmantes" 2>/dev/null) || fail "the signature is by no key in $signers"
   while IFS= read -r p; do
