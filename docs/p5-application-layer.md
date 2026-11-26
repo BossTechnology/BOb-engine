@@ -807,11 +807,21 @@ sudo install -o root -g root -m 600 /dev/null /root/bob-install/postgres.env   #
 `instalacion-firmada` holds the digest of what the box runs today
 (`scripts/firma-instalacion.sh huella <that commit>`), or the empty base on a
 box with no BOb (below). It is root's word, not a signature: write the digest
-the box really stands at. `caja` writes two more files, never written by hand:
-`instalacion-aprobacion`, the pair `<base>-<digest>` the box reached its state
-with (running the same digest again, as `resto` after `cadena`, accepts that
-pair alone, verified again), and `instalacion-en-curso`, a `cadena` from the
-empty base that has not ended well.
+the box really stands at. Two more files are never written by hand.
+`instalacion-aprobacion` (`caja`'s) is the pair `<base>-<digest>` the box
+reached its state with: running the same digest again, as `resto` after
+`cadena`, accepts that pair alone, verified again. A box that already stands
+at a digest and has no such record (installed before it existed, as lab-02
+for its `resto`) runs it again only with an approval `<digest>-<digest>`,
+which Henry signs like any other (`scripts/firmar-instalacion.sh <commit>
+--base <commit>` signs `d → d`; there is no diff). `instalacion-en-curso`
+(`instalar-bob.sh`'s, at the path `caja` gives it) is a `cadena` from the
+empty base whose database check passed and that has not ended well: it is
+written only after that check, holds exactly `<empty base>-<digest>`, and its
+retry must install the same digest. A refused check, or a database it cannot
+reach, leaves no such file, so the next run checks afresh. If `caja` stops
+between moving the state and removing it, the next run sees both records
+agree and removes it.
 
 - **The empty base (H4, BossTechnology/BOb-engine#54).** On a box that runs
   no BOb yet, there is no commit to take the digest of. Henry decided «Defined
@@ -825,9 +835,11 @@ empty base that has not ended well.
   refuses, before anything is pushed, a database with any trace of BOb, found
   from the tree: a version of one of its migrations in the CLI's history, a
   role `bob` or `bob_*`, schema `bob` with anything in it or a schema owned by
-  a `bob_*` role, or a relation, function or type named as one that BOb's
-  migrations create, in any schema not owned by `supabase_admin` (so a renamed
-  schema, or BOb's legacy objects in `public`, are found). If that `cadena`
+  a `bob_*` role, or a relation (an index included), function or type named
+  as one that BOb's migrations create or rename to, in any schema not owned by
+  `supabase_admin` (so a renamed schema, or BOb's legacy objects in `public`,
+  are found). Policies and triggers are not looked for by name: they hang
+  from a table, which is. If that `cadena`
   fails halfway, its retry, signed from the empty base too, accepts what a
   partial chain leaves and nothing more: history inside the install chain
   only, no `bob.schema_migrations`, no `bob_*` role that can log in. A box with the chain

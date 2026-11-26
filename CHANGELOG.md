@@ -3,7 +3,7 @@
 Una línea por cambio entregado, en lenguaje de usuario.
 
 ## Sin publicar
-- Una caja sin BOb tiene una base fija y documentada («base vacía») desde la que Henry firma su primera instalación. La caja comprueba en la base de datos que de verdad no hay BOb: una caja que ya tiene la cadena no puede declararla para saltarse la revisión.
+- Una caja sin BOb tiene una base fija y documentada («base vacía») desde la que Henry firma su primera instalación. La caja comprueba en la base de datos que de verdad no hay BOb: una caja que ya tiene la cadena no puede declararla para saltarse la revisión. Si la primera instalación falla a medias, se puede reintentar sin quedar trabada, y una caja que ya tenía BOb antes de este registro vuelve a correr con una firma de Henry, no con un archivo a mano.
 - La firma de instalación ya funciona con la llave de Henry y exige que la llave haya pedido toque y PIN o huella: antes, con el formato documentado, ninguna llave podía verificar, y ssh-keygen solo no comprueba ninguna de las dos cosas.
 - El runbook de instalación de P5 dice dónde va la clave de `postgres` (`/root/bob-install/`), cómo llega root a la base desde la máquina y qué tiene que haber en la caja antes de instalar.
 - P5 dice en todas sus secciones lo mismo que D77: BOb (`bob-web`) y su feeder (`bob-feeder`) corren al lado de la caja, el feeder lee por `bzzz-vecinos`, y `bzzz-vecinos` lee ClickHouse en su propia red.

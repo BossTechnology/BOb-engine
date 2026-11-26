@@ -33,7 +33,12 @@ git fetch -q origin
   || { echo "Run from a clean checkout of main at origin/main (git switch main && git pull): the signing tools must be main's." >&2; exit 1; }
 if [ "$base_rev" = vacia ]; then b=$("$F" vacia); else b=$("$F" huella "$base_rev" .); fi
 n=$("$F" huella "$new_rev" .)
-[ "$b" != "$n" ] || { echo "$base_rev and $new_rev have the same digest: nothing to sign."; exit 0; }
+# The same digest: the pair d → d, for a box that already stands at d (its
+# instalacion-firmada) and has no instalacion-aprobacion, say to run resto
+# again. caja accepts it only at d; nothing changes, so there is no diff.
+if [ "$b" = "$n" ]; then
+  echo "== $base_rev and $new_rev have the same digest: this signs $n → $n, to run a step again on a box that stands at it."
+fi
 ex=':(exclude)supabase/provision/aprobaciones'
 echo "== What changes, $base_rev → $new_rev ($(git rev-parse "$new_rev^{commit}")):"
 # From the empty base, everything is new: the log and the diff are from nothing.
