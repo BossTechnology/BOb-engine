@@ -4164,3 +4164,49 @@ Nothing was applied; lab-02 stays at its base.
   is `off`: the box's case. The later `cadena` run again still goes over
   `127.0.0.1`.
 - **The tree's digest changes:** Henry signs again for lab-02.
+
+## Who may sign in · A BzzzBX session takes a viewer seat (`bob.claim_viewer_seat`)
+
+Henry, 26 Nov, on Bob-New P-1: «para entrar al bob deben tener el login de
+bzzzbx si esta loguea al bzzzbx puede entrar al bob … se quita el login de bob
+asi debe funcionar en todas las cajas», and for an account with no row, «Alta
+sola, como viewer». He chose the engine function over provisioning each person
+by hand («A: función en el engine»). This changes the 21 Nov ruling «no row,
+403» for an account with no row only. A row with `active = false` still gets 403,
+and `admin` and `analyst` are still given by `scripts/provision-user.mjs`.
+
+- **The door.** Migration `20261126100000_claim_viewer_seat.sql`.
+  `bob.claim_viewer_seat(p_user uuid, p_email text) → boolean` is SECURITY
+  DEFINER with a pinned `search_path` (`bob, pg_temp`), and `bob_app` alone
+  holds EXECUTE: it is revoked from PUBLIC, anon, authenticated, service_role,
+  bob_feeder and bob_ai_ro by name. It inserts `(p_user, claim org_id, p_email,
+  'viewer', true)` with `ON CONFLICT DO NOTHING`. It never takes a role or an
+  organization from the caller. It does nothing with no claim, an unknown
+  organization, no id or a blank email. A row that exists, by id or by email,
+  in this organization or another, inactive or not, is left as it is. `bob_app`
+  still holds no INSERT on `bob.users`.
+- **Where the GoTrue check lives.** The function reads nothing outside `bob`.
+  Reading `auth.users` would need a grant on schema `auth` from
+  `supabase_admin`, beyond `bob_migrador`'s O-3 footprint (USAGE on `auth`
+  only): a change to Bzzz's `bob.sql` and a `FUERA=` line. That grant would
+  widen the owner's reach to every GoTrue account. The database cannot verify a
+  session anyway: it already trusts `bob_app` for the organization claim. So
+  the id and email are the ones GoTrue answers to bob-web's `getUser` on every
+  request, as for the 403 check today. That is the proposal; Henry signs it.
+- **Tests, each seen red first.** In `tests/users-access.test.mjs`:
+  - a new account gets an active viewer row in the claim's organization, and a
+    second visit changes nothing;
+  - an inactive analyst row stays inactive analyst;
+  - another organization's row is untouched, and so is an email held by
+    another account;
+  - no claim, an unknown organization, a null id, or a null or blank email
+    each make nothing;
+  - the function's signature takes no role and no organization, and its
+    search_path is pinned;
+  - only `bob_app` executes it.
+
+  pgTAP in `users_access.test.sql`: the function exists, is a definer, and
+  `bob_app` executes it while anon, authenticated and service_role do not.
+  Direct INSERT stays refused.
+- **The tree's digest changes (O-3):** Henry signs a new approval for each box.
+  The function lives in `bob`, so Bzzz's `bob.conf` needs no `FUERA=` line.

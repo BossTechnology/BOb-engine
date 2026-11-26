@@ -179,6 +179,130 @@ describe('scripts/provision-user.mjs · the one way a row is made', () => {
   })
 })
 
+// Henry, 26 Nov («Alta sola, como viewer»): the first time a live BzzzBX
+// session reaches BOb in the box, bob-web gives it a viewer seat in the box's
+// organization. bob_app still cannot write bob.users; bob.claim_viewer_seat()
+// is the one narrow door, and it opens to bob_app alone. The id and email are
+// the ones GoTrue answered for the session (bob-web asks GoTrue on every
+// request); the organization is the claim, never an argument; the role is
+// viewer, never an argument. A row that exists, inactive or in another
+// organization, is left as it is.
+const SEAT = 'SELECT bob.claim_viewer_seat($1, $2) AS took'
+
+async function seat(id, email, org = TENANT_A) {
+  return asApp(async () => (await db.query(SEAT, [id, email])).rows[0].took, org)
+}
+
+describe('bob.claim_viewer_seat · a signed-in account takes a viewer seat, nothing more', () => {
+  // Seat and read back in one transaction, rolled back: as bob_app for the
+  // seat, as the test's own login for the read.
+  async function seatThenRead(fn) {
+    return inTx(async () => {
+      await db.query('SELECT set_config($1, $2, true)', ['request.jwt.claims', JSON.stringify({ org_id: TENANT_A })])
+      await db.query('SET LOCAL ROLE bob_app')
+      const take = async (id, email) => (await db.query(SEAT, [id, email])).rows[0].took
+      const read = async (id) => {
+        await db.query('RESET ROLE')
+        const { rows } = await db.query('SELECT org_id::text, role, active, email FROM bob.users WHERE id = $1', [id])
+        await db.query('SET LOCAL ROLE bob_app')
+        return rows
+      }
+      return fn(take, read)
+    })
+  }
+
+  test('a new account gets an active viewer row in the claim\'s organization', async () => {
+    await seatThenRead(async (take, read) => {
+      const id = randomUUID()
+      assert.equal(await take(id, 'first.visit@example.test'), true)
+      assert.deepEqual(await read(id),
+        [{ org_id: TENANT_A, role: 'viewer', active: true, email: 'first.visit@example.test' }])
+    })
+  })
+
+  test('a second visit takes nothing and changes nothing', async () => {
+    await seatThenRead(async (take, read) => {
+      const id = randomUUID()
+      assert.equal(await take(id, 'twice@example.test'), true)
+      assert.equal(await take(id, 'changed@example.test'), false)
+      assert.deepEqual((await read(id)).map((r) => [r.email, r.role]), [['twice@example.test', 'viewer']])
+    })
+  })
+
+  test('an inactive row stays inactive, with its role', async () => {
+    await inTx(async () => {
+      await db.query(`UPDATE bob.users SET active = false, role = 'analyst' WHERE id = $1`, [USER_A])
+      await db.query('SELECT set_config($1, $2, true)', ['request.jwt.claims', JSON.stringify({ org_id: TENANT_A })])
+      await db.query('SET LOCAL ROLE bob_app')
+      const { rows: [r] } = await db.query(SEAT, [USER_A, 'a@example.test'])
+      assert.equal(r.took, false)
+      await db.query('RESET ROLE')
+      const { rows } = await db.query('SELECT active, role, org_id::text FROM bob.users WHERE id = $1', [USER_A])
+      assert.deepEqual(rows, [{ active: false, role: 'analyst', org_id: TENANT_A }])
+    })
+  })
+
+  test('another organization\'s row is not touched, and no seat is made beside it', async () => {
+    assert.equal(await seat(USER_B, 'b@example.test', TENANT_A), false)
+    const { rows } = await db.query('SELECT org_id::text, role FROM bob.users WHERE id = $1', [USER_B])
+    assert.equal(rows.length, 1)
+    assert.equal(rows[0].org_id, TENANT_B)
+  })
+
+  test('an email another account already holds takes nothing', async () => {
+    const id = randomUUID()
+    const { rows: [a] } = await db.query('SELECT email FROM bob.users WHERE id = $1', [USER_A])
+    assert.equal(await seat(id, a.email), false)
+    const { rows } = await db.query('SELECT count(*)::int AS n FROM bob.users WHERE id = $1', [id])
+    assert.equal(rows[0].n, 0)
+  })
+
+  test('with no claim, an unknown organization, no id or no email, nothing is made', async () => {
+    const id = randomUUID()
+    const cases = [
+      [id, 'x@example.test', null],
+      [id, 'x@example.test', randomUUID()],
+      [null, 'x@example.test', TENANT_A],
+      [id, null, TENANT_A],
+      [id, '  ', TENANT_A],
+    ]
+    for (const [i, e, org] of cases) {
+      const took = await inTx(async () => {
+        if (org) await db.query('SELECT set_config($1, $2, true)', ['request.jwt.claims', JSON.stringify({ org_id: org })])
+        await db.query('SET LOCAL ROLE bob_app')
+        return (await db.query(SEAT, [i, e])).rows[0].took
+      })
+      assert.equal(took, false, JSON.stringify([i, e, org]))
+    }
+    const { rows } = await db.query('SELECT count(*)::int AS n FROM bob.users WHERE id = $1', [id])
+    assert.equal(rows[0].n, 0)
+  })
+
+  test('it takes an id and an email, and nothing that names a role or an organization', async () => {
+    const { rows } = await db.query(`
+      SELECT pg_get_function_identity_arguments(p.oid) AS args, p.prosecdef, p.proconfig
+        FROM pg_proc p WHERE p.pronamespace = 'bob'::regnamespace AND p.proname = 'claim_viewer_seat'`)
+    assert.deepEqual(rows.map((r) => r.args), ['p_user uuid, p_email text'])
+    assert.equal(rows[0].prosecdef, true)
+    assert.ok((rows[0].proconfig ?? []).some((c) => c.startsWith('search_path=')), 'search_path is not pinned')
+  })
+
+  test('bob_app alone executes it', async () => {
+    const { rows } = await db.query(`
+      SELECT CASE WHEN a.grantee = 0 THEN 'public' ELSE pg_get_userbyid(a.grantee) END AS role
+        FROM pg_proc p, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+       WHERE p.oid = 'bob.claim_viewer_seat(uuid,text)'::regprocedure
+         AND a.privilege_type = 'EXECUTE' AND a.grantee <> p.proowner
+       ORDER BY 1`)
+    assert.deepEqual(rows.map((r) => r.role), ['bob_app'])
+    for (const r of ['anon', 'authenticated', 'service_role', 'bob_feeder', 'bob_ai_ro']) {
+      const { rows: [x] } = await db.query(
+        `SELECT has_function_privilege($1, 'bob.claim_viewer_seat(uuid,text)', 'EXECUTE') AS can`, [r])
+      assert.equal(x.can, false, `${r} can take a seat`)
+    }
+  })
+})
+
 describe('The box check warns when nobody can sign in', () => {
   test('an organization with no active user is reported, one with an active user is not', async () => {
     assert.deepEqual(await activeUserFindings(db, 'tenant-a'), [])
