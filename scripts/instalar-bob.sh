@@ -132,6 +132,32 @@ if [ "$step" = cadena ]; then
   work="$priv/work"; mkdir -p "$work/supabase/migrations"
   cp supabase/config.toml "$work/supabase/"
   echo "== 1 · the install chain, as postgres"
+  # From the empty base (caja sets BOB_BASE_VACIA=1 when this box's
+  # instalacion-firmada says BOb was never here), the database must agree:
+  # nothing of BOb in it. Found, not listed: any version of any file in
+  # supabase/migrations in the CLI's history, bob_migrador's own history, or
+  # any object in schema bob (an empty schema bob is no install).
+  if [ "${BOB_BASE_VACIA:-}" = 1 ]; then
+    vs=$(ls supabase/migrations | sed -n 's/^\([0-9]\{14\}\)_.*\.sql$/\1/p' | paste -sd, -)
+    [[ "$vs" =~ ^[0-9,]+$ ]] || { echo "no migration found in the tree" >&2; exit 2; }
+    found=$(as_postgres -A -t -c "SELECT CASE WHEN to_regclass('supabase_migrations.schema_migrations') IS NULL THEN 0 ELSE 1 END" \
+      -c "SELECT (to_regclass('bob.schema_migrations') IS NOT NULL)::int" \
+      -c "SELECT count(*) FROM pg_class WHERE relnamespace = to_regnamespace('bob')" \
+      -c "SELECT count(*) FROM pg_proc WHERE pronamespace = to_regnamespace('bob')") \
+      || { echo "cannot read the database to check the empty base: nothing installed" >&2; exit 1; }
+    read -r -d '' hist mig rel fn <<<"$found" || true
+    [[ "$hist $mig $rel $fn" =~ ^[0-9]+\ [0-9]+\ [0-9]+\ [0-9]+$ ]] || { echo "unexpected answer checking the empty base: nothing installed" >&2; exit 1; }
+    hits=0
+    if [ "$hist" = 1 ]; then
+      hits=$(as_postgres -A -t -c "SELECT count(*) FROM supabase_migrations.schema_migrations WHERE version = ANY (string_to_array('$vs', ','))") \
+        || { echo "cannot read the CLI's history: nothing installed" >&2; exit 1; }
+    fi
+    if [ "$hits" != 0 ] || [ "$mig" != 0 ] || [ "$rel" != 0 ] || [ "$fn" != 0 ]; then
+      echo "This box claims the empty base (no BOb), but its database already holds BOb: $hits of BOb's migrations in the CLI's history, bob.schema_migrations: $mig, schema bob: $rel relations and $fn functions. Nothing installed. /opt/bob/instalacion-firmada must hold the digest this box really stands at, and Henry signs from there." >&2
+      exit 1
+    fi
+    echo "the empty base: no BOb in this database (checked)"
+  fi
   (cd supabase/migrations && grep -v '^#' "../provision/install-chain.sha256" | "${SHA[@]}" -c --quiet -)
   chain_files | while read -r f; do cp "supabase/migrations/$f" "$work/supabase/migrations/"; done
   # No password in the URL: the CLI's driver reads PGPASSFILE.

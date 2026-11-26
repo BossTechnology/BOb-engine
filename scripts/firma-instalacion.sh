@@ -10,6 +10,8 @@
 #   firma-instalacion.sh mensaje <digest-base> <digest-nuevo>
 #       The exact text Henry signs: the pair, so an old signature cannot bring
 #       back a state already signed once.
+#   firma-instalacion.sh vacia
+#       The empty base (see VACIA below): what a box with no BOb stands at.
 #   firma-instalacion.sh verificar <firmantes> <mensaje> <firma>
 #       Checks the signature against an allowed_signers file.
 #   sudo /opt/bob/bin/firma-instalacion caja <repo> <commit> cadena|resto [VAR=value …]
@@ -26,6 +28,16 @@
 # outside [A-Za-z0-9_./-] anywhere in the tree is refused.
 set -euo pipefail
 NS=bob-install-chain
+# The empty base: the digest of a box where BOb was never installed (Henry,
+# «Defined empty base»). It is sha256 of nothing, the digest of an empty
+# listing, which no tree has: huella refuses an empty tree. A box with no BOb
+# chain holds it in /opt/bob/instalacion-firmada, and its first install is
+# signed from it (firmar-instalacion.sh <commit> --base vacia). It is the one
+# state a box may claim without a signature, so it is checked: from it only
+# cadena runs, and instalar-bob.sh (BOB_BASE_VACIA=1) refuses a database that
+# already holds any of BOb, so a box with a chain applied cannot claim it to
+# skip the review of where it really stands.
+VACIA=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 EXCLUIDO=supabase/provision/aprobaciones/
 PATH_FIJO=/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/sbin:/usr/local/bin
 PASAN="POSTGRES_ENV POSTGRES_HOST POSTGRES_PORT MIGRADOR_ENV MIGRADOR_PUERTO"
@@ -224,7 +236,7 @@ revocada() {  # <file> <base> <nueva>: is the pair, or the new digest, revoked?
 #   8. instalar-bob.sh runs from that directory, and only if it ends well is
 #      the new digest written as this box's state. The directory is removed.
 caja() {
-  local raiz=$1 uid=$2 relajado=$3 repo=$4 commit=$5 step=$6 v gd d prev cand ok c base pin have rc n src up ans f h hosts red psql u
+  local raiz=$1 uid=$2 relajado=$3 repo=$4 commit=$5 step=$6 v gd d prev vacia cand ok c base pin have rc n src up ans f h hosts red psql u
   case "$step" in cadena|resto) ;; *) fail "step: cadena or resto" ;; esac
   [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || fail "the commit: its full sha, as Henry read it (git rev-parse HEAD)"
   [[ "$repo" =~ ^/[A-Za-z0-9_./-]+$ ]] || fail "the repository: an absolute path in [A-Za-z0-9_./-]"
@@ -274,6 +286,11 @@ caja() {
 
   prev=$(cat "$raiz/instalacion-firmada")
   [[ "$prev" =~ ^[0-9a-f]{64}$ ]] || fail "$raiz/instalacion-firmada does not hold one digest"
+  vacia=""
+  if [ "$prev" = "$VACIA" ]; then
+    [ "$step" = cadena ] || fail "this box stands at the empty base (no BOb): its first step is cadena, not $step"
+    vacia=1
+  fi
 
   WORK=$(mktemp -d "$raiz/trabajo.XXXXXX"); chmod 700 "$WORK"
   gd=$WORK/git
@@ -290,6 +307,7 @@ caja() {
   [ "$(G --git-dir="$gd" cat-file -t "$commit")" = commit ] || fail "$commit is not a commit"
   extraer "$gd" "$commit" "$WORK/arbol" "$WORK/lista"
   d=$(sha < "$WORK/lista")
+  [ "$d" != "$VACIA" ] || fail "$commit has the empty base's digest: refused"
   [ -f "$WORK/arbol/scripts/instalar-bob.sh" ] || fail "$commit has no scripts/instalar-bob.sh"
 
   if [ "$prev" = "$d" ]; then
@@ -317,7 +335,7 @@ caja() {
   [ -n "$ok" ] || fail "no approval from $prev (this box) to $d ($commit): nothing installed"
 
   if [ "$step" = cadena ]; then
-    pin=$(sed -n 's/^  SUPABASE_CLI_VERSION: *\([0-9][0-9.]*\)$/\1/p' "$WORK/arbol/.github/workflows/ci.yml" 2>/dev/null | head -1)
+    pin=$(sed -n 's/^  SUPABASE_CLI_VERSION: *\([0-9][0-9.]*\)$/\1/p' "$WORK/arbol/.github/workflows/ci.yml" 2>/dev/null | head -1) || pin=""
     have=$(supabase --version 2>/dev/null || true)
     [ -n "$pin" ] && [ "$have" = "$pin" ] || fail "the supabase CLI here is '${have:-none}', CI pins '${pin:-none}': nothing installed"
   fi
@@ -326,7 +344,7 @@ caja() {
   # a last look, not proof that he is there: the barrier is the signature.
   resumen() {
     echo "commit   $commit"
-    echo "base     $prev (this box)"
+    echo "base     $prev (this box)${vacia:+ = the empty base: no BOb here, which cadena checks in the database}"
     echo "nueva    $d (approval in $src)"
     echo "settings ${ajustes:-none}"
     echo "sends passwords to $hosts"
@@ -343,7 +361,7 @@ caja() {
   [ "$ans" = instalo ] || fail "not confirmed: nothing installed"
 
   set +e
-  (cd "$WORK/arbol" && BOB_FIRMA_VERIFICADA=$d BOB_PSQL=$psql SUDO="" /bin/bash -p scripts/instalar-bob.sh "$step")
+  (cd "$WORK/arbol" && BOB_FIRMA_VERIFICADA=$d BOB_BASE_VACIA=$vacia BOB_PSQL=$psql SUDO="" /bin/bash -p scripts/instalar-bob.sh "$step")
   rc=$?
   set -e
   [ "$rc" = 0 ] || fail "$step failed (exit $rc): this box stays at $prev"
@@ -375,6 +393,7 @@ cmd=${1:-}; shift || true
 case "$cmd" in
   huella) huella "${1:?rev}" "${2:-.}" "${3:-}" ;;
   mensaje) mensaje "${1:?}" "${2:?}" ;;
+  vacia) echo "$VACIA" ;;
   verificar) verificar "${1:?}" "${2:?}" "${3:?}" ;;
   herramienta) if [ -d "${1:?path}" ]; then directorio_propio "$1"; else cadena_propia "$1"; fi; echo "root's along its whole path: $1" ;;
   caja)
@@ -387,5 +406,5 @@ case "$cmd" in
     PATH_FIJO=/usr/bin:/bin:/usr/sbin:/sbin   # the system's only, on a developer's machine too
     NFIJOS=4; [ "${FIRMA_ENV_LIMPIO:-}" = 1 ] || limpio "$1" caja-prueba "$@"
     caja "$1" "$(id -u)" relajado "${2:?repo}" "${3:?commit}" "${4:?step}" ;;
-  *) echo "Usage: $0 huella|mensaje|verificar|caja|caja-prueba …" >&2; exit 2 ;;
+  *) echo "Usage: $0 huella|mensaje|vacia|verificar|caja|caja-prueba …" >&2; exit 2 ;;
 esac

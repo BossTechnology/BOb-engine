@@ -2,10 +2,12 @@
 # Henry signs what a box is about to install (O-3, P5 §6.2). He signs when he
 # installs («Al instalar en la caja»), on his own machine, with the key.
 #
-#   scripts/firmar-instalacion.sh <rev-nueva> --base <rev-base> [--salida <dir>]
+#   scripts/firmar-instalacion.sh <rev-nueva> --base <rev-base>|vacia [--salida <dir>]
 #
 # <rev-base> is what the box runs today (its /opt/bob/instalacion-firmada is
-# that commit's digest); <rev-nueva> is what it will run. Run from a clean
+# that commit's digest); <rev-nueva> is what it will run. --base vacia, for a
+# box where BOb was never installed: the empty base (firma-instalacion.sh
+# vacia), which that box's instalacion-firmada holds. Run from a clean
 # checkout of main, at origin/main: the tools that compute and show what is
 # signed are main's. Both revisions are read from git objects; nothing of them
 # runs. It shows the whole diff and the log between them, asks before the
@@ -29,13 +31,16 @@ F=scripts/firma-instalacion.sh
 git fetch -q origin
 [ -z "$(git status --porcelain --untracked-files=all)" ] && [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] \
   || { echo "Run from a clean checkout of main at origin/main (git switch main && git pull): the signing tools must be main's." >&2; exit 1; }
-b=$("$F" huella "$base_rev" .); n=$("$F" huella "$new_rev" .)
+if [ "$base_rev" = vacia ]; then b=$("$F" vacia); else b=$("$F" huella "$base_rev" .); fi
+n=$("$F" huella "$new_rev" .)
 [ "$b" != "$n" ] || { echo "$base_rev and $new_rev have the same digest: nothing to sign."; exit 0; }
 ex=':(exclude)supabase/provision/aprobaciones'
 echo "== What changes, $base_rev → $new_rev ($(git rev-parse "$new_rev^{commit}")):"
-git --no-pager log --oneline --no-decorate "$base_rev..$new_rev" | LC_ALL=C tr -cd '[:print:]\n'
-git --no-pager -c core.attributesFile=/dev/null diff --no-ext-diff --no-textconv --summary --stat "$base_rev" "$new_rev" -- . "$ex"
-git --no-pager -c core.attributesFile=/dev/null diff --no-ext-diff --no-textconv "$base_rev" "$new_rev" -- . "$ex"
+# From the empty base, everything is new: the log and the diff are from nothing.
+if [ "$base_rev" = vacia ]; then rango=$new_rev; desde=$(git hash-object -t tree /dev/null); else rango=$base_rev..$new_rev; desde=$base_rev; fi
+git --no-pager log --oneline --no-decorate "$rango" | LC_ALL=C tr -cd '[:print:]\n'
+git --no-pager -c core.attributesFile=/dev/null diff --no-ext-diff --no-textconv --summary --stat "$desde" "$new_rev" -- . "$ex"
+git --no-pager -c core.attributesFile=/dev/null diff --no-ext-diff --no-textconv "$desde" "$new_rev" -- . "$ex"
 echo
 echo "base  $b"
 echo "nueva $n"

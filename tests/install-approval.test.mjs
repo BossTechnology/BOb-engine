@@ -150,9 +150,9 @@ describe('on a box', () => {
       const a = `${A}/${base}-${nueva}.aprobacion`
       r.put(a, run(['mensaje', base, nueva]).stdout); sign(join(r.d, a)); return r.commit()
     }
-    const caja = (commit = r.git('rev-parse', 'HEAD'), { env = {}, args = [], input = 'instalo\n' } = {}) => {
+    const caja = (commit = r.git('rev-parse', 'HEAD'), { env = {}, args = [], input = 'instalo\n', step = 'resto' } = {}) => {
       rmSync(join(raiz, 'ran'), { force: true })
-      const out = run(['caja-prueba', raiz, r.d, commit, 'resto', ...args], { env: { ...process.env, FOO: '1', POSTGRES_HOST: 'from-env', ...env }, input })
+      const out = run(['caja-prueba', raiz, r.d, commit, step, ...args], { env: { ...process.env, FOO: '1', POSTGRES_HOST: 'from-env', ...env }, input })
       const ran = existsSync(join(raiz, 'ran')) ? readFileSync(join(raiz, 'ran'), 'utf8').split('\n') : null
       return { out, ran, state: existsSync(join(raiz, 'instalacion-firmada')) ? readFileSync(join(raiz, 'instalacion-firmada'), 'utf8').trim() : null }
     }
@@ -296,6 +296,28 @@ describe('on a box', () => {
     writeFileSync(join(b.raiz, 'instalacion-firmada'), 'a'.repeat(64) + '\n')
     chmodSync(a, 0o666); refusedBefore(b.caja(), /writable by others/)
     b.done()
+  })
+  // The empty base (Henry, «Defined empty base»): a box with no BOb stands at
+  // VACIA, and its first install is signed from it. Only cadena runs from it,
+  // and instalar-bob.sh checks the database (tests/install-empty-base.test.mjs).
+  const VACIA = createHash('sha256').update('').digest('hex')
+  test('the empty base is sha256 of nothing, and no tree has it', () => {
+    assert.equal(run(['vacia']).stdout.trim(), VACIA)
+    const r = repo(); r.commit(); assert.notEqual(r.huella(), VACIA); rmSync(r.d, { recursive: true })
+  })
+  test('from the empty base, resto is refused before anything runs', () => {
+    const b = box({ prev: VACIA }); b.approve(VACIA)
+    refusedBefore(b.caja(undefined, { step: 'resto' }), /empty base.*cadena/); b.done()
+  })
+  test('from the empty base, cadena passes the signature check with an approval from it', () => {
+    const b = box({ prev: VACIA }); b.approve(VACIA)
+    const res = b.caja(undefined, { step: 'cadena' })
+    // caja-prueba has no supabase CLI on its fixed PATH: it stops at the pin, after the approval.
+    refusedBefore(res, /supabase CLI/); b.done()
+  })
+  test('from the empty base, an approval from another base is refused', () => {
+    const b = box({ prev: VACIA }); b.approve('a'.repeat(64))
+    refusedBefore(b.caja(undefined, { step: 'cadena' }), /no approval from e3b0c442/); b.done()
   })
   test('a commit that is not a full sha: refused', () => {
     const b = box(); b.approve('a'.repeat(64)); refusedBefore(b.caja('HEAD'), /full sha/); b.done()
