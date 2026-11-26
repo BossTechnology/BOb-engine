@@ -222,7 +222,14 @@ if [ "$step" = cadena ]; then
   (cd supabase/migrations && grep -v '^#' "../provision/install-chain.sha256" | "${SHA[@]}" -c --quiet -)
   chain_files | while read -r f; do cp "supabase/migrations/$f" "$work/supabase/migrations/"; done
   # No password in the URL: the CLI's driver reads PGPASSFILE.
-  PGPASSFILE="$priv/pgpass" supabase db push --db-url "postgresql://postgres@$PG_HOST:$PG_PORT/postgres" \
+  # sslmode=disable: the box's database has ssl off, and the CLI wants TLS
+  # from any host that is not loopback (lab-02, 26 nov: "tls error (The
+  # server does not support SSL connections)"). The password still does not
+  # leave the server: PG_HOST is loopback or a host in /opt/bob/hosts-permitidos
+  # (permitido, above), the box's own docker network. The CLI does not read
+  # PGREQUIREAUTH; that host check is what guards its password.
+  # scripts/ensayo-migracion-lab.sh pushes with sslmode=disable too.
+  PGPASSFILE="$priv/pgpass" supabase db push --db-url "postgresql://postgres@$PG_HOST:$PG_PORT/postgres?sslmode=disable" \
     --workdir "$work" --include-all --yes
   exit 0
 fi
