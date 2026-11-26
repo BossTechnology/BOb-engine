@@ -24,5 +24,6 @@
 # CI reads this file from main, never from the PR. A box reads its own copy,
 # /opt/bob/firmantes_instalacion (root's, 644), never the checkout's. The key is
 # this file's alone, not the one in firmantes_imagen.
-# Empty on purpose: until Henry puts his public key here, nothing that installs
-# BOb can change.
+# Henry's Secure Enclave key (Touch ID), presence-only: docs/adr/0001.
+# ssh-keygen -lf: SHA256:52FmFU3f+b8DSe7osQv3FLUJnhHO5Orf+OdXKSfqClU
+henry namespaces="bob-install-chain",presence-only sk-ecdsa-sha2-nistp256@openssh.com AAAAInNrLWVjZHNhLXNoYTItbmlzdHAyNTZAb3BlbnNzaC5jb20AAAAIbmlzdHAyNTYAAABBBLSxT95lcVyLhEW1WvXPdiomP9X36HsvZdtP/s6fF+2ZTDuTDRjSKDcTCgf8KqykKV+AgPipsPebvmitDLjGENwAAAAEc3NoOg==
