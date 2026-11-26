@@ -4,6 +4,7 @@ Una línea por cambio entregado, en lenguaje de usuario.
 
 ## Sin publicar
 - La firma de instalación ya funciona con la llave de Henry y exige que la llave haya pedido toque y PIN o huella: antes, con el formato documentado, ninguna llave podía verificar, y ssh-keygen solo no comprueba ninguna de las dos cosas.
+- El runbook de instalación de P5 dice dónde va la clave de `postgres` (`/root/bob-install/`), cómo llega root a la base desde la máquina y qué tiene que haber en la caja antes de instalar.
 - P5 dice en todas sus secciones lo mismo que D77: BOb (`bob-web`) y su feeder (`bob-feeder`) corren al lado de la caja, el feeder lee por `bzzz-vecinos`, y `bzzz-vecinos` lee ClickHouse en su propia red.
 - El chequeo de tenancy también revisa las tablas que son el tenant (hoy `organizations`, con llave `id`), no solo las que tienen `org_id`, y exige que cada política compare la llave con el claim de la organización (mencionarla no basta); `bob_app` ya no tiene permisos de escritura sobre `organizations` que la seguridad por filas le negaba siempre (F-46).
 - BObee: el guard de sus vistas revisa todas las `v_ai_*` y sus funciones, y también corre sobre la base tal como la instala `bob_migrador`. La aplicación ya no puede crear, cambiar ni borrar organizaciones (`bob_app` solo lee la suya). P5 deja escrito qué tiene que cumplir el servicio de inferencia antes de poder conectarse.
