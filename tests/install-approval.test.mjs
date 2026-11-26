@@ -136,11 +136,15 @@ describe('the verifier refuses', () => {
 describe('on a box', () => {
   // A box: <raiz> stands for /opt/bob. Its state is `prev`; the repository
   // holds an approval prev → digest, signed by the test key.
-  const box = ({ prev = 'a'.repeat(64), signers = `ci namespaces="bob-install-chain" ${PUB}\n`, revocadas = '# none\n' } = {}) => {
+  const box = ({ prev = 'a'.repeat(64), signers = `ci namespaces="bob-install-chain" ${PUB}\n`, revocadas = '# none\n', migrador = true } = {}) => {
     const r = repo(); r.commit()
     const raiz = tmp('raiz-'); chmodSync(raiz, 0o755)
     writeFileSync(join(raiz, 'firmantes_instalacion'), signers); chmodSync(join(raiz, 'firmantes_instalacion'), 0o644)
     if (prev) { writeFileSync(join(raiz, 'instalacion-firmada'), prev + '\n'); chmodSync(join(raiz, 'instalacion-firmada'), 0o644) }
+    if (migrador) {
+      mkdirSync(join(raiz, 'secrets'), { mode: 0o700 })
+      writeFileSync(join(raiz, 'secrets/migrador.env'), 'MIGRADOR_USUARIO=bob_migrador\nMIGRADOR_HOST=127.0.0.1\nMIGRADOR_RED=bzzz-data\n'); chmodSync(join(raiz, 'secrets/migrador.env'), 0o600)
+    }
     if (revocadas !== null) { writeFileSync(join(raiz, 'aprobaciones-revocadas'), revocadas); chmodSync(join(raiz, 'aprobaciones-revocadas'), 0o644) }
     const approve = (base, nueva = r.huella()) => {
       const a = `${A}/${base}-${nueva}.aprobacion`
@@ -254,6 +258,10 @@ describe('on a box', () => {
     refusedBefore(b.caja(undefined, { args: ['BASH_ENV=/tmp/x'] }), /unknown setting/)
     const env = join(b.raiz, 'pg.env'); writeFileSync(env, 'POSTGRES_PASSWORD=x\n'); chmodSync(env, 0o666)
     refusedBefore(b.caja(undefined, { args: [`POSTGRES_ENV=${env}`] }), /writable by others/)
+    chmodSync(env, 0o644)
+    refusedBefore(b.caja(undefined, { args: [`POSTGRES_ENV=${env}`] }), /readable by a group or others/)
+    chmodSync(join(b.raiz, 'secrets/migrador.env'), 0o640)
+    refusedBefore(b.caja(), /readable by a group or others/)
     b.done()
   })
   test('not confirmed with «instalo»: nothing runs', () => {
@@ -268,6 +276,13 @@ describe('on a box', () => {
     const b2 = box(); const d2 = b2.r.huella(); b2.approve('a'.repeat(64))
     writeFileSync(join(b2.raiz, 'aprobaciones-revocadas'), `${'a'.repeat(64)}-${d2}\n`)
     refusedBefore(b2.caja(), /revoked/); b2.done()
+  })
+  test('resto with no migrador file: refused; the screen shows MIGRADOR_RED', () => {
+    const b = box(); b.approve('a'.repeat(64))
+    const res = b.caja(); assert.equal(res.out.status, 0, res.out.stderr)
+    assert.match(res.out.stdout, /migrador@127\.0\.0\.1:5432 \(from .*MIGRADOR_RED=bzzz-data\)/)
+    b.done()
+    const c = box({ migrador: false }); c.approve('a'.repeat(64)); refusedBefore(c.caja(), /migrador\.env does not exist/); c.done()
   })
   test('no revocation list: refused, Henry makes it (empty) first', () => {
     const b = box({ revocadas: null }); b.approve('a'.repeat(64)); refusedBefore(b.caja(), /aprobaciones-revocadas does not exist/); b.done()

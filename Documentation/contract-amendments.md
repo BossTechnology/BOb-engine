@@ -3630,4 +3630,14 @@ and minors; each was verified first.
   must be non-zero; `firmar-instalacion.sh` writes under `$TMPDIR` by default;
   P5 says `instalo` is a last look, not proof of presence: the barrier is the
   signature.
+- **Last check at `a54723b`.** Two importants, applied: every link on the
+  `PATH` is checked hop by hop with `cadena_propia`, not only its final
+  target; psql is called by its real binary (`/usr/lib/postgresql/<v>/bin/psql`,
+  checked with its directory), not through `pg_wrapper`. P5 says what is not
+  checked: shared libraries, the loader, what an interpreter loads, and `sudo`
+  and the `#!/bin/bash -p` that run before any check. Minors: `resto` refuses
+  a missing `MIGRADOR_ENV` file; a connection file readable by a group or
+  others is refused; the screen shows `MIGRADOR_RED`; a `find` error on the
+  `PATH` fails with its message; P5 says `PGREQUIREAUTH` does not act with the
+  container's libpq 15.
 

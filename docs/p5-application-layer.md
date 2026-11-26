@@ -767,16 +767,24 @@ It:
    database's container name, for one): `POSTGRES_HOST`, and `MIGRADOR_HOST`
    from the alta's file, are checked by `caja` and again by `instalar-bob.sh`.
    `psql` runs with `PGREQUIREAUTH=scram-sha-256` (libpq 16+), so it refuses a
-   server that does not ask for SCRAM. Not for `cadena`'s `supabase db push`,
-   whose driver does not read it; the host check still applies;
+   server that does not ask for SCRAM. It does not act for `cadena`'s
+   `supabase db push`, whose driver does not read it, nor for the psql in the
+   database's container with `MIGRADOR_RED`, whose libpq is 15; the host check
+   still applies to both. `resto` needs the alta's file (`MIGRADOR_ENV`) to
+   exist, and a connection file must be readable by root only (600);
 2. refuses unless these are root's and writable by nobody else: `/opt`,
    `/opt/bob`, `/opt/bob/bin`, itself, the signers file, the revocation list,
    the state file, `/opt/bob/aprobaciones/` and each approval in it, and the
    connection files along their whole path. Nothing it may run is listed by
    hand: every directory of the fixed `PATH` and `git --exec-path` must be
-   root's along its whole path, every file in it (or that a link in it points
-   to) root's and writable by no group or other, and the directories those
-   links lead to root's along their whole path;
+   root's along its whole path, every file in it root's and writable by no
+   group or other, and every link in it root's hop by hop, each hop along its
+   whole path (`/usr/bin/awk → /etc/alternatives/awk → /usr/bin/mawk`). psql
+   is called by its real binary, the newest `/usr/lib/postgresql/<v>/bin/psql`,
+   checked with its directory, not through Debian's `pg_wrapper` (a perl script
+   loading modules from outside the `PATH`). Not checked: shared libraries, the
+   loader, and what an interpreter loads. Nor what runs before any check:
+   `sudo` itself and the `#!/bin/bash -p` that starts this script;
 3. takes a lock (`flock` on `/opt/bob/.instalando`) and removes work
    directories an interrupted run left;
 4. fetches the commit by its sha into a new repository of root's, with

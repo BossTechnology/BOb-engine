@@ -117,6 +117,11 @@ propio() {  # <path> <uid>: owned by <uid>, writable by nobody else
   [ "$o" = "$2" ] || fail "$1 is not owned by uid $2: refused"
   (( (8#$m & 8#022) == 0 )) || fail "$1 is writable by others than its owner: refused"
 }
+secreto() {  # <path>: a file holding a password, readable by its owner only
+  local m
+  m=$(stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1")
+  (( (8#$m & 8#077) == 0 )) || fail "$1 holds a password and is readable by a group or others (mode $m; 600 it): refused"
+}
 
 cadena_propia() {  # <path>: the file, every link to it and every directory up to /, root's and not writable by others
   local f=$1 t dd n=0
@@ -131,18 +136,35 @@ cadena_propia() {  # <path>: the file, every link to it and every directory up t
 }
 
 # Whatever caja and instalar-bob.sh can run as root is found on the fixed PATH
-# or in git's exec-path. Discovered, not listed: every directory there must be
-# root's along its whole path; every file in it, and every file a link in it
-# points to, root's and writable by no group or other; and the directories
-# those links lead to, root's along their whole path.
+# or in git's exec-path, plus psql's real binary (below). Discovered, not
+# listed: every directory there must be root's along its whole path; every file
+# in it root's and writable by no group or other; and every link in it, hop by
+# hop, root's along each hop's whole path. Not checked: the shared libraries
+# and the loader, and what an interpreter loads.
 directorio_propio() {  # <dir>
-  local d=$1 bad t
+  local d=$1 bad links l
   cadena_propia "$d"
-  bad=$(find -L "$d" -mindepth 1 -maxdepth 1 \( ! -uid 0 -o -perm -0002 -o -perm -0020 \) -print -quit 2>/dev/null || true)
+  bad=$(find -L "$d" -mindepth 1 -maxdepth 1 \( ! -uid 0 -o -perm -0002 -o -perm -0020 \) -print -quit 2>&1) \
+    || fail "cannot check $d: $bad"
   [ -z "$bad" ] || fail "$bad (on the PATH) is not root's, or is writable by a group or others: refused"
-  find "$d" -mindepth 1 -maxdepth 1 -type l -exec readlink -f {} + 2>/dev/null | while IFS= read -r t; do
-    [ -e "$t" ] && dirname "$t"
-  done | sort -u | while IFS= read -r t; do cadena_propia "$t"; done
+  links=$(find "$d" -mindepth 1 -maxdepth 1 -type l 2>&1) || fail "cannot list the links in $d: $links"
+  while IFS= read -r l; do [ -z "$l" ] || cadena_propia "$l"; done <<<"$links"
+}
+# psql as the binary itself: Debian's /usr/bin/psql is pg_wrapper, a perl
+# script that loads modules from outside the PATH. Its newest
+# /usr/lib/postgresql/<v>/bin/psql is used instead, checked with its directory.
+psql_real() {
+  local p v best=""
+  for p in /usr/lib/postgresql/*/bin/psql; do
+    [ -x "$p" ] || continue
+    v=${p#/usr/lib/postgresql/}; v=${v%%/*}
+    [[ "$v" =~ ^[0-9]+$ ]] || continue
+    if [ -z "$best" ] || [ "$v" -gt "${best%%:*}" ]; then best="$v:$p"; fi
+  done
+  if [ -n "$best" ]; then p=${best#*:}; else p=$(command -v psql 2>/dev/null) || { echo ""; return 0; }; fi
+  directorio_propio "$(dirname "$p")" >&2; cadena_propia "$p" >&2
+  head -c 2 "$p" | grep -q '^#!' && fail "$p is a script, not psql itself: refused"
+  echo "$p"
 }
 herramientas() {
   local d
@@ -202,7 +224,7 @@ revocada() {  # <file> <base> <nueva>: is the pair, or the new digest, revoked?
 #   8. instalar-bob.sh runs from that directory, and only if it ends well is
 #      the new digest written as this box's state. The directory is removed.
 caja() {
-  local raiz=$1 uid=$2 relajado=$3 repo=$4 commit=$5 step=$6 v gd d prev cand ok c base pin have rc n src up ans f h hosts
+  local raiz=$1 uid=$2 relajado=$3 repo=$4 commit=$5 step=$6 v gd d prev cand ok c base pin have rc n src up ans f h hosts red psql
   case "$step" in cadena|resto) ;; *) fail "step: cadena or resto" ;; esac
   [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || fail "the commit: its full sha, as Henry read it (git rev-parse HEAD)"
   [[ "$repo" =~ ^/[A-Za-z0-9_./-]+$ ]] || fail "the repository: an absolute path in [A-Za-z0-9_./-]"
@@ -220,24 +242,27 @@ caja() {
     # need not be root's (on GitHub's runner, psql's directory is writable by
     # others: measured). The check itself is tested apart (herramienta).
     herramientas
+    psql=$(psql_real) || exit 1
+  else
+    psql=""
   fi
   propio "$raiz/firmantes_instalacion" "$uid"
   propio "$raiz/aprobaciones-revocadas" "$uid"
   propio "$raiz/instalacion-firmada" "$uid"
   [ ! -e "$raiz/aprobaciones" ] || propio "$raiz/aprobaciones" "$uid"
   # The connection files are read by root: root's, along their whole path.
-  conf() { if [ "$relajado" = relajado ]; then propio "$1" "$uid"; else cadena_propia "$1"; fi; }
+  conf() { if [ "$relajado" = relajado ]; then propio "$1" "$uid"; else cadena_propia "$1"; fi; secreto "$1"; }
   [ -z "${POSTGRES_ENV:-}" ] || conf "$POSTGRES_ENV"
   # Root sends passwords only to a permitted host.
   hosts="postgres@${POSTGRES_HOST:-127.0.0.1}:${POSTGRES_PORT:-5432}"
   host_permitido "$raiz" "$uid" "${POSTGRES_HOST:-127.0.0.1}" || fail "POSTGRES_HOST ${POSTGRES_HOST} is not loopback nor in $raiz/hosts-permitidos: refused"
   if [ "$step" = resto ]; then
     f=${MIGRADOR_ENV:-$raiz/secrets/migrador.env}
-    if [ -e "$f" ]; then
-      conf "$f"; h=$(clave "$f" MIGRADOR_HOST)
-      [ -z "$h" ] || host_permitido "$raiz" "$uid" "$h" || fail "MIGRADOR_HOST in $f is not loopback nor in $raiz/hosts-permitidos: refused"
-      hosts="$hosts, migrador@${h:-?}:${MIGRADOR_PUERTO:-5432} (from $f)"
-    fi
+    [ -e "$f" ] || fail "$f does not exist: resto needs the alta's file (MIGRADOR_ENV)"
+    conf "$f"; h=$(clave "$f" MIGRADOR_HOST); red=$(clave "$f" MIGRADOR_RED)
+    [ -n "$h" ] || fail "$f has no MIGRADOR_HOST"
+    host_permitido "$raiz" "$uid" "$h" || fail "MIGRADOR_HOST in $f is not loopback nor in $raiz/hosts-permitidos: refused"
+    hosts="$hosts, migrador@$h:${MIGRADOR_PUERTO:-5432} (from $f; MIGRADOR_RED=${red:-none})"
   fi
 
   # One at a time; what an interrupted run left is removed.
@@ -317,7 +342,7 @@ caja() {
   [ "$ans" = instalo ] || fail "not confirmed: nothing installed"
 
   set +e
-  (cd "$WORK/arbol" && BOB_FIRMA_VERIFICADA=$d SUDO="" /bin/bash -p scripts/instalar-bob.sh "$step")
+  (cd "$WORK/arbol" && BOB_FIRMA_VERIFICADA=$d BOB_PSQL=$psql SUDO="" /bin/bash -p scripts/instalar-bob.sh "$step")
   rc=$?
   set -e
   [ "$rc" = 0 ] || fail "$step failed (exit $rc): this box stays at $prev"

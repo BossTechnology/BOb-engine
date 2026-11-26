@@ -115,11 +115,13 @@ permitido "$PG_HOST" || { echo "POSTGRES_HOST $PG_HOST is not permitted (/opt/bo
 # libpq 16+ refuses a server that does not ask for SCRAM: the password never
 # goes in the clear, nor to a server that skips authentication.
 export PGREQUIREAUTH=scram-sha-256
+# On a box, caja hands over psql's real binary (not Debian's pg_wrapper), checked.
+PSQL=${BOB_PSQL:-psql}
 pw=$(key "$POSTGRES_ENV" POSTGRES_PASSWORD)
 [ -n "$pw" ] || { echo "$POSTGRES_ENV lacks POSTGRES_PASSWORD" >&2; exit 2; }
 ( umask 077; pgpass_line "$PG_HOST" "$PG_PORT" postgres "$pw" > "$priv/pgpass" )
 unset pw
-as_postgres() { PGPASSFILE="$priv/pgpass" psql -h "$PG_HOST" -p "$PG_PORT" -U postgres -d postgres -X -q -v ON_ERROR_STOP=1 "$@"; }
+as_postgres() { PGPASSFILE="$priv/pgpass" "$PSQL" -h "$PG_HOST" -p "$PG_PORT" -U postgres -d postgres -X -q -v ON_ERROR_STOP=1 "$@"; }
 chain_files() { grep -v '^#' "$LIST" | awk '{ print $2 }'; }
 
 if [ "$step" = cadena ]; then
@@ -157,7 +159,7 @@ if [ -n "$M_NET" ]; then
   mig() { docker run --rm --user 0 --network "$M_NET" -v "$priv/m:/run/bob:ro" -e PGPASSFILE=/run/bob/pgpass -e PGREQUIREAUTH=scram-sha-256 "$img" \
             psql -h "$M_HOST" -p "$M_PORT" -U "$M_USER" -d postgres -X -q -v ON_ERROR_STOP=1 "$@"; }
 else
-  mig() { PGPASSFILE="$priv/m/pgpass" psql -h "$M_HOST" -p "$M_PORT" -U "$M_USER" -d postgres -X -q -v ON_ERROR_STOP=1 "$@"; }
+  mig() { PGPASSFILE="$priv/m/pgpass" "$PSQL" -h "$M_HOST" -p "$M_PORT" -U "$M_USER" -d postgres -X -q -v ON_ERROR_STOP=1 "$@"; }
 fi
 
 # bob_migrador's history: made on the first run, nobody else's.
