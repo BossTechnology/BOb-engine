@@ -11,7 +11,8 @@
 #       The exact text Henry signs: the pair, so an old signature cannot bring
 #       back a state already signed once.
 #   firma-instalacion.sh verificar <firmantes> <mensaje> <firma>
-#       Checks the signature against an allowed_signers file.
+#       Checks the signature against BOb's signers file (see verificar): a
+#       security key, touched, with its user verified (UV).
 #   sudo /opt/bob/bin/firma-instalacion caja <repo> <commit> cadena|resto [VAR=value …]
 #       On a box, as root. See caja() below. The connection settings go as
 #       arguments (POSTGRES_ENV=…), never through sudo's environment: no
@@ -77,32 +78,101 @@ mensaje() {
   printf '%s 1\nbase %s\nnueva %s\n' "$NS" "$1" "$2"
 }
 
+# The signers file is BOb's, not ssh-keygen's: verify-required on a line is
+# BOb's mark that the key must be used with a PIN or biometric. ssh-keygen
+# knows that option in authorized_keys only, refuses it in an allowed_signers
+# file ("bad options: unknown key option"), and accepts an sk signature with
+# neither the touch nor the verification flag set (measured on OpenSSH 10.3 and
+# 10.6p2, 25 Nov). So verificar checks every line itself, hands ssh-keygen a
+# file of its own with only what was checked, and reads both flags from the
+# signature itself, never from ssh-keygen's text.
+SK_UP=1 SK_UV=4   # authenticator flags: user present (touched), user verified
+hx() { printf '%s' "$1" | od -An -v -tx1 | tr -d ' \n'; }
+
+# firma_sk <sig>: the armored SSH signature in <sig> (ssh-keygen -Y sign),
+# taken apart (PROTOCOL.sshsig, PROTOCOL.u2f). Sets SIG_KEY (the signing key's
+# type) and SIG_FLAGS. Anything but exactly one well-formed signature by a
+# security key, in namespace $NS, is refused.
+firma_sk() {
+  local f=$1 l b64="" n=0 fin="" H P R t s
+  while IFS= read -r l || [ -n "$l" ]; do
+    n=$((n + 1)); l=${l%$'\r'}
+    if [ "$n" = 1 ]; then [ "$l" = "-----BEGIN SSH SIGNATURE-----" ] || fail "the signature is not an armored SSH signature: refused"; continue; fi
+    [ -z "$fin" ] || fail "the signature file holds more than one signature: refused"
+    if [ "$l" = "-----END SSH SIGNATURE-----" ]; then fin=1; continue; fi
+    [[ "$l" =~ ^[A-Za-z0-9+/]+=*$ ]] || fail "the signature is not an armored SSH signature: refused"
+    b64=$b64$l
+  done < "$f"
+  [ -n "$fin" ] && [ -n "$b64" ] || fail "the signature is not an armored SSH signature: refused"
+  H=$(printf '%s' "$b64" | base64 -d 2>/dev/null | od -An -v -tx1 | tr -d ' \n')
+  [ -n "$H" ] || fail "the signature is not base64: refused"
+  P=0
+  need() { (( P + $1 <= ${#H} / 2 )) || fail "the signature is cut short: refused"; }
+  raw() { need "$1"; R=${H:$((P * 2)):$(($1 * 2))}; P=$((P + $1)); }
+  u32() { raw 4; R=$((16#$R)); }
+  str() { u32; raw "$R"; }
+  raw 6; [ "$R" = "$(hx SSHSIG)" ] || fail "the signature is not an sshsig: refused"
+  u32; [ "$R" = 1 ] || fail "sshsig version $R: refused"
+  str; t=$R                                   # the signing key
+  str; [ "$R" = "$(hx "$NS")" ] || fail "the signature is not in namespace $NS: refused"
+  str; str                                    # reserved, hash algorithm: ssh-keygen checks them
+  str; s=$R                                   # the signature blob
+  [ "$P" = $((${#H} / 2)) ] || fail "the signature has bytes after it: refused"
+  H=$t; P=0; str; SIG_KEY=$R                  # the key's type
+  H=$s; P=0
+  str; [ "$R" = "$SIG_KEY" ] || fail "the signature's type is not its key's: refused"
+  case "$R" in "$(hx sk-ecdsa-sha2-nistp256@openssh.com)"|"$(hx sk-ssh-ed25519@openssh.com)") ;;
+    *) fail "the signature is not by a security key: refused" ;; esac
+  str                                         # the signature proper: ssh-keygen checks it
+  raw 1; SIG_FLAGS=$((16#$R))
+  u32                                         # the counter
+  [ "$P" = $((${#H} / 2)) ] || fail "the security key's signature has bytes after it: refused"
+}
+
 # verificar <firmantes> <mensaje> <firma> [relajado]: relajado (caja-prueba
-# only) accepts a key that is not a security key, so tests can sign.
+# only) accepts a key that is not a security key, and no verify-required, so
+# tests can sign.
 verificar() {
-  local signers=$1 msg=$2 sig=$3 relajado=${4:-} keys=0 line principal options keytype key principals out p
+  local signers=$1 msg=$2 sig=$3 relajado=${4:-} keys=0 line principal options keytype key principals out p o v
   [ -f "$signers" ] || fail "$signers does not exist: nobody can sign yet"
   [ -s "$sig" ] || fail "no signature"
-  while IFS= read -r line; do
+  [ -n "$WORK" ] || WORK=$(mktemp -d)
+  v=$(mktemp -d "$WORK/verificar.XXXXXX")
+  cat "$sig" > "$v/sig"; cat "$msg" > "$v/msg"; : > "$v/firmantes"
+  while IFS= read -r line || [ -n "$line" ]; do
     [[ "$line" =~ ^[[:space:]]*(#|$) ]] && continue
+    principal=""; options=""; keytype=""; key=""
     read -r principal options keytype key _ <<<"$line"
     # Options are optional in allowed_signers: a line without them has the key type second.
     if [[ "$options" =~ ^(sk-|ssh-|ecdsa-) ]]; then key=$keytype; keytype=$options; options=""; fi
+    [[ "$principal" =~ ^[A-Za-z0-9_.@-]+$ ]] || fail "the principal '$principal' in $signers is not one plain name (no pattern, no list): refused"
     [[ "$options" != *cert-authority* ]] || fail "the key of $principal is a cert-authority: refused"
     [[ "$options" == *"namespaces=\"$NS\""* ]] || fail "the key of $principal is not restricted to namespaces=\"$NS\": refused"
     [[ "$options" != *no-touch-required* ]] || fail "the key of $principal is marked no-touch-required: refused"
+    for o in ${options//,/ }; do
+      case "$o" in "namespaces=\"$NS\""|verify-required) ;;
+        *) fail "the key of $principal has the option $o, which BOb does not use: refused" ;; esac
+    done
     [ -n "$key" ] || fail "the line of $principal has no key"
+    [[ "$keytype" =~ ^[a-z0-9@.-]+$ && "$key" =~ ^[A-Za-z0-9+/]+=*$ ]] || fail "the key of $principal is not a key: refused"
     if [ "$relajado" != relajado ]; then
       case "$keytype" in sk-ssh-ed25519@openssh.com|sk-ecdsa-sha2-nistp256@openssh.com) ;;
         *) fail "the key of $principal in $signers is $keytype, not a security key that must be touched: refused" ;; esac
       [[ ",$options," == *,verify-required,* ]] || fail "the key of $principal lacks verify-required (a PIN or biometric with the touch): refused"
     fi
+    # What ssh-keygen reads: only what was checked here.
+    printf '%s namespaces="%s" %s %s\n' "$principal" "$NS" "$keytype" "$key" >> "$v/firmantes"
     keys=$((keys + 1))
   done < "$signers"
   [ "$keys" -gt 0 ] || fail "$signers holds no key: until Henry adds his, nothing that installs BOb can change"
-  principals=$(ssh-keygen -Y find-principals -s "$sig" -f "$signers" 2>/dev/null) || fail "the signature is by no key in $signers"
+  if [ "$relajado" != relajado ]; then
+    firma_sk "$v/sig"
+    (( SIG_FLAGS & SK_UP )) || fail "the security key was not touched for this signature (user present, flag 0x01, is off): refused"
+    (( SIG_FLAGS & SK_UV )) || fail "the security key did not verify its user for this signature (user verified, UV flag 0x04, is off: no PIN or biometric): refused"
+  fi
+  principals=$(ssh-keygen -Y find-principals -s "$v/sig" -f "$v/firmantes" 2>/dev/null) || fail "the signature is by no key in $signers"
   while IFS= read -r p; do
-    if out=$(ssh-keygen -Y verify -f "$signers" -I "$p" -n "$NS" -s "$sig" < "$msg" 2>&1) \
+    if out=$(ssh-keygen -Y verify -f "$v/firmantes" -I "$p" -n "$NS" -s "$v/sig" < "$v/msg" 2>&1) \
        && { [ "$relajado" = relajado ] || grep -q -- '-SK key' <<<"$out"; }; then
       echo "$out"; return 0
     fi
