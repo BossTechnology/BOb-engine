@@ -3911,6 +3911,10 @@ then `instalar-bob.sh resto`.
   `ESTADO.md`. And #48's CI step "resto applies a file whole or not at all"
   asserts `^0 applied, 2 already recorded\.$` and says every migration is in
   the chain. With Slice 3 there are four recorded: the two Slice 3 files and
-  the two samples. That line changes in the same merge. The tree digest also
-  changes, so Henry signs a new base-to-new pair for each box before its
-  window.
+  the two samples. The tree digest also changes, so Henry signs a new
+  base-to-new pair for each box before its window.
+- **Done on 25 Nov, when #48 merged (`6d88bd6`).** `main` was merged in. It
+  conflicted in `ESTADO.md`, `CHANGELOG.md` and this file, and all three keep
+  both sides. The CI line no longer says `2`. It counts the files that are
+  not in `install-chain.sha256` and expects `0 applied, <that> already
+  recorded.`, so the next migration does not break it.
