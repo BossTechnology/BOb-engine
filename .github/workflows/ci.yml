@@ -7,16 +7,26 @@ on:
 
 # ID-12 — a tenancy failure is a build-blocking defect, not a bug.
 #
-# ALL FOUR JOBS BELOW MUST BE REQUIRED STATUS CHECKS on the protected branch:
+# ALL FIVE JOBS BELOW MUST BE REQUIRED STATUS CHECKS on the protected branch:
 #
 #   Migrations apply from an empty database
 #   Tenancy (build-blocking · ID-10 to ID-12)
 #   Contracts, schema and naming
 #   Availability (FR-20 to FR-23)
+#   Chain applies as bob_migrador (O-3)
+#
+# Today main requires the first four. "Chain applies as bob_migrador (O-3)" is
+# still to be made required by Henry, in branch protection. So is "What installs
+# BOb is signed by Henry (O-3)", which lives in install-approval.yml: it runs
+# from main (pull_request_target) so that a PR cannot edit it away.
 #
 # Lint and build joins this list when an application layer exists. The setting
 # lives in branch protection, not here, and is the one part of ID-12 a workflow
 # file cannot assert about itself.
+
+# Read-only token: the jobs read the code and write nothing (O-3).
+permissions:
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -138,6 +148,10 @@ jobs:
         run: supabase test db supabase/tests/database
       - name: Product naming is case-sensitive
         run: node --test --test-concurrency=1 tests/naming.test.mjs
+      # O-3: the digest Henry signs, the signature check refusing what is not a
+      # touched security key, and the approval workflow running from main.
+      - name: What installs BOb is signed (O-3)
+        run: node --test --test-concurrency=1 tests/install-approval.test.mjs
       # Asserts every test file is invoked by some job here, so the next guard
       # added cannot be orphaned from CI.
       - name: Every guard runs in CI
@@ -163,3 +177,150 @@ jobs:
         env:
           SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
         run: pnpm run test:availability
+
+  # O-3 (D77 §2.8): BOb installed as a box gets it (scripts/instalar-bob.sh):
+  # postgres pushes the install chain once, supabase_admin hands bob to
+  # bob_migrador, and every other migration is pushed by bob_migrador. Then
+  # scripts/owner-chain-check.mjs checks what that left. See P5 §6.2.
+  owner-chain-probe:
+    name: Chain applies as bob_migrador (O-3)
+    runs-on: ubuntu-latest
+    # A disposable stack: instalar-bob.sh skips Henry's signature here, and only
+    # here (P5 §6.2). On a box, root's firma-instalacion checks it first.
+    env:
+      INSTALAR_SIN_FIRMA: ci
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: pnpm
+      - uses: supabase/setup-cli@v2
+        with:
+          version: ${{ env.SUPABASE_CLI_VERSION }}
+      - run: pnpm install --frozen-lockfile
+      # The box's image, supabase/postgres:17.6.1.136 (F-37), not CI's 15: the
+      # alta of bzzz#450 relies on Postgres 16+.
+      - name: Start Supabase on the box's Postgres image, with no migration
+        run: |
+          mv supabase/migrations "$RUNNER_TEMP/chain" && mkdir supabase/migrations
+          sed -i 's/^major_version = 15$/major_version = 17/' supabase/config.toml
+          mkdir -p supabase/.temp && echo 17.6.1.136 > supabase/.temp/postgres-version
+          sed -i '/\[auth.hook.custom_access_token\]/,/^enabled/ s/^enabled = true/enabled = false/' supabase/config.toml
+          supabase start
+          rmdir supabase/migrations && mv "$RUNNER_TEMP/chain" supabase/migrations
+          docker ps --format '{{.Image}}' | grep -E 'supabase/postgres:' | tee /dev/stderr | grep -q ':17.6.1.136$'
+      # No password on a command line: instalar-bob.sh reads it from a file, as
+      # on a box (CI's local stack has the default one).
+      - name: 1 · the install chain (scripts/instalar-bob.sh cadena)
+        env:
+          POSTGRES_ENV: ${{ runner.temp }}/postgres.env
+          POSTGRES_PORT: '54322'
+          SUDO: ''
+        run: |
+          (umask 077; echo POSTGRES_PASSWORD=postgres > "$POSTGRES_ENV")
+          scripts/instalar-bob.sh cadena
+      # Step 2 on a box is Bzzz's alta (bzzz#450). Here, its stand-in, writing
+      # the same migrador.env the alta writes.
+      - name: 2 · the alta, CI stand-in for bzzz#450
+        env:
+          POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+          SUPABASE_ADMIN_URL: postgresql://supabase_admin:postgres@127.0.0.1:54322/postgres
+        run: |
+          (cd supabase/provision && psql "$POSTGRES_URL" -X -q -v ON_ERROR_STOP=1 -f alta-ci.sql)
+          psql "$SUPABASE_ADMIN_URL" -X -q -v ON_ERROR_STOP=1 -f supabase/provision/alta-ci-supabase-admin.sql
+          psql "$SUPABASE_ADMIN_URL" -X -q -v ON_ERROR_STOP=1 -v pw=bob_migrador-local-test \
+            <<< "ALTER ROLE bob_migrador LOGIN PASSWORD :'pw';"
+          printf 'MIGRADOR_USUARIO=bob_migrador\nMIGRADOR_CLAVE=bob_migrador-local-test\nMIGRADOR_HOST=127.0.0.1\nMIGRADOR_RED=\n' > "$RUNNER_TEMP/migrador.env"
+      - name: 3 · every other migration (scripts/instalar-bob.sh resto)
+        env:
+          POSTGRES_ENV: ${{ runner.temp }}/postgres.env
+          POSTGRES_PORT: '54322'
+          MIGRADOR_ENV: ${{ runner.temp }}/migrador.env
+          MIGRADOR_PUERTO: '54322'
+          SUDO: ''
+        run: scripts/instalar-bob.sh resto
+      - name: Check what it left
+        env:
+          ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+          MIGRADOR_PASSWORD: bob_migrador-local-test
+        run: CHAIN_DIR=supabase/migrations node scripts/owner-chain-check.mjs
+      # Today every migration is in the install chain, so step 3 applies nothing.
+      # Sample migrations show what it does with one, after the check so they
+      # never reach it: good files apply and are recorded in bob.schema_migrations
+      # in one transaction; a failing one leaves neither; a backslash anywhere is
+      # refused before anything is sent, so \! never runs, whatever quoting or
+      # comment surrounds it; a COMMIT, END or ROLLBACK written into a file is
+      # detected and reported, the file is not recorded, and nothing after it
+      # writes. Detected, not prevented: what ran before it stays, and a file
+      # written to dodge the check can (P5 §6.2). psql -c is shown not to read
+      # metacommands. Then resto and cadena run again and change nothing.
+      - name: resto applies a file whole or not at all
+        env:
+          POSTGRES_ENV: ${{ runner.temp }}/postgres.env
+          POSTGRES_PORT: '54322'
+          MIGRADOR_ENV: ${{ runner.temp }}/migrador.env
+          MIGRADOR_PUERTO: '54322'
+          SUDO: ''
+          ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+          MIG_URL: postgresql://bob_migrador:bob_migrador-local-test@127.0.0.1:54322/postgres
+        run: |
+          m=supabase/migrations
+          mq() { psql "$MIG_URL" -X -A -t -q -v ON_ERROR_STOP=1 "$@"; }
+          recorded() { mq -c "SELECT count(*) FROM bob.schema_migrations WHERE version = '$1'"; }
+          ok() { local sql=$1 msg=$2; shift 2; [ "$(mq "$@" <<< "$sql")" = t ] || { echo "::error::$msg"; exit 1; }; }
+          cli_before=$(psql "$ADMIN_URL" -X -A -t -c 'SELECT string_agg(version, $$,$$ ORDER BY version) FROM supabase_migrations.schema_migrations')
+          shell="$RUNNER_TEMP/resto-ran-a-shell"
+          cat > $m/99990101000001_ci_resto_bare.sql <<'SQL'
+          CREATE TABLE bob.ci_resto_bare (id int);
+          SQL
+          cat > $m/99990101000002_ci_resto_wrapped.sql <<'SQL'
+          BEGIN;
+          CREATE TABLE bob.ci_resto_wrapped (id int);
+          CREATE FUNCTION bob.ci_resto_f() RETURNS text LANGUAGE sql AS $$ SELECT 'a--b;$x$' $$;
+          COMMIT;
+          SQL
+          scripts/instalar-bob.sh resto
+          [ "$(recorded 99990101000001)$(recorded 99990101000002)" = 11 ] || { echo "::error::the good samples are not recorded"; exit 1; }
+          ok "SELECT to_regclass('bob.ci_resto_bare') IS NOT NULL AND to_regclass('bob.ci_resto_wrapped') IS NOT NULL" "the good samples did not apply"
+          ok "SELECT sha256 = '$(sha256sum < $m/99990101000002_ci_resto_wrapped.sql | cut -d' ' -f1)' FROM bob.schema_migrations WHERE version = '99990101000002'" \
+            "the record does not hold the file's sha256"
+          # Each bad sample alone: resto must fail, record nothing, run no shell,
+          # and leave its "after" table unmade.
+          bad() {
+            local v=$1 what=$2; printf '%b' "$3" > "$m/${v}_ci_resto_bad.sql"
+            if scripts/instalar-bob.sh resto; then echo "::error::resto took $what"; exit 1; fi
+            [ "$(recorded "$v")" = 0 ] || { echo "::error::$what was recorded"; exit 1; }
+            [ ! -e "$shell" ] || { echo "::error::$what ran a shell"; exit 1; }
+            ok "SELECT to_regclass('bob.ci_after_$v') IS NULL" "$what wrote after its own end, or ran whole"
+            rm "$m/${v}_ci_resto_bad.sql"
+            echo "refused as expected: $what"
+          }
+          bad 99990101000003 "a file failing on its second statement" \
+            "CREATE TABLE bob.ci_after_99990101000003 (id int);\nCREATE TABLE public.ci_resto_denied (id int);\n"
+          bad 99990101000004 'a shell escape between two /* $$ */ comments' \
+            "CREATE TABLE bob.ci_after_99990101000004 (id int);\n/* \$\$ */\n\\\\! touch $shell\n/* \$\$ */\n"
+          bad 99990101000005 "a shell escape between two '\$\$' strings" \
+            "CREATE TABLE bob.ci_after_99990101000005 (id int);\nSELECT '\$\$';\n\\\\! touch $shell\nSELECT '\$\$';\n"
+          bad 99990101000006 "COMMIT after a '--' string" \
+            "CREATE TABLE bob.ci_before_6 (id int);\nSELECT '--'; COMMIT;\nCREATE TABLE bob.ci_after_99990101000006 (id int);\n"
+          bad 99990101000007 "COMMIT after a /* -- */ comment" \
+            "SELECT 1;\n/* -- */ COMMIT;\nCREATE TABLE bob.ci_after_99990101000007 (id int);\n"
+          bad 99990101000008 "END;" "SELECT 1;\nEND;\nCREATE TABLE bob.ci_after_99990101000008 (id int);\n"
+          bad 99990101000009 "END WORK;" "SELECT 1;\nEND WORK;\nCREATE TABLE bob.ci_after_99990101000009 (id int);\n"
+          bad 99990101000010 "ROLLBACK;" "SELECT 1;\nROLLBACK;\nCREATE TABLE bob.ci_after_99990101000010 (id int);\n"
+          bad 99990101000011 "a COMMIT as the file's last statement" "CREATE TABLE bob.ci_before_11 (id int);\nCOMMIT;\n"
+          bad 99990101000012 "a NUL byte" "CREATE TABLE bob.ci_after_99990101000012 (id int);\n-- \\0\nSELECT 1;\n"
+          # psql -c sends its argument to the server as it is: no metacommand.
+          if psql "$MIG_URL" -X -q -c "SELECT 1; \\! touch $shell" 2>/dev/null; then echo "::error::psql -c took a metacommand line as SQL and succeeded"; exit 1; fi
+          [ ! -e "$shell" ] || { echo "::error::psql -c ran a shell"; exit 1; }
+          echo "psql -c does not run \\!: measured"
+          # What a COMMIT inside a file had already run stays: detection, said in the failure.
+          ok "SELECT to_regclass('bob.ci_before_6') IS NOT NULL" "measured: what ran before a stray COMMIT is committed"
+          scripts/instalar-bob.sh resto | tee "$RUNNER_TEMP/resto-again.log"
+          grep -q '^0 applied, 2 already recorded\.$' "$RUNNER_TEMP/resto-again.log" || { echo "::error::resto run again changed something"; exit 1; }
+          scripts/instalar-bob.sh cadena
+          [ "$(psql "$ADMIN_URL" -X -A -t -c 'SELECT string_agg(version, $$,$$ ORDER BY version) FROM supabase_migrations.schema_migrations')" = "$cli_before" ] \
+            || { echo "::error::the CLI's history changed"; exit 1; }
+          echo "resto: whole or nothing, measured; resto and cadena run again change nothing"
