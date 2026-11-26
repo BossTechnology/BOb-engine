@@ -56,8 +56,10 @@ const files = readdirSync(dir).filter((f) => /^[0-9]+_.*\.sql$/.test(f)).sort()
 const sha = (f) => createHash('sha256').update(readFileSync(`${dir}/${f}`)).digest('hex')
 
 // supabase/provision/bob.sql is Bzzz's config/supabase/vecinas/bob.sql, byte for
-// byte (bzzz#450 at 7429eec, P5 §6.2). A change goes to both, and here.
-const BZZZ_BOB_SQL = { commit: '7429eec', sha256: 'ad9adf91d370fc008b4134c9a7d60646310f4b4560433655e677c1892b3f2605' }
+// byte (P5 §6.2). A change goes to both, and here. Since bzzz#462 at cde0bef it
+// is only a comment: the alta runs it as bob_migrador, and the EXECUTE below
+// comes from the FUERA= line of bob.conf, granted by postgres (alta-ci.sql).
+const BZZZ_BOB_SQL = { commit: 'cde0bef', sha256: 'e4956caf4dedf723589fdbd0777fea811403a573aa5614fa2a0c4aac4a3444ab' }
 {
   const h = createHash('sha256').update(readFileSync('supabase/provision/bob.sql')).digest('hex')
   if (h !== BZZZ_BOB_SQL.sha256) findings.push(`supabase/provision/bob.sql (sha256 ${h}) is not Bzzz's config/supabase/vecinas/bob.sql at ${BZZZ_BOB_SQL.commit}: keep the two identical`)
@@ -211,7 +213,7 @@ const EXPECTED_FOOTPRINT = [
 // postgres administers bob_migrador, and sets its password, without acting as
 // it. Measured on 17 in CI. Anything more is a finding.
 EXPECTED_FOOTPRINT.push(PG16 ? 'members: postgres (admin only)' : 'members: (none)')
-// bob.sql's EXECUTE on the PR-4 helper, named as the catalog names it.
+// The FUERA= EXECUTE on the PR-4 helper, named as the catalog names it.
 const { rows: [helper] } = await admin.query(`
   SELECT (pg_identify_object('pg_proc'::regclass, 'public.bob_grant_projection(regclass)'::regprocedure, 0)).identity AS id`)
 EXPECTED_FOOTPRINT.push(`privilege on function ${helper.id}`)
