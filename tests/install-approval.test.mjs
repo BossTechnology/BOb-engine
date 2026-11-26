@@ -11,6 +11,11 @@
 //   - the verifier refuses: no key, a key that is not a security key (even one
 //     that did sign), no verify-required, no-touch-required, cert-authority,
 //     no namespace, an unlisted signer;
+//   - a security key's signature (emulated in software, tests/helpers/sk.mjs):
+//     a line with verify-required verifies when the signature is touched and
+//     user verified (UV); without UV, without the touch, with a flag set after
+//     signing, without verify-required on the line, another namespace, another
+//     option or a principal that is a pattern, it is refused;
 //   - the box (caja-prueba: the same code, not as root, any listed key, a
 //     directory for /opt/bob) runs the committed tree and nothing of the
 //     checkout (not a modified file, a skip-worktree file, a corrupt index or
@@ -20,8 +25,9 @@
 //     root writable by others are refused before anything runs;
 //   - the repository: no key yet (Henry adds his), CODEOWNERS over all of it,
 //     the approval workflow running from main on the right events.
-// Not measured here: a good signature by a real security key, and caja as
-// root on a box (Henry's first signature and install are those measurements).
+// Not measured here: a signature by a physical key or the Secure Enclave
+// (that a person touched it), and caja as root on a box (Henry's first
+// signature and install are those measurements).
 
 import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert/strict'
@@ -32,9 +38,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import pg from 'pg'
 import { REPO_ROOT, DB_URL } from './helpers/db.mjs'
+import { skKey, UP, UV } from './helpers/sk.mjs'
 
 const F = join(REPO_ROOT, 'scripts/firma-instalacion.sh')
 const A = 'supabase/provision/aprobaciones'
+const NS = 'bob-install-chain'
 const run = (args, opts = {}) => spawnSync('bash', [F, ...args], { encoding: 'utf8', ...opts })
 const sha256 = (b) => createHash('sha256').update(b).digest('hex')
 const tmp = (p) => realpathSync(mkdtempSync(join(tmpdir(), p)))
@@ -131,7 +139,61 @@ describe('the verifier refuses', () => {
   refused('a security key marked no-touch-required', `henry namespaces="bob-install-chain",verify-required,no-touch-required ${sk}\n`, /no-touch-required/)
   refused('a cert-authority', `henry cert-authority,namespaces="bob-install-chain",verify-required ${sk}\n`, /cert-authority/)
   refused('a security key not bound to the namespace', `henry ${sk}\n`, /namespaces/)
-  refused('a signature by a key that is not listed', `henry namespaces="bob-install-chain",verify-required ${sk}\n`, /no key|does not verify/)
+  refused('a signature by a key that is not listed', `henry namespaces="bob-install-chain",verify-required ${sk}\n`, /no key|does not verify|not by a security key/)
+})
+
+// A security key emulated in software (tests/helpers/sk.mjs): real sk
+// signatures, with the authenticator flags the test chooses. Measured on
+// OpenSSH 10.3 and 10.6p2: ssh-keygen refuses verify-required in an
+// allowed_signers file, and accepts an sk signature with neither flag set, so
+// the script checks both flags itself.
+describe('a security key\'s signature', () => {
+  const d = tmp('firma-sk-')
+  const msg = run(['mensaje', 'a'.repeat(64), 'b'.repeat(64)]).stdout
+  writeFileSync(join(d, 'm'), msg)
+  const line = (k, opts = 'namespaces="bob-install-chain",verify-required', who = 'henry') => `${who} ${opts} ${k.line}\n`
+  const check = (signers, sig) => {
+    writeFileSync(join(d, 'signers'), signers); writeFileSync(join(d, 'm.sig'), sig)
+    return run(['verificar', join(d, 'signers'), join(d, 'm'), join(d, 'm.sig')])
+  }
+  const ok = (r) => { assert.equal(r.status, 0, r.stdout + r.stderr); assert.match(r.stdout, /Good "bob-install-chain" signature for henry with (ECDSA|ED25519)-SK key/) }
+  const no = (r, why) => { assert.equal(r.status, 1, r.stdout + r.stderr); assert.match(r.stderr, why) }
+  const setFlags = (armored, flags) => {
+    const b = Buffer.from(armored.split('\n').filter((l) => l && !l.startsWith('-----')).join(''), 'base64')
+    b[b.length - 5] = flags
+    return `-----BEGIN SSH SIGNATURE-----\n${b.toString('base64').match(/.{1,70}/g).join('\n')}\n-----END SSH SIGNATURE-----\n`
+  }
+
+  for (const kind of ['ecdsa', 'ed25519']) {
+    const k = skKey(kind)
+    test(`${kind}: a line with verify-required, touched and verified, verifies`, () => ok(check(line(k), k.sign(msg))))
+    test(`${kind}: touched but not verified (no PIN or biometric) is refused`, () => no(check(line(k), k.sign(msg, NS, UP)), /user verified|UV/))
+    test(`${kind}: verified but not touched is refused`, () => no(check(line(k), k.sign(msg, NS, UV)), /touch|user present|UP/))
+    test(`${kind}: neither flag is refused`, () => no(check(line(k), k.sign(msg, NS, 0)), /user verified|UV|touch/))
+    test(`${kind}: the flags are signed: setting UV afterwards breaks the signature`, () => no(check(line(k), setFlags(k.sign(msg, NS, UP), UP | UV)), /does not verify|no key/))
+    test(`${kind}: a line without verify-required is refused, even with a good signature`, () => no(check(line(k, 'namespaces="bob-install-chain"'), k.sign(msg)), /verify-required/))
+  }
+  const k = skKey('ecdsa')
+  test('another namespace in the signature is refused', () => no(check(line(k), k.sign(msg, 'file')), /not in namespace bob-install-chain/))
+  test('an option ssh-keygen would honour but BOb does not use is refused', () => no(check(line(k, 'namespaces="bob-install-chain",verify-required,valid-before="29990101"'), k.sign(msg)), /option/))
+  test('a principal that is a pattern is refused', () => no(check(line(k, undefined, 'henry,*'), k.sign(msg)), /principal/))
+  test('the signature must be by the key of a line with verify-required', () => {
+    const other = skKey('ecdsa')
+    no(check(line(k) + line(other, 'namespaces="bob-install-chain"', 'otro'), other.sign(msg)), /verify-required/)
+  })
+  test('an option * is refused, even with a file named verify-required where the script runs (no glob)', () => {
+    writeFileSync(join(d, 'verify-required'), ''); writeFileSync(join(d, 'signers'), line(k, 'namespaces="bob-install-chain",verify-required,*')); writeFileSync(join(d, 'm.sig'), k.sign(msg))
+    const r = run(['verificar', join(d, 'signers'), join(d, 'm'), join(d, 'm.sig')], { cwd: d })
+    rmSync(join(d, 'verify-required'))
+    no(r, /option \*/)
+  })
+  test('a signature whose reserved field is not empty is refused', () => no(check(line(k), k.sign(msg, NS, UP | UV, 1, 'x')), /reserved/))
+  test('armored text that is not base64 says so', () => no(check(line(k), '-----BEGIN SSH SIGNATURE-----\nAAAA=\nAAA\n-----END SSH SIGNATURE-----\n'), /not base64/))
+  test('a signature file that is not one armored sshsig is refused', () => {
+    const s = k.sign(msg)
+    no(check(line(k), s + s), /signature/)
+    no(check(line(k), s.replace('SSH SIGNATURE', 'SSH SIGNATUR')), /signature/)
+  })
 })
 
 describe('on a box', () => {

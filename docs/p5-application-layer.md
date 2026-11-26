@@ -934,7 +934,12 @@ there on every box.
 `sk-ssh-ed25519@openssh.com` or `sk-ecdsa-sha2-nistp256@openssh.com` keys
 bound to `namespaces="bob-install-chain"`, with `verify-required`, never
 `no-touch-required` and never `cert-authority`; the verify output must name an
-`-SK` key. No key, or any doubt, fails. `sk-` does not prove hardware, and
+`-SK` key. No key, or any doubt, fails. `verify-required` is BOb's mark, not an
+ssh-keygen option: ssh-keygen refuses it in an allowed_signers file, and
+accepts an sk signature with neither the touch nor the verification flag set
+(measured 25 Nov, OpenSSH 10.3 and 10.6p2). So the verifier hands ssh-keygen a
+copy of the file without it, and reads the flags from the signature itself:
+user present (0x01) and user verified (UV, 0x04) must both be set. `sk-` does not prove hardware, and
 FIDO attestation is not verified here; to keep that proof, generate the key
 with `ssh-keygen -t ed25519-sk -O verify-required -O write-attestation=<file>`.
 
