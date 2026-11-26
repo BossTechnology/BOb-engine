@@ -4175,13 +4175,15 @@ by hand («A: función en el engine»). This changes the 21 Nov ruling «no row,
 403» for an account with no row only. A row with `active = false` still gets 403,
 and `admin` and `analyst` are still given by `scripts/provision-user.mjs`.
 
-- **The door.** Migration `20261126100000_claim_viewer_seat.sql`.
+- **The door.** Migration `20261126100000_claim_viewer_seat.sql`, and
+  `20261126110000_claim_viewer_seat_lower_email.sql`, which replaces the body
+  so the email is stored in lower case (review of #59; same signature and ACL).
   `bob.claim_viewer_seat(p_user uuid, p_email text) → boolean` is SECURITY
   DEFINER with a pinned `search_path` (`bob, pg_temp`), and `bob_app` alone
   holds EXECUTE: it is revoked from PUBLIC, anon, authenticated, service_role,
   bob_feeder and bob_ai_ro by name. It inserts `(p_user, claim org_id, p_email,
   'viewer', true)` with `ON CONFLICT DO NOTHING`. It never takes a role or an
-  organization from the caller. It does nothing with no claim, an unknown
+  organization from the caller. It stores the email trimmed and in lower case. It does nothing with no claim, an unknown
   organization, no id or a blank email. A row that exists, by id or by email,
   in this organization or another, inactive or not, is left as it is. `bob_app`
   still holds no INSERT on `bob.users`.
@@ -4196,6 +4198,7 @@ and `admin` and `analyst` are still given by `scripts/provision-user.mjs`.
 - **Tests, each seen red first.** In `tests/users-access.test.mjs`:
   - a new account gets an active viewer row in the claim's organization, and a
     second visit changes nothing;
+  - an active admin stays an active admin;
   - an inactive analyst row stays inactive analyst;
   - another organization's row is untouched, and so is an email held by
     another account;

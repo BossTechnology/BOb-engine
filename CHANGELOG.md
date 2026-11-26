@@ -3,6 +3,7 @@
 Una línea por cambio entregado, en lenguaje de usuario.
 
 ## Sin publicar
+- El alta sola como viewer guarda el correo en minúsculas, como lo guarda GoTrue: un correo que llega con otras mayúsculas ya no hace una fila que no casa con la cuenta (`20261126110000_claim_viewer_seat_lower_email.sql`).
 - Quien tiene sesión en BzzzBX entra a BOb en la caja aunque nadie le haya dado de alta: la primera vez queda como viewer de la organización de la caja (`bob.claim_viewer_seat`). Una cuenta desactivada sigue sin entrar, y admin y analyst se siguen dando a mano.
 - La primera instalación en una caja (`cadena`) ya llega a la base de la caja, que no tiene TLS: el `db push` pide `sslmode=disable`, y la clave sigue yendo solo a la propia caja. CI lo prueba contra una base sin TLS por una dirección que no es loopback, como en lab-02.
 - `firmar-instalacion.sh` firma con la llave y el proveedor que se le indican (`--llave`, `--proveedor`, `--ssh-keygen`), sin suponer ninguna llave, y antes de decir «Signed» comprueba la firma como lo haría la caja.
