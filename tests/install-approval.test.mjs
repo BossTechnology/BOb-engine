@@ -784,6 +784,7 @@ describe('the empty base, against the database', () => {
     assert.equal(r.pushed, false, 'nothing was pushed')
   }
   const passed = (r) => { assert.equal(r.status, 0, r.stdout + r.stderr); assert.ok(r.pushed, 'cadena reached the push') }
+  const pushedArgs = () => readFileSync(join(dir, 'pushed'), 'utf8').trim()
 
   // A scratch database, as postgres: dropped when the file ends.
   const admin = new pg.Client({ connectionString: DB_URL })
@@ -808,6 +809,16 @@ describe('the empty base, against the database', () => {
   before(() => admin.connect())
 
   test('control: without the empty base, the harness reaches the push', () => passed(cadena({})))
+
+  // lab-02, 2026-11-26: the box's database has ssl off, and the CLI insists on
+  // TLS for any host that is not loopback ("tls error (The server does not
+  // support SSL connections)"). Every --db-url the push gets says sslmode=disable.
+  test('the push\'s --db-url says sslmode=disable, so a box\'s database without TLS is reached', () => {
+    passed(cadena({}))
+    const urls = pushedArgs().split(/\s+/).filter((a) => /^postgres(ql)?:\/\//.test(a))
+    assert.ok(urls.length > 0, `no connection string in: ${pushedArgs()}`)
+    for (const u of urls) assert.equal(new URL(u).searchParams.get('sslmode'), 'disable', u)
+  })
 
   test('the suite\'s database, the chain applied: refused before the push, with what it found', () => {
     refused(cadena({ BOB_BASE_VACIA: '1' }), /role bob_app/, /schema bob/, /By kind: .*\b[1-9][0-9]* history\b/, /[1-9][0-9]* function/)

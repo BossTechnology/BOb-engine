@@ -4129,3 +4129,38 @@ of his could verify.
   `firmar-instalacion.sh` printing the diff, the two digests and the
   ssh-keygen command is a partial mitigation. The `caja-prueba` test was
   renamed to say it checks parsing only: flags are not read there.
+
+## O-3 · `cadena` reaches a box database without TLS
+
+Where it was found: lab-02, 26 nov, the first `cadena` run by
+`firma-instalacion caja` with `POSTGRES_HOST=172.19.0.3` (the address of
+`bzzz-supabase-db` on the box's docker network). After «instalo», step 1
+failed: `failed to connect to host=172.19.0.3 user=postgres database=postgres:
+tls error (The server does not support SSL connections)`, and the CLI's hint
+«Set sslmode=disable on the connection string». The box's database has
+`ssl` off. `psql` was fine (libpq's default `sslmode=prefer` falls back to
+plain text); the Supabase CLI wants TLS from any host that is not loopback.
+Nothing was applied; lab-02 stays at its base.
+
+- **The fix (Henry's decision).** `instalar-bob.sh cadena` pushes with
+  `?sslmode=disable` on its `--db-url`. The password does not leave the
+  server: `PG_HOST` is loopback or a host in `/opt/bob/hosts-permitidos`,
+  root's, which is the box's own docker network. The CLI does not read
+  `PGREQUIREAUTH`, so that host check is what guards the password, as
+  before. `scripts/ensayo-migracion-lab.sh` already pushed this way.
+- **Every connection in the install path, searched.** Searched for the CLI's
+  connections (`--db-url`, `db push`, `db diff`, `migration`, `link`,
+  `inspect`) and for connection strings and `sslmode` across the repository.
+  In the install path (`firma-instalacion.sh`, which runs only
+  `instalar-bob.sh`, and `instalar-bob.sh`), the one CLI connection is that
+  push. The rest are `psql` (libpq, `prefer`): `as_postgres`, and `resto`'s
+  `psql` as `bob_migrador` inside the database's own image. The install path
+  runs no node.
+- **Tests, each red on `main`'s script.** The stub `supabase` of «the empty
+  base, against the database» records its arguments; a new case requires
+  every connection string it gets to say `sslmode=disable`. CI's
+  «Chain applies as bob_migrador» now runs step 1 over the db container's own
+  address and port 5432, not loopback, after checking that `SHOW ssl` there
+  is `off`: the box's case. The later `cadena` run again still goes over
+  `127.0.0.1`.
+- **The tree's digest changes:** Henry signs again for lab-02.

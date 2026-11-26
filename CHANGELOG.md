@@ -3,6 +3,7 @@
 Una línea por cambio entregado, en lenguaje de usuario.
 
 ## Sin publicar
+- La primera instalación en una caja (`cadena`) ya llega a la base de la caja, que no tiene TLS: el `db push` pide `sslmode=disable`, y la clave sigue yendo solo a la propia caja. CI lo prueba contra una base sin TLS por una dirección que no es loopback, como en lab-02.
 - `firmar-instalacion.sh` firma con la llave y el proveedor que se le indican (`--llave`, `--proveedor`, `--ssh-keygen`), sin suponer ninguna llave, y antes de decir «Signed» comprueba la firma como lo haría la caja.
 - La firma de instalación acepta la llave del Secure Enclave del Mac de Henry, que pide Touch ID pero no puede decirlo en la firma: su línea en `firmantes_instalacion` lo declara a la vista con `presence-only`, y la caja exige que la llave se haya tocado. Una línea sin esa marca sigue necesitando PIN o huella comprobados en la firma (ADR 0001).
 - Una caja sin BOb tiene una base fija y documentada («base vacía») desde la que Henry firma su primera instalación. La caja comprueba en la base de datos que de verdad no hay BOb: una caja que ya tiene la cadena no puede declararla para saltarse la revisión. Si la primera instalación falla a medias, se puede reintentar sin quedar trabada, y una caja que ya tenía BOb antes de este registro vuelve a correr con una firma de Henry, no con un archivo a mano. Esa firma nombra la caja para la que es, y un reintento de la primera instalación solo vale contra la misma base de datos.
