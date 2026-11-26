@@ -1,6 +1,9 @@
 # BOb v1 · The application layer (P5) — inputs
 
-**Status: INPUTS, not a decision. Nothing here is signed.** Prepared on
+**Status: the inputs of D62, signed by Henry on 2026-11-25 «con todo lo
+propuesto» (BzzzBX `docs/decisions/D62_capa_de_aplicacion_de_bob.md`,
+bzzz#457).** Where this file and D77 (BOb v1 beside the box, signed
+2026-11-24) differ, D77 governs: D62 says so. Prepared on
 2026-11-11 for the P5 question on Relevo task BZZ-3 (Federico, 10 Nov: "the
 whole application layer: the projection schema, the three roles and their
 grants, and the migration mechanism"). Updated on 2026-11-18 with Federico's
@@ -23,11 +26,11 @@ because it already reads ClickHouse. As built, the reconciliation writes
 `actors` as `bob_app`, and `bob_feeder` holds no grant there. So the move
 reopens a grant question (§7, Q6; F-40). Henry chose option (a) the same
 day: the feeder writes the refs it sees to a table in `bob`, and `bob_app`
-reconciles from it. This changes a P5 answer. D62 is still unsigned.
+reconciles from it. This changes a P5 answer.
 
 The decision itself is a BzzzBX decision: **D62** in the BzzzBX register. The
-route plan called it D39\*, and D39 went to retention. Henry signs it. This
-file is what it is written from.
+route plan called it D39\*, and D39 went to retention. Henry signed it on
+2026-11-25 (bzzz#457), and this file is what it was written from.
 
 - *2026-11-18 · numbering.* BZZ-19 gave P5 the number D60. D60 was signed in
   Bzzz the same day for something else (the batch at the root of SendGrid), so
@@ -195,7 +198,7 @@ migration owner is the only role that owns objects or bypasses RLS.
 | Partition function (contract §3) | none | EXECUTE | none | none | none |
 | `bob_grant_projection()` | none | none | none | none | none |
 | `bob_grant_feeder_staging()` (Q6 (a)) | none (EXECUTE revoked from PUBLIC, `anon`, `authenticated` and `service_role`; the migration owner alone) | none | none | none | none |
-| The truth store (ClickHouse) | only through `affected_members` and the evidence packages, never directly | read-only ClickHouse role (task 3.6) | its own ClickHouse access, per task 5.3 | none | none |
+| The truth store (ClickHouse) | only through `affected_members` and the evidence packages, never directly | ~~read-only ClickHouse role (task 3.6)~~ none (D77, 77.3): it reads through `bzzz-vecinos`, which holds `bob_lector` | its own ClickHouse access, per task 5.3 | none | none |
 
 Each entry and its source:
 
@@ -460,20 +463,39 @@ The reasons:
 - The box's Supabase is identity only, so it is not a place to develop
   against.
 
-### 5.2 Networks **[PROPOSED]**
+### 5.2 Networks — **[DECIDED]** (D77)
 
-| Component | `bzzz-app` (Postgres) | `bzzz-data` (ClickHouse) | `bzzz-edge` |
-|---|---|---|---|
-| `supabase-db` | yes | no | never |
-| BOb application | yes | no | through Traefik only |
-| Feeder | yes | yes, read-only role | no |
-| Inference service | yes, `bob_ai_ro` | yes (task 5.7) | through Traefik only |
+**D77** (BOb v1 beside the box, signed 2026-11-24; 77.3, 77.5, 77.8) moved
+BOb's application and feeder **beside the box**, not into it. Both run from
+BOb's own compose in `/opt/bob/`, outside Bzzz. The database (`bob` in the
+box's `supabase-db`) and GoTrue stay the box's (§5.1). The feeder reads what
+BzzzBX knows through **`bzzz-vecinos`**, the box's read service for its
+neighbour applications (the same one as OPR-6), and never joins `bzzz-data`.
+The chain is applied by `bob_migrador` (O-3, 77.21; §6.2), after `postgres`
+installs it once.
 
-- *2026-11-21 (Q6, F-40):* this table is why Q6 changed. The ghost
-  reconciliation asks the truth store for `member_refs_seen`. The 19 Nov
-  answer ran it in the BOb application, which has no `bzzz-data`. Henry moved
-  it to the feeder, which does («El feeder»). The table itself does not
-  change: the BOb application still never joins `bzzz-data`.
+| Component | `bzzz-vecina-bob` (`internal`) | `bzzz-app` | `bzzz-data` (ClickHouse) | `bzzz-edge` |
+|---|---|---|---|---|
+| `supabase-db` (the box's) | yes | yes | no | never |
+| `supabase-auth`, GoTrue (the box's) | yes | yes | no | yes |
+| `bzzz-vecinos` (the box's) | yes | — | yes, reading ClickHouse with `bob_lector` | — |
+| BOb application | yes | never | never | yes, through the box's gate (Traefik) only |
+| Feeder | yes | never | never, it reads through `bzzz-vecinos` | no, and no Traefik labels |
+
+- `bzzz-vecina-bob` is BOb's own `internal` network with the box (77.5).
+  Only `supabase-db`, `supabase-auth`, `bzzz-vecinos` and BOb's containers are
+  in it. No container of BOb is in `bzzz-app` or `bzzz-data` (D77 insumos
+  §2.2, V1 and V4). `pg_hba` is set per network (77.13).
+- The inference service (`bob_ai_ro`, task 5.7) is not placed by D77. Its row
+  of the earlier table (`bzzz-app`, `bzzz-data`, `bzzz-edge` through Traefik)
+  is not carried here, and is decided with it.
+- What changes for Q6 (F-40, F-41): only where the feeder gets
+  `member_refs_seen`, now from `bzzz-vecinos`. It still writes
+  `bob.member_refs_seen` as `bob_feeder`, and `bob_app` reconciles from it.
+- *Before D77 (2026-11-21, Q6, F-40):* this table had BOb's application and
+  the feeder on `bzzz-app`, and the feeder on `bzzz-data` with a read-only
+  ClickHouse role. That table is why Q6 moved the ClickHouse read to the
+  feeder («El feeder»).
 
 ---
 
@@ -967,7 +989,10 @@ local copy of lab-02's identity stack. What they measured is in
 - F-36: `pg_dump -n bob` loses the publication membership;
 - F-37: CI runs Postgres 15 and the box runs 17.6.
 
-The lab-02 run is still owed. D62 waits on it.
+The lab-02 run was done on `bzzz-lab-02` on 2026-11-21, with BOb-engine
+`5e5b9be`: 41 checks, all as expected (BzzzBX
+`evidence/ENSAYO/2026-11-21_ensayo_p5_bzzz-lab-02.md`, bzzz#393). D62 62.8
+records it.
 
 ### 6.3 Guards the roles add — **[PROPOSED]**
 
@@ -992,7 +1017,7 @@ the other three were built on 2026-11-20. The third column says where each one s
 Three questions for Federico, and three for Henry. None reopened a ruling.
 Q1–Q5 were answered by 2026-11-18. Q6 came from Slice 2 on 2026-11-19 and was
 answered the same day. Henry changed that answer on 2026-11-21, which reopens
-how it is built (Q6 below). The decision is still unsigned.
+how it is built (Q6 below). D62 was signed on 2026-11-25 (bzzz#457).
 
 1. **Q1 · Are these the three roles?** `bob_app`, `bob_feeder` and `bob_ai_ro`,
    from Handoff §4.3, with `bzzz/supabase-ro` being `bob_ai_ro`. The route plan
@@ -1119,8 +1144,7 @@ how it is built (Q6 below). The decision is still unsigned.
    for `bob_feeder`, SELECT and DELETE for `bob_app`; the reference feeder's
    `stageMemberRefs`; and `reconciliation/ghosts.mjs` reading the table, still
    as `bob_app`, with the trailing window of H3 and the 395-day sweep. The
-   contract amendment to §7.2 and §7.3a is proposed with it. D62 is still
-   unsigned.
+   contract amendment to §7.2 and §7.3a is proposed with it.
    After the review of PR #33: refs held to `m:` and 256 characters, one
    run row per tenant per staging run (`bob.member_refs_runs`) and a box-check
    warning when it is old, staging in batches with each tenant isolated, and

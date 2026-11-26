@@ -3,6 +3,7 @@
 Una línea por cambio entregado, en lenguaje de usuario.
 
 ## Sin publicar
+- P5 recoge que D62 quedó firmada (bzzz#457) y que el ensayo de lab-02 ya corrió; §5.2 pasa a D77: la aplicación y el feeder van al lado de la caja en `/opt/bob/`, el feeder lee por `bzzz-vecinos` y no tiene rol de ClickHouse.
 - BOb se instala en una caja con `scripts/instalar-bob.sh`, como se decidió para O-3 (D77):
   - `postgres` instala una vez la cadena actual, fijada archivo por archivo;
   - el alta de Bzzz le pasa `bob` al rol dueño propio de BOb (`bob_migrador`);
