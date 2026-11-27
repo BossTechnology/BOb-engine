@@ -4592,3 +4592,58 @@ after a suppressed eleventh is suppressed by the limit, not by the eleventh.
   and `metric` reach everything.
 
 **Counts.** 532 → 575: 573 pass and 2 are `todo`, on the local stack `bob-v1-slice5` (Postgres 17, a fresh `supabase start`). Slice 5 adds 41, the F-51 guard 2; Slice 6 keeps its count with eight assertions rewritten.
+
+---
+
+## Slice 7 · Drill-downs, spec
+
+`docs/slice-7-drilldowns.md`, decided by Henry in the Slice 7 grill (27 Nov, T1
+to T8, each with the recommended option). Nothing is built. Drawn ahead of
+D-33, which stays open on Relevo task 19.
+
+### Slice 3 §10 closed · the per-actor zero is derived at read time
+
+`bob_actor_cell_state` derives `observed` 0 for a human with no row, skilled on
+the channel, on shift at `bucket_start` (`bob_shift_is_live()`), under a channel
+cell that is `observed` from a row. It carries `none_observed` and the new
+`liveness_source = 'shift'`. ASA and members are never given a derived zero:
+nothing proves they were there. No row is written. Proposed for 0.6 as a
+clarification of contract §5: "the feeder must never write a zero it did not
+observe" stands, and the drill-down derives one it can prove (spec §2).
+
+### The unattributed remainder
+
+Actors of a type add up to at most their channel cell. The difference is a row,
+`unattributed`, and a negative one is `actor_sum_exceeds_channel`, never
+clamped (spec §4). Route B's unresolved refs are the expected cause on a box.
+
+### F-56 · Extending `bob_actor_cell_state` changes its return type — finding
+
+Adding `liveness_source` needs DROP and CREATE, with the grants, in one
+transaction. A caller selecting `*` gets one more column; bob-web is outside
+this repository (spec §3, §9).
+
+### F-57 · The rebuilt marker reads today's lag — finding
+
+Under D-33 Q1 (a), "rebuilt" is a sealed row with
+`computed_at > bucket_start + 5 min + lag_seconds + 5 min`. Raising a lag later
+hides old markers. The alert's own flag (`computed_at > alert_log.created_at`)
+is unaffected. Storing the seal instant would fix it and is not proposed
+(spec §8.2).
+
+### D-33 · implemented at option (a), isolated
+
+Q1 (a): a quiet "rebuilt at <time>" marker, and the alert shows the figure at
+firing (`alert_log.value`) beside the current one. Q2 (a): `observed` with an
+`unvouched` marker, per source once it emits coverage records (D63 in BzzzBX);
+false everywhere in v1. Both live in one function, `bob_cell_markers`, one
+migration and one test block (D1–D5). Under Q2 (b) the change leaves that
+section: `bob_cell_state` itself would turn unvouched buckets `not_observed`
+(spec §8.3). To Federico on Relevo task 19.
+
+### Migration numbers
+
+`20261128100000` and `20261128100100`, above Slice 5's `20261127100000` to
+`20261127100500` and its review fixes (`20261127110000`, F-52 to F-55). `bob_cell_alerts` reads Slice 5's `alert_log` columns, so
+Slice 7 is built after Slice 5 merges. Not part of the Febor window; nothing
+touches the O-3 chain or `/opt/bob`.
