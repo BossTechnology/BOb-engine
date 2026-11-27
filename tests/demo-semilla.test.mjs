@@ -229,7 +229,7 @@ describe('the SQL, in a transaction over one lab organization', () => {
     assert.equal(await demoActors(), 9)
     assert.deepEqual(
       (await db.query("SELECT channel_type FROM bob.channels WHERE source_key LIKE 'demo-%' ORDER BY display_order")).rows.map((r) => r.channel_type),
-      ['voice', 'whatsapp', 'website', 'website', 'forms'])
+      ['voice', 'whatsapp', 'website', 'website', 'forms']);
     assert.ok(await markedRows() > 100000, 'a medium business over four weeks')
     assert.equal(await count(
       'SELECT count(*)::int AS n FROM bob.proj_metric_counts WHERE feeder_version IS DISTINCT FROM $1', [MARK]), 0)
