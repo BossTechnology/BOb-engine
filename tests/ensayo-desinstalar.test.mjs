@@ -167,9 +167,17 @@ function montarCaja() {
   writeFileSync(join(dockerDir, 'log'), '')
 }
 
+// A git that writes down every call before running the real one: the script reads the clone it is given once.
+const GIT_LOG = join(tmp, 'git.log')
+const GIT_SHIM = join(tmp, 'bin')
+function montarGit() {
+  const real = run('sh', ['-c', 'command -v git']).stdout.trim()
+  mkdirSync(GIT_SHIM, { recursive: true })
+  writeFileSync(join(GIT_SHIM, 'git'), `#!/bin/sh\nprintf '%s\\n' "$*" >> '${GIT_LOG}'\nexec '${real}' "$@"\n`, { mode: 0o755 })
+}
 function scriptEnv(extra = {}) {
   return {
-    ...limpio(), DESINSTALAR_PRUEBA_RAIZ: raiz, DESINSTALAR_PRUEBA_HOSTNAME: 'bzzz-model-01',
+    ...limpio(), PATH: `${GIT_SHIM}:${process.env.PATH}`, DESINSTALAR_PRUEBA_RAIZ: raiz, DESINSTALAR_PRUEBA_HOSTNAME: 'bzzz-model-01',
     DESINSTALAR_PRUEBA_DOCKER: DOCKER_FALSO, DOCKER_FALSO: dockerDir, DESINSTALAR_PRUEBA_URL: ADMIN_URL, ...extra,
   }
 }
@@ -235,6 +243,7 @@ before(async () => {
     CREATE FUNCTION public.bzzz_hola() RETURNS text LANGUAGE sql AS $$ SELECT 'hola' $$; ALTER FUNCTION public.bzzz_hola() OWNER TO postgres;
     INSERT INTO auth.users (id, email) VALUES ('00000000-0000-4000-8000-0000000000aa', 'user@example.com');`)
   foto0 = await foto()
+  montarGit()
   instalar()
   fotoInstalada = await foto()
   montarCaja()
@@ -323,6 +332,18 @@ describe('G1 to G7 refuse, and leave everything as it was', () => {
     } finally {
       await q('DROP VIEW IF EXISTS public.bzzz_vista')
     }
+    // The CLI history goes with CASCADE too: what of Bzzz's hangs from it stops the run the same way.
+    await q('CREATE VIEW public.bzzz_historia AS SELECT version FROM supabase_migrations.schema_migrations; ALTER VIEW public.bzzz_historia OWNER TO postgres')
+    try {
+      const con = await foto()
+      const r = desinstalar([...ARGS(), '--ejecutar'], { input: 'desinstalo\n' })
+      assert.equal(r.status, 1, r.stdout + r.stderr)
+      assert.match(r.stdout, /no está en el mapa: en la base: depende de lo que se borra: rule: "_RETURN" on public\.bzzz_historia/)
+      assert.match(r.stderr, /G7: 1 cosa\(s\) que no están en el mapa/)
+      assertFoto(await foto(), con, 'a view of Bzzz over the CLI history')
+    } finally {
+      await q('DROP VIEW IF EXISTS public.bzzz_historia')
+    }
     assert.deepEqual(estadoCaja(), cajaInstalada); soloLeyoDocker()
   })
 
@@ -342,6 +363,10 @@ describe('G1 to G7 refuse, and leave everything as it was', () => {
         /no está en el mapa: en la base: de bob_app \(permiso\): table public\.bzzz_cosa/],
       ['a CLI history row that is not of this tree', () => q("INSERT INTO supabase_migrations.schema_migrations (version) VALUES ('99990101000000')"),
         () => q("DELETE FROM supabase_migrations.schema_migrations WHERE version = '99990101000000'"), /historia del CLI que no es de este árbol: 99990101000000/],
+      // Same name as a function the chain makes in public, of postgres's, but another signature: not the chain's.
+      ['a function in public with a name of BOb\'s and another signature', () => q(`CREATE FUNCTION public.update_updated_at(integer) RETURNS int
+        LANGUAGE sql AS $$ SELECT 1 $$; ALTER FUNCTION public.update_updated_at(integer) OWNER TO postgres`),
+        () => q('DROP FUNCTION public.update_updated_at(integer)'), /función fuera de bob con un nombre de BOb, de postgres: update_updated_at\(integer\)/],
       // In a schema of postgres's, as Bzzz's would be; Supabase's own (supabase_admin's) are not looked at, as in cadena's check.
       ['a function of BOb\'s name outside public', () => q(`CREATE SCHEMA bzzz AUTHORIZATION postgres;
         CREATE FUNCTION bzzz.update_updated_at() RETURNS int LANGUAGE sql AS $$ SELECT 1 $$; ALTER FUNCTION bzzz.update_updated_at() OWNER TO postgres`),
@@ -381,11 +406,26 @@ describe('G1 to G7 refuse, and leave everything as it was', () => {
   })
 })
 
+describe('what it removes on disk', () => {
+  t('every rm -rf stays on one file system', async () => {
+    const lineas = readFileSync(SCRIPT, 'utf8').split('\n').filter((l) => !/^\s*#/.test(l))
+    const rm = lineas.filter((l) => /\brm\b/.test(l) && !/RMF/.test(l))
+    assert.deepEqual(rm.filter((l) => /\brm\s+-[a-z]*r/.test(l)), [], 'every recursive rm goes through RMF')
+    assert.ok(lineas.some((l) => /^RMF=\(rm -rf --one-file-system\)$/.test(l.trim())), 'RMF carries --one-file-system')
+    assert.ok(lineas.some((l) => /no "este rm no tiene --one-file-system"/.test(l) && /PRUEBA/.test(l)), 'on a box, a rm without it stops the script')
+  })
+})
+
 describe('the dry run', () => {
   t('says what it would remove, counts it, and writes nothing', async () => {
     writeFileSync(join(dockerDir, 'log'), '')
+    writeFileSync(GIT_LOG, '')
     const r = desinstalar()
     await sinCambios(r, 'dry run', { codigo: 0, patron: /en-seco: nada escrito/ })
+    // The clone given is read once, by a copy into the script's own folder; the digest and the map come from that copy.
+    const delClon = readFileSync(GIT_LOG, 'utf8').split('\n').filter((l) => l.includes(REPO_ROOT))
+    assert.equal(delClon.length, 1, `the clone is read once:\n${delClon.join('\n')}`)
+    assert.match(delClon[0], /\bclone\b.*--no-checkout --no-local/)
     for (const p of [/contenedor bob-web/, /etiqueta bob-web:482a03ff0000/, new RegExp(`imagen ${IMG_WEB}`), new RegExp(`imagen ${IMG_ANTES}`),
       /opt\/bob\/secrets\/migrador\.env/, /root\/bob-install\/postgres\.env/, /borra +esquema: bob \(con todo lo que tiene\)/,
       /cascada +tabla: bob\.organizations/, /borra +función en public: bob_grant_projection\(regclass\)/,
@@ -490,5 +530,25 @@ describe('--ejecutar', () => {
     const login = (l) => !/^role \| bob_app \|/.test(l)
     assert.deepEqual(d.solo_despues.filter(login), [], 'nothing the first install did not have')
     assert.deepEqual(d.solo_antes.filter(login), [], 'all the first install had')
+  })
+
+  t('killed after its COMMIT, it leaves a mark: the folders are not to go back, and the next run says so', async () => {
+    run('psql', [ADMIN_URL, '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-c', "ALTER ROLE bob_app LOGIN PASSWORD 'bob_app-local-test'"])
+    run('psql', [PG_URL, '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-c',
+      "INSERT INTO bob.organizations (name, slug, plan) VALUES ('Cliente Demo', 'modelo', 'enterprise')"])
+    montarCaja()
+    const r = desinstalar([...ARGS(), '--ejecutar'], { env: scriptEnv({ DOCKER_FALSO_MATAR: 'rm' }), input: 'desinstalo\n' })
+    assert.equal(r.signal, 'SIGKILL', `killed at docker rm: ${r.status}\n${r.stdout}${r.stderr}`)
+    assertFoto(await foto(), foto0, 'the COMMIT happened')
+    const apartadas = [...readdirSync(join(raiz, 'opt')).filter((n) => n.startsWith('.bob.desinstalando.')).map((n) => join(raiz, 'opt', n)),
+      ...readdirSync(join(raiz, 'root')).filter((n) => n.startsWith('.bob-install.desinstalando.')).map((n) => join(raiz, 'root', n))]
+    assert.equal(apartadas.length, 2, 'both folders are still set aside')
+    for (const a of apartadas) assert.match(readFileSync(join(a, 'BASE-YA-VACIADA'), 'utf8'), /la base se vació \(COMMIT\)/)
+    const todo = () => ({ ...estadoCaja(), opt: arbol(join(raiz, 'opt')) })
+    const antes = todo()
+    const otra = desinstalar([...ARGS(), '--ejecutar'], { input: 'desinstalo\n' })
+    assert.equal(otra.status, 1, otra.stdout + otra.stderr)
+    assert.match(otra.stderr, /una corrida anterior ya vació la base \(COMMIT\) .*No las devuelvas: bórralas/)
+    assert.deepEqual(todo(), antes, 'the next run changed nothing')
   })
 })

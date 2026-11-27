@@ -79,6 +79,7 @@ set -euo pipefail
 CAJA_ENSAYO=model-01
 SLUG_ENSAYO=modelo
 PALABRA=desinstalo
+MARCA_VACIADA=BASE-YA-VACIADA
 NS_BOB=bob
 MIGRADOR=bob_migrador
 
@@ -145,7 +146,23 @@ fi
 case "$MAQUINA" in *"$CAJA_ENSAYO"*) ;; *) no "G2: esta máquina se llama '$MAQUINA', y el nombre no contiene $CAJA_ENSAYO: nada borrado" ;; esac
 
 TMP=$(mktemp -d); chmod 700 "$TMP"
-trap 'rm -rf "$TMP"' EXIT
+# Todo rm -rf de este guion va con --one-file-system: no cruza a otro sistema de ficheros montado dentro de lo que
+# borra. En una caja (GNU) es obligatorio; solo el modo de prueba, en una máquina cuyo rm no lo tiene, sigue sin él.
+RMF=(rm -rf --one-file-system)
+mkdir "$TMP/sonda"
+if ! "${RMF[@]}" "$TMP/sonda" 2>/dev/null; then
+  [ -n "$PRUEBA" ] || no "este rm no tiene --one-file-system"
+  RMF=(rm -rf)
+fi
+trap '"${RMF[@]}" "$TMP"' EXIT
+
+# Una corrida anterior que murió después de su COMMIT dejó su marca en la carpeta apartada: la base ya está vacía, y
+# esas carpetas no se devuelven (dirían que la caja tiene BOb sobre una base sin él). Antes de nada más.
+for x in "$OPT_BOB" "$ROOT_INSTALL"; do
+  for y in "$(dirname "$x")"/."$(basename "$x")".desinstalando.*; do
+    [ ! -e "$y/$MARCA_VACIADA" ] || no "$y/$MARCA_VACIADA: una corrida anterior ya vació la base (COMMIT) y murió antes de borrar sus carpetas. No las devuelvas: bórralas (sudo ${RMF[*]} $y), quita bob-web y sus imágenes a mano, y sigue con B3 desde la base vacía"
+  done
+done
 
 # ── El árbol instalado: su huella es la de instalacion-firmada, y sus migraciones son el mapa ──────────────────────
 [[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]] || no "el commit instalado: su sha entero (git rev-parse), no '${COMMIT}'"
@@ -160,10 +177,18 @@ if [ -z "$PRUEBA" ]; then
 fi
 INSTALADA=$(head -1 "$OPT_BOB/instalacion-firmada")
 [[ "$INSTALADA" =~ ^[0-9a-f]{64}$ ]] || no "$OPT_BOB/instalacion-firmada no tiene una huella"
-HUELLA=$(/bin/bash -p "$FIRMA" huella "$COMMIT" "$REPO") || no "no pude medir la huella de $COMMIT en $REPO"
-[ "$HUELLA" = "$INSTALADA" ] || no "la huella de $COMMIT es $HUELLA, y esta caja está en $INSTALADA: el mapa tiene que ser el del árbol instalado"
+# El clon se lee una sola vez: se copia a una carpeta propia (git clone --no-checkout --no-local, que vuelve a calcular el
+# id de cada objeto al recibirlo), y la huella y el mapa salen los dos de esa copia, que nadie más escribe. Un clon
+# que cambia mientras el guion corre no puede dar una huella de un árbol y un mapa de otro.
 G() { git -c core.fsmonitor= -c core.hooksPath=/dev/null -c safe.directory='*' -c color.ui=never --git-dir="$GD" "$@"; }
-GD=$(git -c safe.directory='*' -C "$REPO" rev-parse --absolute-git-dir) || no "$REPO no es un clon de git"
+# Sin --bare: con safe.bareRepository=explicit, git no abre un repositorio desnudo con -C.
+COPIA=$TMP/motor; GD=$COPIA/.git
+git -c core.fsmonitor= -c core.hooksPath=/dev/null -c safe.directory='*' -c protocol.file.allow=always -c color.ui=never \
+  clone -q --no-checkout --no-local --no-hardlinks -- "$REPO" "$COPIA" 2> "$TMP/clone.err" \
+  || { sed 's/^/  /' "$TMP/clone.err" >&2; no "no pude copiar el clon $REPO"; }
+[ "$(G rev-parse -q --verify "$COMMIT^{commit}")" = "$COMMIT" ] || no "$REPO no tiene el commit $COMMIT"
+HUELLA=$(/bin/bash -p "$FIRMA" huella "$COMMIT" "$COPIA") || no "no pude medir la huella de $COMMIT"
+[ "$HUELLA" = "$INSTALADA" ] || no "la huella de $COMMIT es $HUELLA, y esta caja está en $INSTALADA: el mapa tiene que ser el del árbol instalado"
 mkdir "$TMP/migrations"
 G ls-tree --name-only "$COMMIT" supabase/migrations/ > "$TMP/ls" || no "no pude leer supabase/migrations de $COMMIT"
 while IFS= read -r p; do
@@ -182,7 +207,31 @@ names=$(grep -o -E '(create( or replace)?( unique)?( unlogged)? (table|view|mate
 sch=$( { echo bob; grep -o -E '(create schema( if not exists)? [a-z0-9_"]+|set schema [a-z0-9_"]+)' <<<"$sql"; } | nombre) || sch=bob
 # Los roles que crea la cadena, y el del alta (bob.conf de Bzzz: <vecina>_migrador).
 roles=$( { echo "$MIGRADOR"; grep -o -E 'create role [a-z0-9_"]+' <<<"$sql"; } | nombre) || roles=$MIGRADOR
+# Las firmas exactas de las funciones que la cadena crea en public (con esquema public o sin esquema): nombre y tipos
+# de entrada, sin nombres de parámetro, sin valores por defecto y sin los OUT, como las escribe regprocedure. La base
+# las resuelve con to_regprocedure; una que no resuelva no cuenta como de la cadena, y la función que hubiera con ese
+# nombre queda «desconocida» (G7): falla cerrado.
+command -v perl >/dev/null || no "falta perl"
+firmas=$(perl -0777 -ne '
+  while (/create (?:or replace )?function ((?:"?[a-z0-9_]+"?\.)?"?[a-z0-9_]+"?) ?(\(((?:[^()]++|(?2))*)\))/g) {
+    my ($n, $a) = ($1, $3); $n =~ s/"//g; my $s = "public";
+    ($s, $n) = ($1, $2) if $n =~ /^(.+)\.(.+)$/;
+    next unless $s eq "public";
+    my (@p, @t); my ($d, $c) = (0, "");
+    for my $x (split //, $a) {
+      $d++ if $x eq "("; $d-- if $x eq ")";
+      if ($x eq "," && $d == 0) { push @p, $c; $c = "" } else { $c .= $x }
+    }
+    push @p, $c if $c =~ /\S/;
+    for (@p) {
+      s/^\s+|\s+$//g; s/\s+(default\s.*|=.*)$//; next if /^out\s/; s/^(in|inout|variadic)\s+//;
+      my @w = split /\s+/; shift @w if @w > 1; push @t, join(" ", @w);
+    }
+    print "$n(" . join(",", @t) . ")\n";
+  }' <<<"$sql" | sort -u | paste -sd';' -) || firmas=""
 [[ "$vs" =~ ^[0-9,]+$ && "$names" =~ ^[a-z0-9_,]+$ && "$sch" =~ ^[a-z0-9_,]+$ && "$roles" =~ ^[a-z0-9_,]+$ ]] || no "no pude leer las migraciones de $COMMIT"
+re_firmas='^[a-z0-9_]+\([][a-z0-9_, ]*\)(;[a-z0-9_]+\([][a-z0-9_, ]*\))*$'
+[[ "$firmas" =~ $re_firmas ]] || no "no pude leer las firmas de las funciones de public de $COMMIT"
 
 # ── La comprobación de la base vacía, la de scripts/instalar-bob.sh con BOB_BASE_VACIA=1 ───────────────────────────
 # Mismo texto que allí, con la historia del CLI leída solo si su tabla existe (query_to_xml), para poder correrla
@@ -235,16 +284,20 @@ ns_de() {  # <classid> <objid>
 # (G7: se para). Solo lee el catálogo.
 INVENTARIO="WITH
 cfg AS (SELECT string_to_array('$names', ',') AS nombres, string_to_array('$roles', ',') AS roles,
+               string_to_array('$firmas', ';') AS firmas,
                string_to_array('$vs', ',') AS versiones),
 sa AS (SELECT oid FROM pg_roles WHERE rolname = 'supabase_admin'),
 br AS (SELECT oid, rolname FROM pg_roles WHERE rolname = 'bob' OR rolname LIKE 'bob\_%'),
 nsb AS (SELECT oid, nspowner FROM pg_namespace WHERE nspname = '$NS_BOB'),
--- Lo que tiene el esquema bob, como (classid, objid).
-enbob AS (
-  SELECT 'pg_namespace'::regclass AS classid, oid AS objid FROM nsb
-  UNION ALL SELECT 'pg_class'::regclass, c.oid FROM pg_class c JOIN nsb ON nsb.oid = c.relnamespace
-  UNION ALL SELECT 'pg_proc'::regclass, p.oid FROM pg_proc p JOIN nsb ON nsb.oid = p.pronamespace
-  UNION ALL SELECT 'pg_type'::regclass, t.oid FROM pg_type t JOIN nsb ON nsb.oid = t.typnamespace),
+-- Los dos esquemas que se borran con CASCADE: bob y la historia del CLI. Lo que cuelgue de cualquiera de los dos
+-- desde fuera cascaría con él, así que los dos entran en la comprobación de dependencias (G6).
+nsm AS (SELECT oid FROM pg_namespace WHERE nspname IN ('$NS_BOB', 'supabase_migrations')),
+-- Lo que tienen esos dos esquemas, como (classid, objid).
+enmapa AS (
+  SELECT 'pg_namespace'::regclass AS classid, oid AS objid FROM nsm
+  UNION ALL SELECT 'pg_class'::regclass, c.oid FROM pg_class c JOIN nsm ON nsm.oid = c.relnamespace
+  UNION ALL SELECT 'pg_proc'::regclass, p.oid FROM pg_proc p JOIN nsm ON nsm.oid = p.pronamespace
+  UNION ALL SELECT 'pg_type'::regclass, t.oid FROM pg_type t JOIN nsm ON nsm.oid = t.typnamespace),
 -- Fuera de bob, lo que lleva un nombre que dan las migraciones (lo mismo que ve la comprobación de la base vacía).
 fuera AS (
   SELECT 'pg_proc'::regclass AS classid, p.oid AS objid, n.nspname, p.proname::text AS nombre, pg_get_userbyid(p.proowner) AS dueno,
@@ -263,19 +316,21 @@ fuera AS (
    WHERE t.typtype IN ('e','d','c','r') AND NOT EXISTS (SELECT 1 FROM pg_class c WHERE c.reltype = t.oid)
      AND t.typname = ANY (cfg.nombres) AND n.nspname <> '$NS_BOB'
      AND n.nspowner NOT IN (SELECT oid FROM sa) AND n.nspname NOT IN ('pg_catalog', 'information_schema')),
--- De eso, lo que la cadena deja fuera de bob: funciones de postgres en public. Lo demás no es suyo (G6, G7).
-fmapa AS (SELECT * FROM fuera WHERE clase = 'función' AND nspname = 'public' AND dueno = 'postgres'),
-mapa AS (SELECT classid, objid FROM enbob UNION ALL SELECT classid, objid FROM fmapa),
+-- De eso, lo que la cadena deja fuera de bob: funciones de postgres en public con la firma exacta que crea una de
+-- sus migraciones. Otra sobrecarga con el mismo nombre no es suya, ni lo demás (G6, G7).
+fmapa AS (SELECT * FROM fuera, cfg WHERE clase = 'función' AND nspname = 'public' AND dueno = 'postgres'
+            AND objid IN (SELECT to_regprocedure('public.' || f)::oid FROM unnest(cfg.firmas) f)),
+mapa AS (SELECT classid, objid FROM enmapa UNION ALL SELECT classid, objid FROM fmapa),
 -- Lo de fuera que depende de lo que se va a borrar (G6): cascaría con ello.
 dep AS (
-  SELECT DISTINCT d.classid, d.objid, d.objsubid, ($(ns_de d.classid d.objid)) IN (SELECT oid FROM nsb) AS en_bob,
+  SELECT DISTINCT d.classid, d.objid, d.objsubid, ($(ns_de d.classid d.objid)) IN (SELECT oid FROM nsm) AS dentro,
          (pg_identify_object(d.classid, d.objid, d.objsubid)).*
     FROM pg_depend d JOIN mapa m ON m.classid = d.refclassid AND m.objid = d.refobjid
    WHERE d.deptype IN ('n', 'a')
      AND NOT EXISTS (SELECT 1 FROM mapa m2 WHERE m2.classid = d.classid AND m2.objid = d.objid)),
 -- Lo que cuelga de los roles bob*: dueño, permisos, políticas (G7).
 shd AS (
-  SELECT s.dbid, s.classid, s.objid, s.deptype, r.rolname, coalesce(($(ns_de s.classid s.objid)) IN (SELECT oid FROM nsb), false) AS en_bob,
+  SELECT s.dbid, s.classid, s.objid, s.deptype, r.rolname, coalesce(($(ns_de s.classid s.objid)) IN (SELECT oid FROM nsm), false) AS dentro,
          (pg_identify_object(s.classid, s.objid, s.objsubid)).*
     FROM pg_shdepend s JOIN br r ON r.oid = s.refobjid
    WHERE s.refclassid = 'pg_authid'::regclass AND s.deptype IN ('o', 'a', 'r')
@@ -310,13 +365,13 @@ SELECT * FROM (
   -- 2 · lo de fuera que depende de bob o de las funciones de public: la publicación de Realtime es de Supabase y
   --     solo pierde las tablas de bob; cualquier otra cosa de fuera se queda y el guion se para (G6)
   UNION ALL SELECT 15, CASE WHEN dep.type = 'publication relation' AND dep.identity LIKE '% in publication supabase_realtime' THEN 'cascada'
-                            WHEN dep.en_bob THEN NULL ELSE 'desconocido' END,
+                            WHEN dep.dentro THEN NULL ELSE 'desconocido' END,
          'depende de lo que se borra: ' || dep.type, dep.identity, NULL FROM dep
   -- 3 · las funciones que la cadena deja en public
   UNION ALL SELECT 20, 'paso', 'rol', 'postgres', 'SET LOCAL ROLE postgres'
   UNION ALL SELECT 21, 'borra', 'función en public', identidad, format('DROP FUNCTION IF EXISTS %s RESTRICT', objid::regprocedure) FROM fmapa
   UNION ALL SELECT 22, 'desconocido', clase || ' fuera de $NS_BOB con un nombre de BOb, de ' || dueno, identidad, NULL
-    FROM fuera WHERE NOT (clase = 'función' AND nspname = 'public' AND dueno = 'postgres')
+    FROM fuera f WHERE NOT EXISTS (SELECT 1 FROM fmapa x WHERE x.classid = f.classid AND x.objid = f.objid)
   -- 4 · permisos en public
   UNION ALL SELECT 30, 'borra', 'permiso en el esquema public', a.privilege_type || ' de ' || pg_get_userbyid(a.grantee),
          format('REVOKE %s ON SCHEMA public FROM %I', a.privilege_type, pg_get_userbyid(a.grantee))
@@ -368,7 +423,7 @@ SELECT * FROM (
   UNION ALL SELECT 64, 'desconocido', 'de ' || shd.rolname || ' (' || CASE shd.deptype WHEN 'o' THEN 'dueño' WHEN 'a' THEN 'permiso' ELSE 'política' END || ')',
          coalesce(shd.type || ' ' || shd.identity, shd.classid::regclass::text || ' ' || shd.objid), NULL
     FROM shd
-   WHERE NOT (shd.dbid <> 0 AND (EXISTS (SELECT 1 FROM mapa m WHERE m.classid = shd.classid AND m.objid = shd.objid) OR shd.en_bob))
+   WHERE NOT (shd.dbid <> 0 AND (EXISTS (SELECT 1 FROM mapa m WHERE m.classid = shd.classid AND m.objid = shd.objid) OR shd.dentro))
      AND NOT (shd.deptype = 'a' AND shd.classid = 'pg_namespace'::regclass AND shd.objid IN ('public'::regnamespace, 'auth'::regnamespace))
   UNION ALL SELECT 65, 'desconocido', 'en otra base de datos', 'algo de ' || r.rolname || ' en la base ' || d.datname, NULL
     FROM pg_shdepend s JOIN br r ON r.oid = s.refobjid JOIN pg_database d ON d.oid = s.dbid
@@ -597,6 +652,12 @@ if ! grep -qx commit "$TMP/ejecucion"; then
   no "la transacción no llegó al COMMIT (lo de arriba): la caja queda como estaba"
 fi
 echo "  COMMIT: $NBASE cosa(s) de la base borradas"
+# La base ya no tiene BOb: si el guion muere desde aquí, las carpetas apartadas no deben volver a su sitio. Lo dice
+# una marca en cada una, que la corrida siguiente lee antes de nada (y el README, a quien recupere a mano).
+while IFS=$'\t' read -r de a; do
+  printf 'la base se vació (COMMIT) %s; %s no se devuelve: se borra\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$de" > "$a/$MARCA_VACIADA" \
+    || echo "  NO pude marcar $a: si este guion muere antes de borrarla, NO la devuelvas a $de (la base ya está vacía)"
+done < "$MOVIDAS"
 
 # Después del COMMIT: lo que no tiene vuelta.
 FALLOS=0
@@ -607,7 +668,7 @@ while IFS= read -r i; do
   "$DOCKER" image rm "$i" >/dev/null && echo "  borrada la imagen $i" || { echo "  NO pude borrar la imagen $i: docker image rm $i"; FALLOS=$((FALLOS + 1)); }
 done < "$IMGS"
 while IFS=$'\t' read -r de a; do
-  rm -rf "$a" && echo "  borrada la carpeta $de" || { echo "  NO pude borrar $a (era $de): rm -rf $a"; FALLOS=$((FALLOS + 1)); }
+  "${RMF[@]}" "$a" && echo "  borrada la carpeta $de" || { echo "  NO pude borrar $a (era $de): ${RMF[*]} $a"; FALLOS=$((FALLOS + 1)); }
 done < "$MOVIDAS"
 
 # La comprobación final, otra vez y en una sesión nueva: la de `cadena` desde la base vacía.

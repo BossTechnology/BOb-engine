@@ -9,6 +9,8 @@ d=${DOCKER_FALSO:?DOCKER_FALSO: the fake docker state directory}
 printf '%s\n' "$*" >> "$d/log"
 c=$d/contenedores; i=$d/imagenes; touch "$c" "$i"
 last=${*: -1}
+# DOCKER_FALSO_MATAR=<orden>: a esa orden, mata a quien llamó (kill -9), para ver qué deja un guion que muere ahí.
+if [ -n "${DOCKER_FALSO_MATAR:-}" ] && [ "$1" = "$DOCKER_FALSO_MATAR" ]; then kill -9 "$PPID"; exit 1; fi
 fila() { awk -F'\t' -v k="$2" '$1 == k' "$1"; }
 reescribir() { local f=$1; shift; awk -F'\t' -v OFS='\t' "$@" "$f" > "$f.n"; mv "$f.n" "$f"; }
 
