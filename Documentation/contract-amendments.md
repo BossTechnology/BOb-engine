@@ -4647,3 +4647,36 @@ section: `bob_cell_state` itself would turn unvouched buckets `not_observed`
 `20261127100500` and its review fixes (`20261127110000`, F-52 to F-55). `bob_cell_alerts` reads Slice 5's `alert_log` columns, so
 Slice 7 is built after Slice 5 merges. Not part of the Febor window; nothing
 touches the O-3 chain or `/opt/bob`.
+
+---
+
+## F-58 · TRIGGER and REFERENCES on bob tables, closed for Febor by a separate step
+
+The security review of `8ab846e` found that `authenticated` holds TRIGGER and
+REFERENCES on 28 tables in bob: they were created in public, where Supabase's
+default privileges for `postgres` give `authenticated` `arwdxt`, and moved to
+bob with that ACL. A member could attach a trigger to `bob.alert_log` and make
+every later insert fail, for every tenant. The grant is in the signed commit
+`00f79b7` that Febor installs on Monday, and the box is the Supabase image,
+where `authenticated` exists (measured: 56 grants on a stack installed from
+`00f79b7`).
+
+Henry, 27 Nov: «Paso REVOKE aparte». The install chain is not changed and
+`00f79b7` is not signed again. `scripts/f58/revocar.sql` runs once after the
+install, as the owner of bob, through `scripts/f58/revocar.sh` with the alta's
+credentials: one transaction, idempotent, tables discovered, refusing any role
+that does not own bob (the service role first), and ending with a
+`has_table_privilege` check that raises if anything is left. Runbook in
+Spanish: `scripts/f58/README.md`. Henry runs it in Febor; agents only in the
+lab-02 and model-01 rehearsals.
+
+Tested in `tests/slice2-schema.test.mjs` («F-58 · the separate REVOKE step»),
+through the wrapper, on a stack installed from `00f79b7` and on `main`: the
+grant is seen before; a grant by another grantor makes the step fail and
+nothing changes; it passes after, and again is a no-op; it refuses the service
+role. Nothing under `supabase/` changes: `install-chain.sha256` is the same,
+and the digest of `00f79b7` stays `544fe970…`.
+
+The lasting fix is migration `20261127110000` in PR #66, which revokes the
+same and checks it inside the migration; both are idempotent, so running this
+step and later that migration is fine.

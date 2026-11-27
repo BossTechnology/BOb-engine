@@ -12,11 +12,12 @@
 
 import { test, before, after, describe } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import { execFileSync } from 'node:child_process'
-import { resolve } from 'node:path'
+import { readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs'
+import { execFileSync, spawnSync } from 'node:child_process'
+import { resolve, join } from 'node:path'
+import { tmpdir } from 'node:os'
 import {
-  connect, loadFixture, loadRoster, tenantTables, REPO_ROOT, TENANT_A, TENANT_B,
+  connect, loadFixture, loadRoster, tenantTables, REPO_ROOT, TENANT_A, TENANT_B, DB_URL,
 } from './helpers/db.mjs'
 import {
   projectionTables, projectionGrantFindings, structuralFindings, feederStagingTables,
@@ -820,5 +821,89 @@ describe('§10 · nothing typed that must be declared', () => {
         SELECT org_id, id, 'meca_rum' FROM channels WHERE channel_type = 'website';`,
     }
     assert.equal(capabilityFromTypeFindings(Object.keys(probes), (f) => probes[f]).length, 1)
+  })
+})
+
+// ── F-58 · the separate REVOKE step (scripts/f58) ──────────────────────────
+// Henry, 27 Nov: «Paso REVOKE aparte». The box installs the signed commit as it
+// is; scripts/f58/revocar.sh runs once after it, as the owner of bob. Run here
+// the way the runbook runs it, through the wrapper, against this stack, whose
+// owner is postgres. It leaves the grants revoked, which is the state wanted.
+describe('F-58 · the separate REVOKE step', () => {
+  const APP = ['anon', 'authenticated', 'service_role', 'bob_app', 'bob_feeder', 'bob_ai_ro']
+  const held = async () => (await db.query(`
+    SELECT r.rolname || ' ' || p || ' ' || c.relname AS g
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'bob'
+      JOIN pg_roles r ON r.rolname = ANY ($1)
+      CROSS JOIN unnest(ARRAY['TRIGGER', 'REFERENCES']) AS p
+     WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f') AND has_table_privilege(r.oid, c.oid, p)
+     ORDER BY 1`, [APP])).rows.map((r) => r.g)
+
+  const u = new URL(DB_URL)
+  function revocar(env = {}) {
+    const d = mkdtempSync(join(tmpdir(), 'f58-'))
+    try {
+      const f = join(d, 'migrador.env')
+      writeFileSync(f, `MIGRADOR_USUARIO=${env.user ?? decodeURIComponent(u.username)}\n`
+        + `MIGRADOR_CLAVE=${decodeURIComponent(u.password)}\nMIGRADOR_HOST=${u.hostname}\nMIGRADOR_RED=\n`, { mode: 0o600 })
+      return spawnSync('bash', [resolve(REPO_ROOT, 'scripts/f58/revocar.sh')], {
+        encoding: 'utf8', env: { PATH: process.env.PATH, MIGRADOR_ENV: f, MIGRADOR_PUERTO: u.port || '5432' } })
+    } finally { rmSync(d, { recursive: true, force: true }) }
+  }
+
+  test('before, authenticated can attach a trigger to a bob table; after, no application role can, and again is a no-op', async () => {
+    // As installed from 00f79b7 the grant is there. Planted only if a later
+    // migration already took it, so the step is always seen doing something.
+    if (!(await held()).length) await db.query('GRANT TRIGGER ON bob.alert_log TO authenticated')
+    assert.ok((await held()).some((g) => g.startsWith('authenticated TRIGGER ')))
+    const r = revocar()
+    assert.equal(r.status, 0, r.stdout + r.stderr)
+    assert.match(r.stderr + r.stdout, /F-58 after: 0 grants left on \d+ relations of bob\. OK/)
+    assert.deepEqual(await held(), [])
+    const again = revocar()
+    assert.equal(again.status, 0, again.stdout + again.stderr)
+    assert.match(again.stderr + again.stdout, /F-58 before: 0 grants/)
+  })
+
+  test('a grant it cannot take away fails the step, and nothing changes', async () => {
+    await db.query('DROP ROLE IF EXISTS f58_otro_otorgante')
+    await db.query('CREATE ROLE f58_otro_otorgante NOLOGIN')
+    await db.query('GRANT f58_otro_otorgante TO current_user')
+    await db.query('GRANT USAGE ON SCHEMA bob TO f58_otro_otorgante')
+    try {
+      // Granted by another role: the owner's REVOKE leaves it and only warns.
+      await db.query('GRANT TRIGGER ON bob.alert_log TO f58_otro_otorgante WITH GRANT OPTION')
+      await db.query('SET ROLE f58_otro_otorgante')
+      await db.query('GRANT TRIGGER ON bob.alert_log TO authenticated')
+      await db.query('RESET ROLE')
+      // And one the owner could revoke, to see the transaction take it back.
+      await db.query('GRANT REFERENCES ON bob.organizations TO bob_feeder')
+      const r = revocar()
+      assert.notEqual(r.status, 0, 'the step passed with a grant left')
+      assert.match(r.stderr, /F-58: still held after the revoke: authenticated TRIGGER alert_log/)
+      assert.ok((await held()).includes('bob_feeder REFERENCES organizations'), 'the failed step changed something')
+    } finally {
+      await db.query('RESET ROLE')
+      await db.query('REVOKE TRIGGER ON bob.alert_log FROM f58_otro_otorgante CASCADE')
+      await db.query('REVOKE USAGE ON SCHEMA bob FROM f58_otro_otorgante')
+      await db.query('DROP ROLE f58_otro_otorgante')
+    }
+    const clean = revocar()
+    assert.equal(clean.status, 0, clean.stdout + clean.stderr)
+    assert.deepEqual(await held(), [])
+  })
+
+  test('it refuses any role that does not own bob, the service role first', async () => {
+    const w = revocar({ user: 'service_role' })
+    assert.equal(w.status, 2)
+    assert.match(w.stderr, /not the owner of bob/)
+    // And the SQL alone, as a role that does not own bob.
+    await db.query('BEGIN')
+    try {
+      await db.query('SET LOCAL ROLE service_role')
+      const e = await db.query(readFileSync(resolve(REPO_ROOT, 'scripts/f58/revocar.sql'), 'utf8')).then(() => null, (x) => x)
+      assert.match(e?.message ?? 'ran', /run as the owner of schema bob/)
+    } finally { await db.query('ROLLBACK') }
   })
 })
