@@ -146,6 +146,10 @@ jobs:
         env:
           SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
         run: node --test --test-concurrency=1 tests/users-access.test.mjs
+      - name: Demo seed for lab-02 · refuses outside a lab box, writes as bob_app and bob_feeder, removes only its own rows
+        env:
+          SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+        run: node --test --test-concurrency=1 tests/demo-semilla.test.mjs
       # The path is named: the bare command also runs supabase/tests/fixtures/*.sql,
       # which are fixtures, not pgTAP, and fails on them.
       - name: pgTAP · supabase test db over supabase/tests/database

@@ -4213,3 +4213,38 @@ and `admin` and `analyst` are still given by `scripts/provision-user.mjs`.
   Direct INSERT stays refused.
 - **The tree's digest changes (O-3):** Henry signs a new approval for each box.
   The function lives in `bob`, so Bzzz's `bob.conf` needs no `FUERA=` line.
+
+## Demo seed for lab-02 (`scripts/demo/`), outside the chain
+
+Henry, 27 Nov: BOb should show content in lab-02 before Monday, with invented
+data shaped like a medium business, and nothing of it may reach a customer box.
+Nothing in the contract changes. Recorded here because the seed found two
+things about the boxes:
+
+- **`postgres` is not a member of `bob_app` or `bob_feeder`.** The chain never
+  grants it; the suite grants it in each test file. A script that wants to
+  write as the feeder or the application from the box's `postgres` login has
+  to take the membership. The seed borrows it inside its own transaction
+  (`GRANT bob_app TO <name>`, by name because of F-35) and revokes it before
+  COMMIT; a ROLLBACK removes it too. A membership that already existed stays.
+- **Without `organizations.telemetry_started_at`, every cell is
+  `not_configured`** (`telemetry_not_started`), whatever the projections hold.
+  The seed does not set it: `bob_app` cannot write `organizations`, and the
+  column is set once and never changed (it also freezes the slug). The seed's
+  summary warns when it is NULL. Whether lab-02's organization gets it is
+  Henry's call; the PR asks.
+
+The seed writes channels, capabilities, mix, actors and refs as `bob_app` under
+the organization's claim, and the projections as `bob_feeder`, creating the
+months through `bob.proj_ensure_partition`, as the feeder would. Every row is
+marked (`feeder_version = 'bob-demo/1'`; channels `demo-…` with
+`adapter_kind = 'synthetic'` and `config.bob_demo`; actors `demo-…` with
+`attributes.bob_demo`), and `--quitar` deletes only marked rows. It refuses
+outside lab-02 (or a loopback database for the suite), with more than one
+organization, with any projection row or interaction it did not write, and as
+an API role or a role that reads under RLS. `tests/demo-semilla.test.mjs`
+covers each guard; each was seen red by sabotage.
+
+The files live in the repository tree, so they are inside the digest any later
+install approval covers (as every file is). Nothing in the install path names
+them; the test asserts it.
