@@ -225,18 +225,45 @@ describe('the SQL, in a transaction over one lab organization', () => {
     await db.query('GRANT bob_app TO postgres')
     await db.query('SET LOCAL ROLE bob_app')
     const { rows } = await db.query(`
-      SELECT metric, actor_type, state, value
+      SELECT metric, actor_type, state, value, reasons
         FROM bob.bob_cell_rollup((SELECT id FROM bob.organizations),
                                  ARRAY(SELECT id FROM bob.channels),
                                  now() - interval '1 day', now())`)
     await db.query('RESET ROLE')
     await db.query('REVOKE bob_app FROM postgres')
     const cell = (m, a) => rows.find((r) => r.metric === m && r.actor_type === a)
+    // Everything v1 can measure, on Rendimiento, Interacciones and Calidad.
     for (const [m, a] of [['resolved', 'asa'], ['resolved', 'human'], ['abandoned', 'user'],
-      ['response_time', 'human'], ['orga', null], ['meca', null], ['health_uptime', null]]) {
+      ['response_time', 'asa'], ['response_time', 'human'], ['response_time', 'user'],
+      ['disambiguation', 'asa'], ['disambiguation', 'human'], ['escalations', 'asa'],
+      ['escalations', 'human'], ['abandoned_in_queue', 'user'], ['abstained', 'user'],
+      ['label_missing', 'user'], ['interaction_duration', 'user'],
+      ['orga', null], ['meca', null], ['health_uptime', null]]) {
       assert.equal(cell(m, a)?.state, 'observed', `${m}/${a}`)
       assert.ok(Number(cell(m, a).value) > 0, `${m}/${a} has a value`)
     }
+    // A written zero: the classifier was up.
+    assert.equal(cell('classifier_down', 'user')?.state, 'observed')
+    assert.equal(Number(cell('classifier_down', 'user').value), 0)
+    // What v1 cannot measure stays not configured, for its own reason.
+    assert.ok(cell('hallucinations', 'asa').reasons.includes('no_ground_truth'))
+    assert.ok(cell('response_quality', 'asa').reasons.includes('no_definition:D-15'))
+  })
+
+  test('every capability or declaration a bob-web row asks for is declared on some demo channel', async () => {
+    // lib/bob/matrix.ts and screens.ts in bob-web: the row is red,
+    // «capacidad X: no configurado en la selección», when no selected channel has it.
+    for (const cap of ['response_time', 'resolution', 'hallucination', 'orga_conversation', 'meca_rum']) {
+      assert.ok(await count(`
+        SELECT count(*)::int AS n FROM bob.channel_capabilities k JOIN bob.channels c ON c.id = k.channel_id
+         WHERE c.source_key LIKE 'demo-%' AND k.capability = $1`, [cap]) > 0, cap)
+    }
+    assert.equal(await count(
+      "SELECT count(*)::int AS n FROM bob.channels WHERE source_key LIKE 'demo-%' AND (idle_bound_seconds IS NULL OR lag_seconds IS NULL)"), 0)
+    assert.equal(await count(`
+      SELECT count(*)::int AS n FROM bob.channels c
+       WHERE c.source_key LIKE 'demo-%'
+         AND (SELECT count(*) FROM bob.channel_actor_mix m WHERE m.channel_id = c.id) <> 4`), 0)
   })
 
   test('running it twice leaves one seed', async () => {

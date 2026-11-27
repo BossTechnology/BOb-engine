@@ -67,8 +67,11 @@ ON CONFLICT (org_id, source_key) DO UPDATE
        idle_bound_seconds = EXCLUDED.idle_bound_seconds,
        display_order = EXCLUDED.display_order, active = true, config = EXCLUDED.config;
 
--- Lo que cada canal declara. Sin `hallucination`: en v1 no hay ground truth y
--- la celda diría lo mismo con o sin la capacidad.
+-- Lo que cada canal declara, para que bob-web no pinte «capacidad X: no
+-- configurado en la selección». `hallucination` se declara en los canales con
+-- asistente, pero en v1 no hay ground truth: la celda sigue en «No
+-- configurado» con ese motivo (no_ground_truth), y la semilla no escribe filas
+-- de alucinaciones.
 DELETE FROM bob.channel_capabilities k
  USING bob.channels c
  WHERE k.channel_id = c.id AND c.source_key LIKE 'demo-%' AND (c.config ->> 'bob_demo') = 'true';
@@ -80,10 +83,10 @@ SELECT c.org_id, c.id, unnest(v.caps)
     ('demo-pbx',        ARRAY['orga_conversation','response_time','resolution','escalation','queue',
                               'health_latency','health_errors','health_uptime']),
     ('demo-whatsapp',   ARRAY['orga_conversation','response_time','resolution','escalation',
-                              'disambiguation','health_latency','health_errors','health_uptime']),
-    ('demo-web-tienda', ARRAY['meca_rum','response_time','resolution',
+                              'disambiguation','hallucination','health_latency','health_errors','health_uptime']),
+    ('demo-web-tienda', ARRAY['meca_rum','response_time','resolution','hallucination',
                               'health_latency','health_errors','health_uptime']),
-    ('demo-web-ayuda',  ARRAY['meca_rum','response_time','resolution',
+    ('demo-web-ayuda',  ARRAY['meca_rum','response_time','resolution','hallucination',
                               'health_latency','health_errors','health_uptime']),
     ('demo-typeform',   ARRAY['response_time','resolution',
                               'health_latency','health_errors','health_uptime'])
@@ -232,7 +235,8 @@ SELECT x.channel_id, x.clave, x.bucket_start, x.lat_ms, x.caida, x.sellado,
   FROM x;
 
 -- §6.1 · conteos por actor. p: fracción de las sesiones del bucket; durante la
--- caída de WhatsApp vale p_caida.
+-- caída de WhatsApp vale p_caida. classifier_down es un cero escrito (el
+-- clasificador estuvo arriba), salvo en la caída.
 INSERT INTO bob.proj_metric_counts
        (org_id, channel_id, actor_type, metric_id, bucket_start, event_count,
         session_count, sealed, source_watermark, feeder_version)
@@ -246,11 +250,14 @@ SELECT current_setting('bob_demo.org')::uuid, b.channel_id, r.actor, r.metrica, 
     ('demo-pbx',        'human', 'escalations',        0.05, 0.05),
     ('demo-pbx',        'user',  'abandoned',          0.03, 0.03),
     ('demo-pbx',        'user',  'abandoned_in_queue', 0.06, 0.06),
+    ('demo-pbx',        'user',  'classifier_down',    0.00, 0.00),
     ('demo-whatsapp',   'asa',   'resolved',           0.52, 0.10),
     ('demo-whatsapp',   'human', 'resolved',           0.30, 0.20),
     ('demo-whatsapp',   'asa',   'escalations',        0.22, 0.60),
     ('demo-whatsapp',   'human', 'escalations',        0.02, 0.02),
     ('demo-whatsapp',   'asa',   'disambiguation',     0.12, 0.12),
+    ('demo-whatsapp',   'human', 'disambiguation',     0.03, 0.03),
+    ('demo-whatsapp',   'user',  'classifier_down',    0.00, 0.40),
     ('demo-whatsapp',   'user',  'abandoned',          0.09, 0.45),
     ('demo-whatsapp',   'user',  'abstained',          0.02, 0.02),
     ('demo-whatsapp',   'user',  'label_missing',      0.01, 0.01),
@@ -282,6 +289,7 @@ SELECT current_setting('bob_demo.org')::uuid, d.channel_id, d.actor, d.medida, d
         ('demo-pbx',        'user',  'interaction_duration',   1.00,   240000.0),
         ('demo-whatsapp',   'asa',   'response_time',          3.00,     2500.0),
         ('demo-whatsapp',   'human', 'response_time',          1.20,    95000.0),
+        ('demo-whatsapp',   'user',  'response_time',          2.00,    60000.0),
         ('demo-whatsapp',   'user',  'interaction_duration',   1.00,   540000.0),
         ('demo-web-tienda', 'asa',   'response_time',          0.06,     1800.0),
         ('demo-web-tienda', 'user',  'interaction_duration',   1.00,   150000.0),
