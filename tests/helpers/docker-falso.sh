@@ -3,6 +3,7 @@
 # scripts/ensayo/desinstalar-bob.sh makes, over two tab-separated files in $DOCKER_FALSO:
 #   contenedores   name, compose project, image id, running (true|false)
 #   imagenes       image id, tags (space-separated)
+#   env/<name>     a container's environment, one VAR=value per line (none: empty)
 # Every call is appended to $DOCKER_FALSO/log, so a test can tell a dry run wrote nothing.
 set -euo pipefail
 d=${DOCKER_FALSO:?DOCKER_FALSO: the fake docker state directory}
@@ -20,7 +21,7 @@ case "$1" in
     else awk -F'\t' '{ print $1 "\t" $2 }' "$c"; fi ;;
   inspect)
     l=$(fila "$c" "$last"); [ -n "$l" ] || { echo "Error: No such object: $last" >&2; exit 1; }
-    case "$3" in *Running*) cut -f4 <<<"$l" ;; *) cut -f3 <<<"$l" ;; esac ;;
+    case "$3" in *Running*) cut -f4 <<<"$l" ;; *Config.Env*) [ ! -f "$d/env/$last" ] || cat "$d/env/$last" ;; *) cut -f3 <<<"$l" ;; esac ;;
   stop|start)
     [ -n "$(fila "$c" "$2")" ] || { echo "Error: No such container: $2" >&2; exit 1; }
     v=false; [ "$1" = start ] && v=true

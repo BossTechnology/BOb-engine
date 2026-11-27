@@ -46,6 +46,10 @@ const IMG_WEB = imagen('a')
 const IMG_ANTES = imagen('b')
 const IMG_DB = imagen('c')
 const IMG_PUERTA = imagen('d')
+const IMG_AUTH = imagen('e')
+// Bzzz's GoTrue, with BOb's access-token hook pointed at public and switched off (G8 stops when it is on).
+const HOOK_URI = 'GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_URI=pg-functions://postgres/public/custom_access_token_hook'
+const authEnv = (enabled) => `GOTRUE_SITE_URL=https://portal.example.com\n${HOOK_URI}\n${enabled === undefined ? '' : `GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED=${enabled}\n`}`
 
 // One line per thing in the catalog: roles and memberships, schemas and their
 // grants, every relation, function and type outside pg_catalog, triggers,
@@ -163,9 +167,11 @@ function montarCaja() {
   writeFileSync(join(raiz, 'root/bob-install/postgres.env'), 'POSTGRES_PASSWORD=inventada\n', { mode: 0o600 })
   dockerDir = join(raiz, 'docker'); mkdirSync(dockerDir)
   writeFileSync(join(dockerDir, 'contenedores'),
-    `bob-web\tbob\t${IMG_WEB}\ttrue\nbzzz-supabase-db\tbzzz\t${IMG_DB}\ttrue\nbzzz-puerta\tbzzz\t${IMG_PUERTA}\ttrue\n`)
+    `bob-web\tbob\t${IMG_WEB}\ttrue\nbzzz-supabase-db\tbzzz\t${IMG_DB}\ttrue\nbzzz-puerta\tbzzz\t${IMG_PUERTA}\ttrue\nbzzz-supabase-auth\tbzzz\t${IMG_AUTH}\ttrue\n`)
   writeFileSync(join(dockerDir, 'imagenes'),
-    `${IMG_WEB}\tbob-web:482a03ff0000 \n${IMG_ANTES}\t\n${IMG_DB}\tsupabase/postgres:17.6.1.136 \n${IMG_PUERTA}\tbzzz-puerta:local \n`)
+    `${IMG_WEB}\tbob-web:482a03ff0000 \n${IMG_ANTES}\t\n${IMG_DB}\tsupabase/postgres:17.6.1.136 \n${IMG_PUERTA}\tbzzz-puerta:local \n${IMG_AUTH}\tsupabase/gotrue:v2.191.0 \n`)
+  mkdirSync(join(dockerDir, 'env'))
+  writeFileSync(join(dockerDir, 'env/bzzz-supabase-auth'), authEnv('false'))
   writeFileSync(join(dockerDir, 'log'), '')
 }
 
@@ -179,7 +185,7 @@ function montarGit() {
 }
 function scriptEnv(extra = {}) {
   return {
-    ...limpio(), PATH: `${GIT_SHIM}:${process.env.PATH}`, DESINSTALAR_PRUEBA_RAIZ: raiz, DESINSTALAR_PRUEBA_HOSTNAME: 'bzzz-model-01',
+    ...limpio(), PATH: `${GIT_SHIM}:${process.env.PATH}`, DESINSTALAR_PRUEBA_RAIZ: raiz, DESINSTALAR_PRUEBA_HOSTNAME: 'model-01',
     DESINSTALAR_PRUEBA_DOCKER: DOCKER_FALSO, DOCKER_FALSO: dockerDir, DESINSTALAR_PRUEBA_URL: ADMIN_URL, ...extra,
   }
 }
@@ -272,7 +278,7 @@ describe('the install it undoes is the box\'s', () => {
   })
 })
 
-describe('G1 to G7 refuse, and leave everything as it was', () => {
+describe('G1 to G8 refuse, and leave everything as it was', () => {
   t('G1: without --caja model-01', async () => {
     for (const args of [['--motor', REPO_ROOT, commit], ['--caja', 'febor', '--motor', REPO_ROOT, commit],
       ['--caja', 'model-01 ', '--motor', REPO_ROOT, commit], ['--caja', 'MODEL-01', '--motor', REPO_ROOT, commit]]) {
@@ -280,8 +286,8 @@ describe('G1 to G7 refuse, and leave everything as it was', () => {
     }
   })
 
-  t('G2: on a machine whose name does not say model-01', async () => {
-    for (const h of ['bzzz-febor', 'bzzz-lab-02', 'model01']) {
+  t('G2: on a machine whose name is not model-01, exactly', async () => {
+    for (const h of ['bzzz-febor', 'bzzz-lab-02', 'model01', 'model-010', 'febor-ex-model-01', 'bzzz-model-01', 'MODEL-01']) {
       const r = desinstalar([...ARGS(), '--ejecutar'], { env: scriptEnv({ DESINSTALAR_PRUEBA_HOSTNAME: h }), input: 'desinstalo\n' })
       await sinCambios(r, h, { patron: /G2: esta máquina se llama/ })
     }
@@ -306,6 +312,50 @@ describe('G1 to G7 refuse, and leave everything as it was', () => {
     await q('INSERT INTO bob.organizations (id, name, slug, plan, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6)',
       [org.id, org.name, org.slug, org.plan, org.created_at, org.updated_at])
     await sinCambios(desinstalar(), 'back to one organization, modelo: the dry run passes', { codigo: 0 })
+  })
+
+  t('G2 takes the name up to its first dot', async () => {
+    await sinCambios(desinstalar(ARGS(), { env: scriptEnv({ DESINSTALAR_PRUEBA_HOSTNAME: 'model-01.example.com' }) }), 'fqdn', { codigo: 0 })
+    await sinCambios(desinstalar(ARGS(), { env: scriptEnv({ DESINSTALAR_PRUEBA_HOSTNAME: 'model-010.example.com' }) }), 'model-010 fqdn',
+      { patron: /G2: esta máquina se llama/ })
+  })
+
+  t('on a box (no test overrides) it runs as root only', async (c) => {
+    if (process.getuid?.() === 0) return c.skip('as root, box mode would go on to the real docker')
+    const r = desinstalar([...ARGS(), '--ejecutar'], { env: { ...limpio(), PATH: process.env.PATH }, input: 'desinstalo\n' })
+    await sinCambios(r, 'box mode, not root', { patron: /en una caja corre como root/ })
+  })
+
+  t('G8: a live auth hook of Bzzz\'s calls a function that would go: it stops', async () => {
+    const env = join(dockerDir, 'env/bzzz-supabase-auth')
+    try {
+      // On, written however GoTrue reads it, or with no _ENABLED at all: it counts as on.
+      for (const enabled of ['true', 'TRUE', '1', undefined]) {
+        writeFileSync(env, authEnv(enabled))
+        writeFileSync(join(dockerDir, 'log'), '')
+        const r = desinstalar([...ARGS(), '--ejecutar'], { input: 'desinstalo\n' })
+        await sinCambios(r, `enabled=${enabled}`, { patron: /G8: 1 hook\(s\) de auth activos llaman a una función que se borraría/ })
+        assert.match(r.stdout, /⚠ G8: bzzz-supabase-auth llama a public\.custom_access_token_hook \(GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_URI\)/)
+        assert.match(r.stdout, /GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED=false en el compose de Bzzz que arranca bzzz-supabase-auth/)
+      }
+      // Discovered, not listed: any variable, any container, any of the chain's functions in public.
+      writeFileSync(env, 'GOTRUE_SITE_URL=https://portal.example.com\n')
+      writeFileSync(join(dockerDir, 'env/bzzz-puerta'), 'OTRO_HOOK=pg-functions://postgres/public/update_updated_at\n')
+      writeFileSync(join(dockerDir, 'log'), '')
+      let r = desinstalar([...ARGS(), '--ejecutar'], { input: 'desinstalo\n' })
+      await sinCambios(r, 'another variable in another container', { patron: /G8: 1 hook/ })
+      // A hook on a function that is not the chain's does not stop it.
+      writeFileSync(join(dockerDir, 'env/bzzz-puerta'), 'GOTRUE_HOOK_SEND_SMS_URI=pg-functions://postgres/public/bzzz_enviar_sms\nGOTRUE_HOOK_SEND_SMS_ENABLED=true\n')
+      r = desinstalar()
+      await sinCambios(r, 'a hook of Bzzz\'s own', { codigo: 0 })
+    } finally {
+      writeFileSync(env, authEnv('false'))
+      rmSync(join(dockerDir, 'env/bzzz-puerta'), { force: true })
+    }
+    // Off: the plan says so, and the dry run passes.
+    const r = desinstalar()
+    await sinCambios(r, 'hook off', { codigo: 0 })
+    assert.match(r.stdout, /\(info\) +hook: bzzz-supabase-auth tiene GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_URI=…\/public\/custom_access_token_hook, apagado/)
   })
 
   t('G4: without typing «desinstalo»', async () => {
@@ -435,7 +485,7 @@ describe('the dry run', () => {
       /opt\/bob\/secrets\/migrador\.env/, /root\/bob-install\/postgres\.env/, /borra +esquema: bob \(con todo lo que tiene\)/,
       /cascada +tabla: bob\.organizations/, /borra +función en public: bob_grant_projection\(regclass\)/,
       /borra +historia del CLI: supabase_migrations/, /borra +rol: bob_migrador/, /borra +permiso en el esquema auth: USAGE de bob_migrador/,
-      /\(info\) +permiso en el esquema public: USAGE de supabase_auth_admin: SE QUEDA/, /borra +privilegio por defecto: TRUNCATE de anon y authenticated/,
+      /\(info\) +permiso en el esquema public: USAGE de supabase_auth_admin: SE QUEDA/, /borra +privilegio por defecto: TRUNCATE de anon y authenticated .*\(también en las que Bzzz cree después: ahí deshace F-44/,
       /== Cuenta: 1 contenedor\(es\), 2 imagen\(es\) con 1 etiqueta\(s\), \d+ fichero\(s\), \d+ cosa\(s\) en la base/,
       /hoy encuentra [1-9]\d* rastro\(s\) de BOb/, /Lo que se queda en Bzzz/, /BZZZ_HOST_BOB/]) {
       assert.match(r.stdout, p)
@@ -534,9 +584,9 @@ describe('--ejecutar', () => {
     assert.deepEqual(readdirSync(join(raiz, 'opt')), [])
     assert.deepEqual(readdirSync(join(raiz, 'root')), [])
     assert.equal(readFileSync(join(dockerDir, 'contenedores'), 'utf8'),
-      `bzzz-supabase-db\tbzzz\t${IMG_DB}\ttrue\nbzzz-puerta\tbzzz\t${IMG_PUERTA}\ttrue\n`)
+      `bzzz-supabase-db\tbzzz\t${IMG_DB}\ttrue\nbzzz-puerta\tbzzz\t${IMG_PUERTA}\ttrue\nbzzz-supabase-auth\tbzzz\t${IMG_AUTH}\ttrue\n`)
     assert.equal(readFileSync(join(dockerDir, 'imagenes'), 'utf8'),
-      `${IMG_DB}\tsupabase/postgres:17.6.1.136 \n${IMG_PUERTA}\tbzzz-puerta:local \n`)
+      `${IMG_DB}\tsupabase/postgres:17.6.1.136 \n${IMG_PUERTA}\tbzzz-puerta:local \n${IMG_AUTH}\tsupabase/gotrue:v2.191.0 \n`)
   })
 
   t('run again, it refuses: there is nothing of model-01\'s BOb left to prove it is model-01', async () => {

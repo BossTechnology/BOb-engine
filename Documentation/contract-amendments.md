@@ -4405,3 +4405,35 @@ Each fix has its own test, and each was seen red by sabotage.
   `desinstalar-bob` row in `pg_stat_activity` remains. If one hangs, it can be
   cut with `pg_terminate_backend`. The test holds the script's transaction on a
   lock and finds it there by that name.
+
+### Rehearsal uninstall · third review of #64 (`afbea5e`), applied
+
+- **GoTrue calls `public.custom_access_token_hook` by name.** The URI is
+  `pg-functions://postgres/public/custom_access_token_hook`
+  (`supabase/config.toml`). If Bzzz's GoTrue on model-01 has that hook on, the
+  uninstall's `DROP FUNCTION` makes every token issuance fail after the COMMIT.
+  Nobody could then sign in, the Bzzz portal included, until BOb is
+  reinstalled. New guard G8 reads the environment of every container, with no
+  list of hooks. Any variable whose value is `pg-functions://<db>/public/<fn>`
+  with `<fn>` among the chain's public functions stops the run, unless the
+  variable ends in `_URI` and its `<prefix>_ENABLED` is exactly `false` or
+  `0`. A missing `_ENABLED` counts as on, so the guard fails closed. The guard
+  stops instead of warning. Stopping touches nothing. Going on would leave the
+  box without sign-in, and the only way back is a reinstall. Turning the hook
+  off is Bzzz's call: the stop message and the README give the exact step.
+- **G2 matched a substring**, so `model-010` and `febor-ex-model-01` passed.
+  It now needs `uname -n`, up to its first dot, to be exactly `model-01`.
+  Henry should confirm that model-01's short hostname is exactly that. If it
+  isn't, the dry run stops at G2 and `CAJA_ENSAYO` changes in a review.
+- **Giving `TRUNCATE` back to `anon` and `authenticated`** in `postgres`'s
+  default privileges on `public` undoes F-44 for every table `postgres`
+  creates there later, Bzzz's included, until the chain's B5 removes it again.
+  It is the pre-install state, so it stays, but the plan and the README now
+  say so.
+- Tests: G8 on (`true`, `TRUE`, `1`, no `_ENABLED`) and in another variable
+  or container stops; a hook on a function that is not the chain's does not;
+  off shows as info. G2 refuses `model-010`, `febor-ex-model-01`,
+  `bzzz-model-01` and `model-010.example.com`, and takes
+  `model-01.example.com`. Box mode run without root stops. Each guard was seen
+  red by sabotage. The `-t 0` check of G4 only runs in box mode, which a test
+  cannot reach without root, so it has no test.

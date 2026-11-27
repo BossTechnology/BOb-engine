@@ -76,7 +76,9 @@ service role.
 Todas fallan cerradas, y `tests/ensayo-desinstalar.test.mjs` ve cada una negarse:
 
 - **G1**: `--caja model-01`, escrito así.
-- **G2**: el nombre de la máquina (`uname -n`) contiene `model-01`.
+- **G2**: el nombre de la máquina (`uname -n`, hasta el primer punto) es `model-01`, exacto. `model-010` o
+  `febor-ex-model-01` no pasan. Si el nombre corto de model-01 no es ese, el guion se para en seco y hay que cambiar
+  `CAJA_ENSAYO` en una revisión, no a mano en la caja.
 - **G3**: `bob.organizations` tiene una sola fila, y su slug es `modelo`. Se comprueba en seco y otra vez dentro de
   la transacción.
 - **G4**: con `--ejecutar`, escribir `desinstalo` en una terminal.
@@ -97,6 +99,13 @@ Todas fallan cerradas, y `tests/ensayo-desinstalar.test.mjs` ve cada una negarse
     que crea la cadena: otra sobrecarga con el mismo nombre no es suya;
   - una versión del historial del CLI que no es de este árbol;
   - otra base de datos con cosas de `bob*`.
+- **G8**: ningún contenedor tiene un hook activo que llama a una función de `public` que se va a borrar. GoTrue
+  llama a `custom_access_token_hook` por nombre (`pg-functions://postgres/public/custom_access_token_hook`,
+  `supabase/config.toml`). Si la función se va con el hook encendido, nadie recibe un token, tampoco en el portal
+  de Bzzz, hasta reinstalar. El guion mira el entorno de todos los contenedores, sin lista de hooks: cualquier
+  variable cuyo valor sea `pg-functions://<base>/public/<función>` con una función que la cadena crea en `public`.
+  Si la variable acaba en `_URI`, decide su `<prefijo>_ENABLED`, y solo cuenta como apagado con `false` o `0`; sin
+  ella, cuenta como activo. Se para en vez de avisar: parar no toca nada, y seguir dejaría la caja sin login.
 
 Además:
 
@@ -208,6 +217,13 @@ baja de una vecina, y aquí no se reimplementa.
   ```bash
   sudo docker exec bzzz-supabase-db psql -U supabase_admin -d postgres -c 'REVOKE USAGE ON SCHEMA public FROM supabase_auth_admin'
   ```
+- **F-44, el TRUNCATE de `anon` y `authenticated`**: se devuelve en los privilegios por defecto de `postgres` en
+  `public`, que es como estaba antes de la puesta. Vale para toda tabla nueva de `postgres` en `public`, también las
+  que Bzzz cree después: ahí F-44 queda deshecho hasta que B5 lo vuelva a quitar.
+- **Un hook de auth de Bzzz que llama a una función de BOb** (G8): el guion se para antes de nada. Apagarlo es cosa
+  de Bzzz: `<PREFIJO>_ENABLED=false` (para el de BOb, `GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED`) en el compose de
+  Bzzz que arranca ese GoTrue, y recrear el contenedor con `docker compose up -d` de ese servicio. Para volverlo a
+  encender después de reinstalar, `true` y lo mismo.
 - **B1**: Bzzz en `main` y lo que trajo (`bob.conf`, `firmantes_imagen`, los usuarios de ClickHouse de
   `bzzz-vecinos`). Se queda.
 - **A6/B3**: en el home de `bzzzops`, `entrega-bob/`, `bob-new/`, `bob-engine/` y `bob-engine.bundle`. Se quedan;

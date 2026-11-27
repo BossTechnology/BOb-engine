@@ -45,7 +45,7 @@
 #
 # GUARDAS. Todas fallan cerradas: ante la duda, no borra nada.
 #   G1  --caja model-01, escrito así.
-#   G2  el nombre de la máquina (uname -n) contiene model-01.
+#   G2  el nombre de la máquina (uname -n, hasta el primer punto) es model-01, exacto: ni model-010 ni febor-ex-model-01.
 #   G3  bob.organizations tiene una sola fila y su slug es `modelo`. Sin esa tabla tampoco empieza.
 #   G4  con --ejecutar, escribir «desinstalo» en una terminal.
 #   G5  nunca la service role: con una variable de entorno que la nombre no empieza, y en la base solo se entra como
@@ -56,6 +56,10 @@
 #       /root/bob-install que no es de la puesta, un contenedor bob-* o una etiqueta que no conoce, un rol bob_*
 #       que la cadena no crea, un permiso de un rol bob_* fuera de lo suyo, un objeto de fuera que cuelga de bob,
 #       una historia del CLI que no es de la cadena.
+#   G8  ningún contenedor (GoTrue de Bzzz, sobre todo) tiene un hook activo que llama a una función de public que se va
+#       a borrar: GoTrue la llama por nombre (pg-functions://…/public/custom_access_token_hook) y, borrada, nadie
+#       recibe un token, ni en el portal de Bzzz, hasta reinstalar. Se para en vez de avisar: parar no toca nada, y
+#       seguir dejaría la caja sin login. Se descubre en el entorno de cada contenedor, sin lista de hooks.
 #   Además: la huella del commit es la de /opt/bob/instalacion-firmada; lo que se ejecuta es lo que se enseñó (la
 #   transacción vuelve a hacer el plan y lo compara); y antes del COMMIT, la misma comprobación que hace `cadena`
 #   desde la base vacía (scripts/instalar-bob.sh, BOB_BASE_VACIA=1) tiene que no encontrar nada.
@@ -148,8 +152,8 @@ else
   psql_su() { docker exec -i -e PGAPPNAME="$APPNAME" "$DB" psql -X -q -A -t -F $'\t' -U supabase_admin -d postgres -v ON_ERROR_STOP=1 "$@"; }
 fi
 
-# G2
-case "$MAQUINA" in *"$CAJA_ENSAYO"*) ;; *) no "G2: esta máquina se llama '$MAQUINA', y el nombre no contiene $CAJA_ENSAYO: nada borrado" ;; esac
+# G2: igual, no «contiene»: model-010 o febor-ex-model-01 no son model-01.
+[ "${MAQUINA%%.*}" = "$CAJA_ENSAYO" ] || no "G2: esta máquina se llama '$MAQUINA', y no es $CAJA_ENSAYO: nada borrado"
 
 TMP=$(mktemp -d); chmod 700 "$TMP"
 # Todo rm -rf de este guion va con --one-file-system: no cruza a otro sistema de ficheros montado dentro de lo que
@@ -386,7 +390,7 @@ SELECT * FROM (
   UNION ALL SELECT 33, 'info', 'permiso en el esquema public',
          a.privilege_type || ' de supabase_auth_admin: SE QUEDA (lo apunta ' || pg_get_userbyid(a.grantor) || ', sea de BOb o de Bzzz; ver al final)', NULL
     FROM acl_public a WHERE a.grantee = 'supabase_auth_admin'::regrole
-  UNION ALL SELECT 31, 'borra', 'privilegio por defecto', 'TRUNCATE de anon y authenticated en las tablas nuevas de postgres en public',
+  UNION ALL SELECT 31, 'borra', 'privilegio por defecto', 'TRUNCATE de anon y authenticated en las tablas nuevas de postgres en public (también en las que Bzzz cree después: ahí deshace F-44; ver al final)',
          'ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT TRUNCATE ON TABLES TO anon, authenticated'
     FROM defacl, hay_defacl
    WHERE hay_defacl.n = 1 AND NOT ('anon' = ANY (coalesce(con_truncate, '{}'))) AND NOT ('authenticated' = ANY (coalesce(con_truncate, '{}')))
@@ -521,6 +525,33 @@ while IFS= read -r id; do
   done < <("$DOCKER" ps -a --filter "ancestor=$id" --format '{{.Names}}')
 done < "$TMP/ids"
 
+# G8: un hook activo de un contenedor que llama a una función de public que se va a borrar. Se mira el entorno de
+# todos los contenedores, no una lista: cualquier variable cuyo valor sea pg-functions://<base>/public/<función> con
+# una función que la cadena crea en public. Si la variable acaba en _URI, su <prefijo>_ENABLED decide; el hook solo
+# cuenta como apagado con false o 0, escrito así. Lo demás, o sin _ENABLED, cuenta como activo (falla cerrado).
+FPUB=$(tr ';' '\n' <<<"$firmas" | sed 's/(.*//' | sort -u)
+HOOKS=0; : > "$TMP/hooks"
+while IFS=$'\t' read -r n _p; do
+  [ -n "$n" ] || continue
+  envn=$("$DOCKER" inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$n" 2>/dev/null) || no "G8: no pude leer el entorno del contenedor $n: nada borrado"
+  while IFS= read -r l; do
+    [[ "$l" =~ ^([A-Za-z0-9_]+)=pg-functions://[^/]*/public/([A-Za-z0-9_]+)$ ]] || continue
+    k=${BASH_REMATCH[1]}; fn=${BASH_REMATCH[2]}
+    grep -qxF "$fn" <<<"$FPUB" || continue
+    act=activo
+    if [[ "$k" == *_URI ]]; then
+      case "$(sed -n "s/^${k%_URI}_ENABLED=//p" <<<"$envn" | tail -1)" in false|0) act=apagado ;; esac
+    fi
+    if [ "$act" = apagado ]; then
+      echo "  (info)   hook: $n tiene $k=…/public/$fn, apagado (${k%_URI}_ENABLED); la función se va igual" >> "$TMP/hooks"
+    else
+      echo "  ⚠ G8: $n llama a public.$fn ($k) y el hook está activo: borrarla deja sin token a todos los que entran por ese GoTrue" >> "$TMP/hooks"
+      echo "    para seguir: ${k%_URI}_ENABLED=false en el compose de Bzzz que arranca $n, y recrearlo (docker compose up -d de ese servicio); para volver, true y lo mismo" >> "$TMP/hooks"
+      HOOKS=$((HOOKS + 1))
+    fi
+  done <<<"$envn"
+done < "$TMP/ps"
+
 # La base, en una transacción de solo lectura.
 psql_su > "$TMP/inventario" 2> "$TMP/inventario.err" <<SQL || { sed 's/^/  /' "$TMP/inventario.err" >&2; no "la base no deja empezar (lo de arriba): nada borrado"; }
 BEGIN READ ONLY;
@@ -552,6 +583,7 @@ while IFS= read -r f; do echo "  $f"; done < "$FICHEROS"
 [ ! -d "$OPT_BOB" ] || echo "  y la carpeta $OPT_BOB entera"
 [ ! -d "$ROOT_INSTALL" ] || echo "  y la carpeta $ROOT_INSTALL"
 echo "-- La base (B5, B6, B7, B8, B8b), en una transacción"
+cat "$TMP/hooks"
 awk -F'\t' '$2 == "borra" || $2 == "cascada" { printf "  %-8s %s: %s\n", $2, $3, $4 } $2 == "info" { printf "  (info)   %s: %s\n", $3, $4 }' "$TMP/inventario"
 NBASE=$(awk -F'\t' '$2 == "borra" || $2 == "cascada"' "$TMP/inventario" | wc -l | tr -d ' ')
 echo
@@ -578,6 +610,11 @@ bzzz() {
   B13  bzzz-vecinos encendido, su CA y su certificado de servidor (/opt/bzzz/secrets/vecinos-mtls). Es de Bzzz y
        Febor lo necesita igual: se queda. En model-01, B13 ya lo encontrará en marcha y no se repite.
   B1   Bzzz en main y lo que trajo (bob.conf, firmantes_imagen, los usuarios de ClickHouse de bzzz-vecinos): se queda.
+  F-44 el TRUNCATE que se devuelve a anon y authenticated vale para toda tabla nueva de postgres en public, también
+       las que Bzzz cree después: es el estado de antes de la puesta, y la cadena lo vuelve a quitar en B5.
+  G8   si un GoTrue de Bzzz llama a una función de BOb en public (custom_access_token_hook), el guion se para antes de
+       nada. Apagarlo es de Bzzz: <PREFIJO>_ENABLED=false en su compose y recrear el contenedor; volverlo a encender,
+       true y lo mismo, después de reinstalar.
   A6/B3 en el home de bzzzops: entrega-bob/, bob-new/, bob-engine/ y bob-engine.bundle. Se quedan; A6 los vuelve a traer.
   B5   el USAGE en el esquema public de supabase_auth_admin. La cadena lo da (20260606120001, para el hook de BOb),
        pero Postgres lo apunta como concedido por pg_database_owner, igual que si lo hubiera dado Bzzz para su
@@ -587,6 +624,10 @@ bzzz() {
 TXT
 }
 
+if [ "$HOOKS" -gt 0 ]; then
+  bzzz
+  no "G8: $HOOKS hook(s) de auth activos llaman a una función que se borraría (las ⚠ de arriba): nada borrado; apágalos antes de seguir"
+fi
 if [ "$DESCONOCIDO" -gt 0 ]; then
   bzzz
   no "G7: $DESCONOCIDO cosa(s) que no están en el mapa (las ⚠ de arriba): no se borra nada; mirarlas antes de seguir"
