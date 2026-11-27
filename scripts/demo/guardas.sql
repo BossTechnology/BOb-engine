@@ -19,8 +19,9 @@
 --       (una caja, una organización: P5, objeción 3);
 --   G4  quien corre no puede leer todas las filas (sin BYPASSRLS la guarda
 --       contaría bajo RLS y vería cero), o es un rol de la API;
---   G5  quien corre no puede bajar a bob_app y a bob_feeder para escribir, ni
---       tomar su membresía prestada para esta transacción (devolver.sql la quita);
+--   G5  quien corre no puede bajar a bob_app y a bob_feeder para escribir
+--       (en 16+, el privilegio SET, no solo la membresía), ni prestarse una
+--       concesión propia para esta transacción (devolver.sql la quita);
 --   G6  (solo al sembrar) hay datos que no son de la semilla: una fila de
 --       cualquier proyección de cualquier organización con otro feeder_version,
 --       o una fila en bob.interactions;
@@ -74,24 +75,41 @@ BEGIN
     RAISE EXCEPTION 'bob-demo G4: % no ve todas las filas (sin BYPASSRLS); la guarda contaría bajo RLS', current_user;
   END IF;
 
-  -- G5. La cadena no hace a postgres miembro de bob_app ni de bob_feeder. Si
-  -- no lo es, la membresía se presta para esta transacción y devolver.sql la
-  -- quita antes del COMMIT; si algo falla, el ROLLBACK la quita igual. El rol
-  -- va por su nombre: `GRANT … TO current_user` tumba el servidor de la caja
-  -- (F-35).
+  -- G5. Se pregunta por el privilegio que usa SET ROLE, no por la membresía.
+  -- Desde Postgres 16 son cosas distintas: en la imagen de la caja (17.6)
+  -- postgres YA es miembro de bob_app y bob_feeder, concedido por
+  -- supabase_admin con ADMIN pero sin SET, y `SET LOCAL ROLE` falla igual
+  -- (contract-amendments, semilla demo). En 16+ se pregunta 'SET'; en 15 (el CI) toda membresía deja bajar.
+  -- Si falta, se presta una concesión propia, WITH SET TRUE, hecha por quien
+  -- corre (le basta el ADMIN que ya tiene); devolver.sql quita SOLO esa antes
+  -- del COMMIT (REVOKE … GRANTED BY quien corre), y la de supabase_admin se
+  -- queda como estaba. Si algo falla, el ROLLBACK la quita igual. Sin ADMIN,
+  -- no hay concesión y la guarda se niega. El rol va por su nombre:
+  -- `GRANT … TO current_user` tumba el servidor de la caja (F-35).
+  DECLARE
+    pg16 CONSTANT boolean := current_setting('server_version_num')::int >= 160000;
+    rol  text;
   BEGIN
-    IF NOT pg_has_role(current_user, 'bob_app', 'MEMBER') THEN
-      EXECUTE format('GRANT bob_app TO %I', current_user);
-      PERFORM set_config('bob_demo.prestado', concat_ws(',',
-        nullif(current_setting('bob_demo.prestado', true), ''), 'bob_app'), true);
-    END IF;
-    IF NOT pg_has_role(current_user, 'bob_feeder', 'MEMBER') THEN
-      EXECUTE format('GRANT bob_feeder TO %I', current_user);
-      PERFORM set_config('bob_demo.prestado', concat_ws(',',
-        nullif(current_setting('bob_demo.prestado', true), ''), 'bob_feeder'), true);
-    END IF;
-  EXCEPTION WHEN insufficient_privilege THEN
-    RAISE EXCEPTION 'bob-demo G5: % no puede bajar a bob_app y a bob_feeder (%)', current_user, SQLERRM;
+    FOREACH rol IN ARRAY ARRAY['bob_app', 'bob_feeder'] LOOP
+      IF NOT pg_has_role(current_user, rol, CASE WHEN pg16 THEN 'SET' ELSE 'MEMBER' END) THEN
+        IF pg16 THEN
+          EXECUTE format('GRANT %I TO %I WITH INHERIT FALSE, SET TRUE GRANTED BY %I',
+                         rol, current_user, current_user);
+        ELSE
+          EXECUTE format('GRANT %I TO %I', rol, current_user);
+        END IF;
+        IF NOT pg_has_role(current_user, rol, CASE WHEN pg16 THEN 'SET' ELSE 'MEMBER' END) THEN
+          RAISE EXCEPTION 'la concesión no dio SET sobre %', rol
+            USING ERRCODE = 'insufficient_privilege';
+        END IF;
+        PERFORM set_config('bob_demo.prestado', concat_ws(',',
+          nullif(current_setting('bob_demo.prestado', true), ''), rol), true);
+        PERFORM set_config('bob_demo.prestado_a', current_user, true);
+      END IF;
+    END LOOP;
+  EXCEPTION WHEN insufficient_privilege OR invalid_grant_operation THEN
+    RAISE EXCEPTION 'bob-demo G5: % no puede bajar a bob_app y a bob_feeder (SET ROLE), ni prestarse la membresía para esta transacción: le falta ADMIN sobre el rol (%)',
+      current_user, SQLERRM;
   END;
 
   -- G3

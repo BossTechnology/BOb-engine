@@ -4245,6 +4245,24 @@ things about the boxes:
   from actors and channels. Before deleting, `--quitar` reads every foreign key
   to `bob.channels` and `bob.actors` from the catalog, and G9 refuses if any
   row the seed did not write hangs off a demo channel or actor.
+- **Correction, 27 Nov: on Postgres 16+ membership is not the right to
+  `SET ROLE`.** The first bullet holds on CI's 15. On lab-02 (17.6) `postgres`
+  IS a member of `bob_app` and `bob_feeder`: `supabase_admin` granted it when
+  `postgres` created them under CREATEROLE, with `admin_option = t`,
+  `inherit_option = f`, `set_option = f`. The same row appears on a fresh
+  local stack on `17.6.1.136`. G5 asked `pg_has_role(…, 'MEMBER')`, got true,
+  lent nothing, and the dry run on lab-02 died at `semilla.sql`'s first
+  `SET LOCAL ROLE bob_app` (`permission denied to set role`), with nothing
+  written. G5 now asks for `'SET'` on 16+ (`'MEMBER'` on 15, where membership
+  always allows it). When it is missing, `postgres` grants itself the role
+  `WITH INHERIT FALSE, SET TRUE GRANTED BY postgres`, which its ADMIN option
+  allows. `devolver.sql` revokes only that grant (`REVOKE … GRANTED BY
+  postgres`) before COMMIT, so `supabase_admin`'s grant stays as it was.
+  Without ADMIN there is no grant to make, and G5 refuses. `--quitar` goes
+  through the same G5, so the fix covers it too. CI's main stack is 15 and
+  cannot show this, so the job on the box's image ("Chain applies as
+  bob_migrador") runs the case, and a skip there fails. Seen red against the
+  previous G5 on a local 17.6 stack, with lab-02's exact error.
 
 The seed writes channels, capabilities, mix, actors and refs as `bob_app` under
 the organization's claim, and the projections as `bob_feeder`, creating the
