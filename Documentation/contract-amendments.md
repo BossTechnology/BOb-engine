@@ -4422,9 +4422,12 @@ Each fix has its own test, and each was seen red by sabotage.
   box without sign-in, and the only way back is a reinstall. Turning the hook
   off is Bzzz's call: the stop message and the README give the exact step.
 - **G2 matched a substring**, so `model-010` and `febor-ex-model-01` passed.
-  It now needs `uname -n`, up to its first dot, to be exactly `model-01`.
-  Henry should confirm that model-01's short hostname is exactly that. If it
-  isn't, the dry run stops at G2 and `CAJA_ENSAYO` changes in a review.
+  It now needs the short hostname (`uname -n` up to its first dot, the same as
+  `hostname -s`) to be exactly `bzzz-model-01`, which is what the box answers
+  (checked read-only). The box's logical name (`--caja model-01`,
+  `CAJA_ENSAYO`) and its expected hostname (`MAQUINA_ENSAYO`) are now two
+  constants. `model-01` alone, `model-010`, `bzzz-model-010`,
+  `bzzz-model-01x` and `febor-ex-model-01` are refused.
 - **Giving `TRUNCATE` back to `anon` and `authenticated`** in `postgres`'s
   default privileges on `public` undoes F-44 for every table `postgres`
   creates there later, Bzzz's included, until the chain's B5 removes it again.
@@ -4432,8 +4435,7 @@ Each fix has its own test, and each was seen red by sabotage.
   say so.
 - Tests: G8 on (`true`, `TRUE`, `1`, no `_ENABLED`) and in another variable
   or container stops; a hook on a function that is not the chain's does not;
-  off shows as info. G2 refuses `model-010`, `febor-ex-model-01`,
-  `bzzz-model-01` and `model-010.example.com`, and takes
-  `model-01.example.com`. Box mode run without root stops. Each guard was seen
+  off shows as info. G2 refuses each of those names and
+  `bzzz-model-010.example.com`, and takes `bzzz-model-01.example.com`. Box mode run without root stops. Each guard was seen
   red by sabotage. The `-t 0` check of G4 only runs in box mode, which a test
   cannot reach without root, so it has no test.

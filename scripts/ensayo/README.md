@@ -76,9 +76,10 @@ service role.
 Todas fallan cerradas, y `tests/ensayo-desinstalar.test.mjs` ve cada una negarse:
 
 - **G1**: `--caja model-01`, escrito así.
-- **G2**: el nombre de la máquina (`uname -n`, hasta el primer punto) es `model-01`, exacto. `model-010` o
-  `febor-ex-model-01` no pasan. Si el nombre corto de model-01 no es ese, el guion se para en seco y hay que cambiar
-  `CAJA_ENSAYO` en una revisión, no a mano en la caja.
+- **G2**: el nombre corto de la máquina (`uname -n` hasta el primer punto, lo mismo que `hostname -s`) es
+  `bzzz-model-01`, exacto, medido en la caja. `model-01` a secas, `bzzz-model-010`, `bzzz-model-01x` o
+  `febor-ex-model-01` no pasan. Son dos constantes: `CAJA_ENSAYO=model-01` es el nombre lógico que pide `--caja`, y
+  `MAQUINA_ENSAYO=bzzz-model-01` es el de la máquina. Si la máquina cambia de nombre, se cambia en una revisión.
 - **G3**: `bob.organizations` tiene una sola fila, y su slug es `modelo`. Se comprueba en seco y otra vez dentro de
   la transacción.
 - **G4**: con `--ejecutar`, escribir `desinstalo` en una terminal.

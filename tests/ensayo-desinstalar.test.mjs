@@ -185,7 +185,7 @@ function montarGit() {
 }
 function scriptEnv(extra = {}) {
   return {
-    ...limpio(), PATH: `${GIT_SHIM}:${process.env.PATH}`, DESINSTALAR_PRUEBA_RAIZ: raiz, DESINSTALAR_PRUEBA_HOSTNAME: 'model-01',
+    ...limpio(), PATH: `${GIT_SHIM}:${process.env.PATH}`, DESINSTALAR_PRUEBA_RAIZ: raiz, DESINSTALAR_PRUEBA_HOSTNAME: 'bzzz-model-01',
     DESINSTALAR_PRUEBA_DOCKER: DOCKER_FALSO, DOCKER_FALSO: dockerDir, DESINSTALAR_PRUEBA_URL: ADMIN_URL, ...extra,
   }
 }
@@ -286,8 +286,9 @@ describe('G1 to G8 refuse, and leave everything as it was', () => {
     }
   })
 
-  t('G2: on a machine whose name is not model-01, exactly', async () => {
-    for (const h of ['bzzz-febor', 'bzzz-lab-02', 'model01', 'model-010', 'febor-ex-model-01', 'bzzz-model-01', 'MODEL-01']) {
+  t('G2: on a machine whose short name is not bzzz-model-01, exactly', async () => {
+    for (const h of ['bzzz-febor', 'bzzz-lab-02', 'model01', 'model-01', 'model-010', 'bzzz-model-010', 'bzzz-model-01x',
+      'febor-ex-model-01', 'febor-ex-bzzz-model-01', 'BZZZ-MODEL-01']) {
       const r = desinstalar([...ARGS(), '--ejecutar'], { env: scriptEnv({ DESINSTALAR_PRUEBA_HOSTNAME: h }), input: 'desinstalo\n' })
       await sinCambios(r, h, { patron: /G2: esta máquina se llama/ })
     }
@@ -315,8 +316,8 @@ describe('G1 to G8 refuse, and leave everything as it was', () => {
   })
 
   t('G2 takes the name up to its first dot', async () => {
-    await sinCambios(desinstalar(ARGS(), { env: scriptEnv({ DESINSTALAR_PRUEBA_HOSTNAME: 'model-01.example.com' }) }), 'fqdn', { codigo: 0 })
-    await sinCambios(desinstalar(ARGS(), { env: scriptEnv({ DESINSTALAR_PRUEBA_HOSTNAME: 'model-010.example.com' }) }), 'model-010 fqdn',
+    await sinCambios(desinstalar(ARGS(), { env: scriptEnv({ DESINSTALAR_PRUEBA_HOSTNAME: 'bzzz-model-01.example.com' }) }), 'fqdn', { codigo: 0 })
+    await sinCambios(desinstalar(ARGS(), { env: scriptEnv({ DESINSTALAR_PRUEBA_HOSTNAME: 'bzzz-model-010.example.com' }) }), 'bzzz-model-010 fqdn',
       { patron: /G2: esta máquina se llama/ })
   })
 

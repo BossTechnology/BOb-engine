@@ -45,7 +45,8 @@
 #
 # GUARDAS. Todas fallan cerradas: ante la duda, no borra nada.
 #   G1  --caja model-01, escrito así.
-#   G2  el nombre de la máquina (uname -n, hasta el primer punto) es model-01, exacto: ni model-010 ni febor-ex-model-01.
+#   G2  el nombre corto de la máquina (uname -n hasta el primer punto, lo mismo que hostname -s) es bzzz-model-01,
+#       exacto: ni model-01 a secas, ni bzzz-model-010, ni bzzz-model-01x, ni febor-ex-model-01.
 #   G3  bob.organizations tiene una sola fila y su slug es `modelo`. Sin esa tabla tampoco empieza.
 #   G4  con --ejecutar, escribir «desinstalo» en una terminal.
 #   G5  nunca la service role: con una variable de entorno que la nombre no empieza, y en la base solo se entra como
@@ -84,6 +85,9 @@
 set -euo pipefail
 
 CAJA_ENSAYO=model-01
+# El nombre corto de la máquina de model-01 (hostname -s), medido en la caja. No es el nombre de la caja: --caja
+# model-01 es el nombre lógico, y G2 compara la máquina con este, exacto.
+MAQUINA_ENSAYO=bzzz-model-01
 SLUG_ENSAYO=modelo
 PALABRA=desinstalo
 MARCA_VACIADA=BASE-YA-VACIADA
@@ -152,8 +156,8 @@ else
   psql_su() { docker exec -i -e PGAPPNAME="$APPNAME" "$DB" psql -X -q -A -t -F $'\t' -U supabase_admin -d postgres -v ON_ERROR_STOP=1 "$@"; }
 fi
 
-# G2: igual, no «contiene»: model-010 o febor-ex-model-01 no son model-01.
-[ "${MAQUINA%%.*}" = "$CAJA_ENSAYO" ] || no "G2: esta máquina se llama '$MAQUINA', y no es $CAJA_ENSAYO: nada borrado"
+# G2: igual, no «contiene»: bzzz-model-010 o febor-ex-model-01 no son la máquina de model-01.
+[ "${MAQUINA%%.*}" = "$MAQUINA_ENSAYO" ] || no "G2: esta máquina se llama '$MAQUINA', y la de $CAJA_ENSAYO es $MAQUINA_ENSAYO: nada borrado"
 
 TMP=$(mktemp -d); chmod 700 "$TMP"
 # Todo rm -rf de este guion va con --one-file-system: no cruza a otro sistema de ficheros montado dentro de lo que
