@@ -4306,7 +4306,8 @@ stack after `cadena`, the alta's CI stand-in, `resto`, B8 and B8b:
     `cap_alert_log`, `enforce_slug_immutability`, `custom_access_token_hook`).
     `public.bob_outbox_drain` goes with the cascade (F-47).
   - `USAGE` on `public` for `supabase_auth_admin` (`20260606120001`) and for
-    `bob_app`, `bob_feeder` and `bob_ai_ro`.
+    `bob_app`, `bob_feeder` and `bob_ai_ro`. The uninstall leaves
+    `supabase_auth_admin`'s (see the second review below).
   - `postgres`'s default privileges in `public`: `20261121170000` took TRUNCATE
     from `anon` and `authenticated`. The uninstall grants it back, so the
     catalog matches the fresh one.
@@ -4383,3 +4384,24 @@ empty base then accepts the database. Each guard was seen red by sabotage.
   it.
 
 Each fix has its own test, and each was seen red by sabotage.
+
+### Rehearsal uninstall · second review of #64 (`915c950`), applied
+
+- **`supabase_auth_admin`'s `USAGE` on `public` is left in place.** The chain
+  grants it as `postgres` (`20260606120001`), but Postgres records the grantor
+  as `pg_database_owner`. It would record the same grantor if Bzzz granted it
+  as `supabase_admin` for an auth hook of its own. So the grantor cannot tell
+  BOb's grant from Bzzz's, and revoking Bzzz's would break the portal's
+  sign-in. Stopping on it instead would block every run on model-01, where
+  BOb's grant is always there. The uninstall keeps the grant, says so in the
+  plan, and prints the `REVOKE` for Henry to run once he has checked that no
+  Bzzz auth hook lives in `public`. The chain grants it again without error.
+  The test plants that grant before BOb's install, as Bzzz would, and the
+  catalog after `--ejecutar` still equals the pre-install one line for line.
+- **After a `kill -9`, the script's `psql` can outlive it and COMMIT later.**
+  Every session of the script now carries `application_name =
+  desinstalar-bob`. Before reading the mark or the database, the README's
+  recovery waits until neither the `docker exec … psql` process nor a
+  `desinstalar-bob` row in `pg_stat_activity` remains. If one hangs, it can be
+  cut with `pg_terminate_backend`. The test holds the script's transaction on a
+  lock and finds it there by that name.

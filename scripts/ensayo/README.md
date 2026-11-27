@@ -56,7 +56,7 @@ frente a la misma con BOb instalado como lo instala una caja. El guion lo deshac
 | B8b | La organización `modelo` en `bob.organizations`. | Se va con `DROP SCHEMA bob CASCADE`. |
 | B7 | Las migraciones de después de la cadena, en `bob` y en `bob.schema_migrations`. | Con el esquema. |
 | B6 | El alta de Bzzz: `bob_migrador` (LOGIN, contraseña), dueño de `bob`; `GRANT USAGE ON SCHEMA auth TO bob_migrador` (lo da `supabase_admin`); `/opt/bob/secrets/migrador.env`. | `REVOKE USAGE ON SCHEMA auth FROM bob_migrador` (como `supabase_admin`), `DROP ROLE bob_migrador`. |
-| B5 | La cadena (33 migraciones) como `postgres`: el esquema `bob` y todo lo suyo; `bob_app`, `bob_feeder` y `bob_ai_ro`, cada uno con su fila de ADMIN para `postgres` (16+); 25 funciones en `public` de `postgres` (`bob_*`, `update_updated_at`, `cap_alert_log`, `enforce_slug_immutability`, `custom_access_token_hook`); `USAGE` en `public` para `supabase_auth_admin`, `bob_app`, `bob_feeder` y `bob_ai_ro`; el TRUNCATE que `20261121170000` quitó a `anon` y `authenticated` en los privilegios por defecto de `postgres` en `public`; cuatro tablas de `bob` en la publicación `supabase_realtime`; el esquema `supabase_migrations` con la historia del CLI, que antes no existía. | `DROP SCHEMA bob CASCADE` (con el dueño de `bob`), `DROP FUNCTION … RESTRICT` de las de `public`, `REVOKE USAGE ON SCHEMA public FROM …`, `ALTER DEFAULT PRIVILEGES … GRANT TRUNCATE ON TABLES TO anon, authenticated`, `DROP SCHEMA supabase_migrations CASCADE`, `DROP ROLE` de los tres. La publicación sigue: solo pierde las tablas de `bob`. |
+| B5 | La cadena (33 migraciones) como `postgres`: el esquema `bob` y todo lo suyo; `bob_app`, `bob_feeder` y `bob_ai_ro`, cada uno con su fila de ADMIN para `postgres` (16+); 25 funciones en `public` de `postgres` (`bob_*`, `update_updated_at`, `cap_alert_log`, `enforce_slug_immutability`, `custom_access_token_hook`); `USAGE` en `public` para `bob_app`, `bob_feeder` y `bob_ai_ro`, y para `supabase_auth_admin` (este se queda: ver abajo); el TRUNCATE que `20261121170000` quitó a `anon` y `authenticated` en los privilegios por defecto de `postgres` en `public`; cuatro tablas de `bob` en la publicación `supabase_realtime`; el esquema `supabase_migrations` con la historia del CLI, que antes no existía. | `DROP SCHEMA bob CASCADE` (con el dueño de `bob`), `DROP FUNCTION … RESTRICT` de las de `public`, `REVOKE USAGE ON SCHEMA public FROM …`, `ALTER DEFAULT PRIVILEGES … GRANT TRUNCATE ON TABLES TO anon, authenticated`, `DROP SCHEMA supabase_migrations CASCADE`, `DROP ROLE` de los tres. La publicación sigue: solo pierde las tablas de `bob`. |
 | B4 | `/root/bob-install/postgres.env`, si B14 no lo quitó, y la carpeta. | La quita. |
 | B3 | `/opt/bob/bin/firma-instalacion`, `firmantes_instalacion`, `aprobaciones-revocadas`, `aprobaciones/`, `instalacion-firmada`, `instalacion-aprobacion`, `instalacion-en-curso`, `hosts-permitidos`, `.instalando`, `trabajo.*`. Antes de la primera puesta `/opt/bob` no existía. | Quita `/opt/bob` entero. |
 
@@ -119,8 +119,28 @@ Si el guion muere a la fuerza (un corte de luz, un `kill -9`) con las carpetas `
 primero es saber si la transacción llegó al COMMIT. **No las devuelvas sin mirar**: si la base ya está vacía,
 devolver `/opt/bob` dejaría `instalacion-firmada` diciendo `544fe970…` sobre una base sin BOb.
 
-Justo después del COMMIT, el guion deja una marca `BASE-YA-VACIADA` en cada carpeta apartada. Y la base lo dice
-ella misma: si `bob` ya no existe, el COMMIT pasó.
+**Antes de mirar nada, espera a que no quede nada del guion corriendo.** Un `kill -9` mata a bash, pero su hijo
+`psql` (el `docker exec … psql`) puede seguir vivo dentro de la transacción y hacer COMMIT después. Si miraras
+antes, leerías «la base no cambió» y luego cambiaría. Cada sesión del guion en la base se llama `desinstalar-bob`
+(`application_name`). Las dos órdenes tienen que no devolver nada; si devuelven algo, espera y vuelve a mirar:
+
+```bash
+pgrep -af 'docker exec -i -e PGAPPNAME=desinstalar-bob'
+```
+
+```bash
+sudo docker exec bzzz-supabase-db psql -X -A -t -U supabase_admin -d postgres -c "SELECT pid, state, xact_start, wait_event FROM pg_stat_activity WHERE application_name = 'desinstalar-bob'"
+```
+
+Si una sesión sigue ahí, colgada sin avanzar, se puede cortar. `pg_terminate_backend` hace ROLLBACK de lo que no
+llegó al COMMIT, y lo que ya llegó, queda. Después de cortarla, se mira igual que siempre:
+
+```bash
+sudo docker exec bzzz-supabase-db psql -X -A -t -U supabase_admin -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = 'desinstalar-bob'"
+```
+
+Cuando no quede nada, mira la marca y la base. Justo después del COMMIT, el guion deja una marca `BASE-YA-VACIADA`
+en cada carpeta apartada. Y la base lo dice ella misma: si `bob` ya no existe, el COMMIT pasó.
 
 ```bash
 ls /opt/.bob.desinstalando.*/BASE-YA-VACIADA /root/.bob-install.desinstalando.*/BASE-YA-VACIADA
@@ -181,6 +201,13 @@ baja de una vecina, y aquí no se reimplementa.
   con el guion.
 - **B13**: `bzzz-vecinos` encendido, su CA y su certificado de servidor (`/opt/bzzz/secrets/vecinos-mtls`). Son de
   Bzzz y Febor los necesita igual. En model-01, B13 ya los encontrará en marcha.
+- **B5, el `USAGE` en `public` de `supabase_auth_admin`**: la cadena lo da (`20260606120001`, para el hook de BOb).
+  Pero Postgres apunta como concedente a `pg_database_owner` lo dé quien lo dé, así que no se distingue del que
+  Bzzz pudiera dar para un hook de auth propio. Quitárselo a Bzzz rompería el login del portal. Se queda, y la
+  cadena lo vuelve a dar sin error. Solo si Henry comprueba que ningún hook de auth de Bzzz vive en `public`:
+  ```bash
+  sudo docker exec bzzz-supabase-db psql -U supabase_admin -d postgres -c 'REVOKE USAGE ON SCHEMA public FROM supabase_auth_admin'
+  ```
 - **B1**: Bzzz en `main` y lo que trajo (`bob.conf`, `firmantes_imagen`, los usuarios de ClickHouse de
   `bzzz-vecinos`). Se queda.
 - **A6/B3**: en el home de `bzzzops`, `entrega-bob/`, `bob-new/`, `bob-engine/` y `bob-engine.bundle`. Se quedan;

@@ -31,8 +31,11 @@
 #     - las funciones que la cadena deja en public (las que sus migraciones nombran, de postgres);
 #     - la historia del CLI (supabase_migrations, que antes no existía: B0 lo midió en model-01 y en Febor);
 #     - el TRUNCATE que 20261121170000 quitó a anon y authenticated en los privilegios por defecto de postgres en
-#       public, que se devuelve; el USAGE en public de supabase_auth_admin (20260606120001) y de bob_app,
-#       bob_feeder y bob_ai_ro; el USAGE en auth de bob_migrador (el alta, como supabase_admin);
+#       public, que se devuelve; el USAGE en public de bob_app, bob_feeder y bob_ai_ro; el USAGE en auth de
+#       bob_migrador (el alta, como supabase_admin). El USAGE en public de supabase_auth_admin (20260606120001) NO
+#       se quita: Postgres lo apunta como concedido por pg_database_owner lo dé quien lo dé, así que no se distingue
+#       del que Bzzz pudiera dar para su propio hook de auth, y quitárselo a Bzzz rompería el login del portal. Se
+#       queda, el guion lo dice, e imprime la orden por si Henry confirma que Bzzz no lo usa;
 #     - los roles bob_app, bob_feeder y bob_ai_ro (la cadena) y bob_migrador (el alta), con su contraseña (B6, B8) y
 #       la fila de ADMIN que Postgres 16+ deja a postgres sobre cada uno.
 #     En auth no hay nada que quitar: la cadena no crea usuarios ni claims (el disparador on_auth_user_created lo crea
@@ -80,6 +83,9 @@ CAJA_ENSAYO=model-01
 SLUG_ENSAYO=modelo
 PALABRA=desinstalo
 MARCA_VACIADA=BASE-YA-VACIADA
+# Cada sesión del guion en la base se llama así (application_name): quien recupere la caja después de un kill -9
+# busca en pg_stat_activity si queda alguna, porque psql puede seguir vivo y hacer COMMIT después de morir el guion.
+APPNAME=desinstalar-bob
 NS_BOB=bob
 MIGRADOR=bob_migrador
 
@@ -128,7 +134,7 @@ if [ -n "$PRUEBA" ]; then
   URL=${DESINSTALAR_PRUEBA_URL:-}
   [[ "$URL" =~ ^postgresql://supabase_admin:[^@/]*@(127\.0\.0\.1|localhost):[0-9]+/[a-z_][a-z0-9_]*$ ]] \
     || no "DESINSTALAR_PRUEBA_URL: supabase_admin en loopback"
-  psql_su() { psql "$URL" -X -q -A -t -F $'\t' -v ON_ERROR_STOP=1 "$@"; }
+  psql_su() { PGAPPNAME=$APPNAME psql "$URL" -X -q -A -t -F $'\t' -v ON_ERROR_STOP=1 "$@"; }
 else
   [ "$(id -u)" = 0 ] || no "en una caja corre como root (sudo): /opt/bob y /root/bob-install son de root"
   OPT_BOB=/opt/bob
@@ -139,7 +145,7 @@ else
   command -v docker >/dev/null || no "falta docker"
   [ "$(docker inspect -f '{{.State.Health.Status}}' "$DB" 2>/dev/null)" = healthy ] || no "$DB no está sano"
   # Como el alta de Bzzz (psql_su de generar-secretos-vecina.sh): supabase_admin por el socket del contenedor.
-  psql_su() { docker exec -i "$DB" psql -X -q -A -t -F $'\t' -U supabase_admin -d postgres -v ON_ERROR_STOP=1 "$@"; }
+  psql_su() { docker exec -i -e PGAPPNAME="$APPNAME" "$DB" psql -X -q -A -t -F $'\t' -U supabase_admin -d postgres -v ON_ERROR_STOP=1 "$@"; }
 fi
 
 # G2
@@ -375,7 +381,11 @@ SELECT * FROM (
   -- 4 · permisos en public
   UNION ALL SELECT 30, 'borra', 'permiso en el esquema public', a.privilege_type || ' de ' || pg_get_userbyid(a.grantee),
          format('REVOKE %s ON SCHEMA public FROM %I', a.privilege_type, pg_get_userbyid(a.grantee))
-    FROM acl_public a WHERE a.grantee IN (SELECT oid FROM br) OR (a.grantee = 'supabase_auth_admin'::regrole AND a.privilege_type = 'USAGE')
+    FROM acl_public a WHERE a.grantee IN (SELECT oid FROM br)
+  -- El de supabase_auth_admin no: concedido por pg_database_owner, venga de la cadena o de Bzzz, no se sabe de quién es.
+  UNION ALL SELECT 33, 'info', 'permiso en el esquema public',
+         a.privilege_type || ' de supabase_auth_admin: SE QUEDA (lo apunta ' || pg_get_userbyid(a.grantor) || ', sea de BOb o de Bzzz; ver al final)', NULL
+    FROM acl_public a WHERE a.grantee = 'supabase_auth_admin'::regrole
   UNION ALL SELECT 31, 'borra', 'privilegio por defecto', 'TRUNCATE de anon y authenticated en las tablas nuevas de postgres en public',
          'ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT TRUNCATE ON TABLES TO anon, authenticated'
     FROM defacl, hay_defacl
@@ -569,6 +579,11 @@ bzzz() {
        Febor lo necesita igual: se queda. En model-01, B13 ya lo encontrará en marcha y no se repite.
   B1   Bzzz en main y lo que trajo (bob.conf, firmantes_imagen, los usuarios de ClickHouse de bzzz-vecinos): se queda.
   A6/B3 en el home de bzzzops: entrega-bob/, bob-new/, bob-engine/ y bob-engine.bundle. Se quedan; A6 los vuelve a traer.
+  B5   el USAGE en el esquema public de supabase_auth_admin. La cadena lo da (20260606120001, para el hook de BOb),
+       pero Postgres lo apunta como concedido por pg_database_owner, igual que si lo hubiera dado Bzzz para su
+       propio hook: no se sabe de quién es, y quitárselo a Bzzz rompería el login del portal. Se queda; la cadena
+       lo vuelve a dar sin error. Solo si Henry comprueba que ningún hook de auth de Bzzz vive en public:
+         sudo docker exec bzzz-supabase-db psql -U supabase_admin -d postgres -c 'REVOKE USAGE ON SCHEMA public FROM supabase_auth_admin'
 TXT
 }
 

@@ -243,7 +243,10 @@ before(async () => {
     GRANT USAGE ON SCHEMA opsrun TO opsrun_app;
     CREATE TABLE public.bzzz_cosa (id int PRIMARY KEY); ALTER TABLE public.bzzz_cosa OWNER TO postgres;
     CREATE FUNCTION public.bzzz_hola() RETURNS text LANGUAGE sql AS $$ SELECT 'hola' $$; ALTER FUNCTION public.bzzz_hola() OWNER TO postgres;
-    INSERT INTO auth.users (id, email) VALUES ('00000000-0000-4000-8000-0000000000aa', 'user@example.com');`)
+    INSERT INTO auth.users (id, email) VALUES ('00000000-0000-4000-8000-0000000000aa', 'user@example.com');
+    -- The same grant BOb's chain makes (20260606120001), as Bzzz could make it for an auth hook of its own: Postgres
+    -- records both as granted by pg_database_owner, so the uninstall cannot tell them apart and must leave it.
+    GRANT USAGE ON SCHEMA public TO supabase_auth_admin;`)
   foto0 = await foto()
   montarGit()
   instalar()
@@ -432,7 +435,7 @@ describe('the dry run', () => {
       /opt\/bob\/secrets\/migrador\.env/, /root\/bob-install\/postgres\.env/, /borra +esquema: bob \(con todo lo que tiene\)/,
       /cascada +tabla: bob\.organizations/, /borra +función en public: bob_grant_projection\(regclass\)/,
       /borra +historia del CLI: supabase_migrations/, /borra +rol: bob_migrador/, /borra +permiso en el esquema auth: USAGE de bob_migrador/,
-      /borra +permiso en el esquema public: USAGE de supabase_auth_admin/, /borra +privilegio por defecto: TRUNCATE de anon y authenticated/,
+      /\(info\) +permiso en el esquema public: USAGE de supabase_auth_admin: SE QUEDA/, /borra +privilegio por defecto: TRUNCATE de anon y authenticated/,
       /== Cuenta: 1 contenedor\(es\), 2 imagen\(es\) con 1 etiqueta\(s\), \d+ fichero\(s\), \d+ cosa\(s\) en la base/,
       /hoy encuentra [1-9]\d* rastro\(s\) de BOb/, /Lo que se queda en Bzzz/, /BZZZ_HOST_BOB/]) {
       assert.match(r.stdout, p)
@@ -443,7 +446,7 @@ describe('the dry run', () => {
 })
 
 // A run that is confirmed, with the database changed while it waits for the word.
-function desinstalarCon(cambio) {
+function desinstalarCon(cambio, despues = async () => {}) {
   return new Promise((resolve, reject) => {
     const p = spawn('bash', [SCRIPT, ...ARGS(), '--ejecutar'], { env: scriptEnv(), cwd: tmp })
     let out = '', err = '', hecho = false
@@ -451,7 +454,7 @@ function desinstalarCon(cambio) {
       out += b
       if (!hecho && out.includes('Escribe «desinstalo»')) {
         hecho = true
-        try { await cambio(); p.stdin.end('desinstalo\n') } catch (e) { reject(e) }
+        try { await cambio(); p.stdin.end('desinstalo\n'); await despues() } catch (e) { reject(e) }
       }
     })
     p.stderr.on('data', (b) => { err += b })
@@ -480,6 +483,34 @@ describe('a transaction that fails leaves the box as it was', () => {
       } finally {
         await q(quitar)
       }
+    }
+    assertFoto(await foto(), fotoInstalada, 'all put back')
+  })
+
+  // After a kill -9 of the script, its psql can still be in the transaction and COMMIT later. The README finds it
+  // by name before reading the mark; here the transaction is held on a lock and seen there, by that name.
+  t('its transaction can be found by name (application_name desinstalar-bob) while it runs', async () => {
+    const lk = new pg.Client({ connectionString: ADMIN_URL }); await lk.connect()
+    let visto = null
+    try {
+      const r = await desinstalarCon(async () => {
+        await q('CREATE TABLE bob.nueva (id int)')   // so the run ends in ROLLBACK
+        await lk.query('BEGIN'); await lk.query('LOCK TABLE bob.organizations IN ACCESS EXCLUSIVE MODE')
+      }, async () => {
+        for (let i = 0; i < 150 && !visto; i++) {
+          visto = (await q(`SELECT pid FROM pg_stat_activity WHERE application_name = 'desinstalar-bob'
+                              AND xact_start IS NOT NULL AND wait_event_type = 'Lock'`)).rows[0] || null
+          if (!visto) await new Promise((ok) => setTimeout(ok, 200))
+        }
+        await lk.query('COMMIT')
+      })
+      assert.ok(visto, 'a transaction named desinstalar-bob, waiting on the lock')
+      assert.equal(r.status, 1, r.stdout + r.stderr)
+      assert.match(r.stdout + r.stderr, /la base cambió entre lo que se enseñó y ahora/)
+      assert.deepEqual(estadoCaja(), cajaInstalada)
+    } finally {
+      await lk.query('ROLLBACK').catch(() => {}); await lk.end()
+      await q('DROP TABLE IF EXISTS bob.nueva')
     }
     assertFoto(await foto(), fotoInstalada, 'all put back')
   })
