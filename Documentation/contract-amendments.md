@@ -4279,3 +4279,73 @@ The files live in the repository tree, so merging changes the digest an
 install approval covers, as any commit does. Febor installs the signed commit
 `00f79b7`, and the seed reaches lab-02 by copying `scripts/demo/` alone. Nothing
 in the install path names it; the test asserts it.
+
+## Rehearsal uninstall of model-01 (`scripts/ensayo/`), outside the chain
+
+Febor goes on Monday 30 Nov in one step, from the empty base to `544fe970…`
+(engine `00f79b7`) with the approval `e3b0c442…-544fe970…`. model-01 reached
+the same digest in two steps. To rehearse Febor's exact path there,
+`scripts/ensayo/desinstalar-bob.sh` leaves model-01 as it was before its first
+install. It runs only on model-01, by Henry, as root; nothing in the install
+path names it. Nothing in the contract changes. Recorded here because
+measuring what the first install leaves found these things about the box
+layout. The measurement compared a fresh `17.6.1.136` stack with the same
+stack after `cadena`, the alta's CI stand-in, `resto`, B8 and B8b:
+
+- **The alta's `GRANT USAGE ON SCHEMA auth TO bob_migrador` can only be
+  removed by `supabase_admin`.** It is granted as `supabase_admin` (77.22). As
+  `postgres`, `REVOKE` quietly removes nothing (`no privileges could be
+  revoked`), `DROP OWNED BY bob_migrador` leaves it, and `DROP ROLE
+  bob_migrador` fails on it. The uninstall therefore opens its one transaction
+  as `supabase_admin`, as the alta does. It runs everything else under `SET
+  LOCAL ROLE postgres` or as the owner of `bob`, and resets only for that
+  REVOKE. It never uses the service role.
+- **The chain changes four things outside `bob` that `DROP SCHEMA bob CASCADE`
+  does not undo:**
+  - 25 functions in `public`, owned by `postgres` (`bob_*`, `update_updated_at`,
+    `cap_alert_log`, `enforce_slug_immutability`, `custom_access_token_hook`).
+    `public.bob_outbox_drain` goes with the cascade (F-47).
+  - `USAGE` on `public` for `supabase_auth_admin` (`20260606120001`) and for
+    `bob_app`, `bob_feeder` and `bob_ai_ro`.
+  - `postgres`'s default privileges in `public`: `20261121170000` took TRUNCATE
+    from `anon` and `authenticated`. The uninstall grants it back, so the
+    catalog matches the fresh one.
+  - The schema `supabase_migrations`, which did not exist before the first
+    `cadena` (B0 measured it absent on model-01 and Febor).
+
+  The four `bob` tables in `supabase_realtime` leave the publication with the
+  cascade. The publication stays.
+- **The ADMIN rows for `postgres` (16+) go with `DROP ROLE`.** Each role the
+  chain creates under CREATEROLE leaves `bob_* → postgres` with `admin_option =
+  t`, `inherit_option = f`, `set_option = f`, granted by `supabase_admin`. The
+  uninstall lists them as expected; any other membership stops it.
+- **Nothing in `auth` is BOb's.** The chain creates no users and no claims:
+  `on_auth_user_created` is created by `20260606120000` and dropped by
+  `20261121130000`. Bzzz does not use BOb's custom access token hook.
+- **`pg_identify_object` gives no schema for defaults, constraints, triggers,
+  policies or rules.** A dependency guard that trusts its `schema` column sees
+  every column default of `bob` as foreign. The uninstall reads each object's
+  namespace from its own catalog (`pg_attrdef.adrelid`, `pg_trigger.tgrelid`,
+  `pg_policy.polrelid`, `pg_rewrite.ev_class`, and so on). A Bzzz view over
+  `bob` shows up as its `_RETURN` rule, and stops it (G6).
+- **The rehearsal differs from Febor at B6, on Bzzz's side.** Bzzz has no way
+  to remove a neighbour. The network `bzzz-vecina-bob` and the neighbours'
+  pg_hba stay on model-01, so the alta there exits 0 without `--reiniciar`;
+  on Febor it exits 3 the first time and asks for `--reiniciar [ventana]`.
+  `BZZZ_HOST_BOB` (B10) can be removed with Bzzz's own commands. The script
+  prints them, and does not run them.
+
+The uninstall is fail-closed. The map is the migrations of the installed
+commit, whose digest must equal `instalacion-firmada`. Anything not in the map
+stops it before anything is written: a file, a container, a role, a grant, a
+dependent object, a CLI history version. The transaction rebuilds the plan and
+compares its md5 with the one shown. Before COMMIT, and again after it in a
+new session, `cadena`'s empty-base check (`BOB_BASE_VACIA=1`) must find
+nothing. If the transaction fails, `/opt/bob`, `/root/bob-install` and
+`bob-web` are put back.
+
+`tests/ensayo-desinstalar.test.mjs` runs in its own CI job on the box's image.
+After `--ejecutar`, the catalog equals the pre-install one line for line, with
+Bzzz's planted objects (another neighbour, an `auth` account, a table and a
+function in `public`) untouched. A real `instalar-bob.sh cadena` from the
+empty base then accepts the database. Each guard was seen red by sabotage.

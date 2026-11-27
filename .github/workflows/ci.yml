@@ -7,16 +7,18 @@ on:
 
 # ID-12 — a tenancy failure is a build-blocking defect, not a bug.
 #
-# ALL FIVE JOBS BELOW MUST BE REQUIRED STATUS CHECKS on the protected branch:
+# ALL SIX JOBS BELOW MUST BE REQUIRED STATUS CHECKS on the protected branch:
 #
 #   Migrations apply from an empty database
 #   Tenancy (build-blocking · ID-10 to ID-12)
 #   Contracts, schema and naming
 #   Availability (FR-20 to FR-23)
 #   Chain applies as bob_migrador (O-3)
+#   Uninstall rehearsal on the box image (model-01)
 #
-# Today main requires the first four. "Chain applies as bob_migrador (O-3)" is
-# still to be made required by Henry, in branch protection. So is "What installs
+# Today main requires the first four. "Chain applies as bob_migrador (O-3)" and
+# "Uninstall rehearsal on the box image (model-01)" are still to be made
+# required by Henry, in branch protection. So is "What installs
 # BOb is signed by Henry (O-3)", which lives in install-approval.yml: it runs
 # from main (pull_request_target) so that a PR cannot edit it away.
 #
@@ -190,6 +192,43 @@ jobs:
   # postgres pushes the install chain once, supabase_admin hands bob to
   # bob_migrador, and every other migration is pushed by bob_migrador. Then
   # scripts/owner-chain-check.mjs checks what that left. See P5 §6.2.
+  # scripts/ensayo/desinstalar-bob.sh, the rehearsal uninstall of model-01, on
+  # the box's image and from a database without BOb: the test installs BOb as
+  # a box gets it, sees each guard refuse and leave everything as it was, then
+  # uninstalls and compares the catalog with the one from before, line for line,
+  # and runs cadena from the empty base on it. Its own stack, since the test
+  # needs one that starts without BOb; a skip here is a failure.
+  uninstall-rehearsal:
+    name: Uninstall rehearsal on the box image (model-01)
+    runs-on: ubuntu-latest
+    env:
+      INSTALAR_SIN_FIRMA: ci
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: pnpm
+      - uses: supabase/setup-cli@v2
+        with:
+          version: ${{ env.SUPABASE_CLI_VERSION }}
+      - run: pnpm install --frozen-lockfile
+      - name: Start Supabase on the box's Postgres image, with no migration
+        run: |
+          mv supabase/migrations "$RUNNER_TEMP/chain" && mkdir supabase/migrations
+          sed -i 's/^major_version = 15$/major_version = 17/' supabase/config.toml
+          mkdir -p supabase/.temp && echo 17.6.1.136 > supabase/.temp/postgres-version
+          sed -i '/\[auth.hook.custom_access_token\]/,/^enabled/ s/^enabled = true/enabled = false/' supabase/config.toml
+          supabase start
+          rmdir supabase/migrations && mv "$RUNNER_TEMP/chain" supabase/migrations
+          docker ps --format '{{.Image}}' | grep -E 'supabase/postgres:' | tee /dev/stderr | grep -q ':17.6.1.136$'
+      - name: The rehearsal uninstall leaves model-01 as before its first install
+        env:
+          DESINSTALAR_DB_URL: postgresql://supabase_admin:postgres@127.0.0.1:54322/postgres
+          BOB_DESINSTALAR_REQUIRED: '1'
+        run: node --test --test-concurrency=1 tests/ensayo-desinstalar.test.mjs
+
   owner-chain-probe:
     name: Chain applies as bob_migrador (O-3)
     runs-on: ubuntu-latest
