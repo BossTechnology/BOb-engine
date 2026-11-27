@@ -4601,7 +4601,7 @@ on the local stack and green after restoring.
   `pg_advisory_xact_lock` keyed on the organization when it enters (the
   function is replaced whole); another organization is not held. Sabotage: the function without the
   lock, R4 red (the second evaluation no longer waits).
-- **F-56 · A member could attach a trigger to any bob table (critical; review
+- **F-58 · A member could attach a trigger to any bob table (critical; review
   of `8ab846e`).** `authenticated` held TRIGGER and REFERENCES on 28 tables in
   bob. No BOb migration granted them: the tables were created in public, where
   Supabase's default privileges for `postgres` give `authenticated` `arwdxt`,
@@ -4620,7 +4620,7 @@ on the local stack and green after restoring.
   refused (with a trigger function it may execute, so the refusal is the
   privilege's). In the signed commit `00f79b7` the grant is already there, and
   the box is the Supabase image, where `authenticated` exists.
-- **F-57 · Moving a bound could leave a trigger_level inside it (minor).**
+- **F-59 · Moving a bound could leave a trigger_level inside it (minor).**
   `bob_response_level_check` ran when the response was written. A trigger on
   `threshold_configs` refuses an update of the bounds that would put a
   response's level inside them.
@@ -4642,7 +4642,7 @@ on the local stack and green after restoring.
   creates none (F-51).
 - **Counts.** 575 → 590 on a fresh local stack: 588 pass, 2 `todo`. Fourteen
   sabotages against `20261127110000`, each red and green again after
-  restoring; the in-migration F-56 check raises on a planted grant.
+  restoring; the in-migration F-58 check raises on a planted grant.
 - **Tests that changed with it.** Slice 6 writes its probe alerts as the
   owner and its intentions as `bob_app` (it wrote some as `authenticated`).
   The namespace guard refused the lock key `'bob.bob_evaluate:'`, now

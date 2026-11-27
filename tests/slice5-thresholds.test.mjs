@@ -758,7 +758,7 @@ describe('Review of 27 Nov · nits', () => {
 })
 
 describe('Review of 8ab846e · triggers and references, and bounds that move', () => {
-  test('F-56 · no role but the owner and superusers holds TRIGGER or REFERENCES on a bob relation (discovered)', async () => {
+  test('F-58 · no role but the owner and superusers holds TRIGGER or REFERENCES on a bob relation (discovered)', async () => {
     const { rows } = await db.query(`
       SELECT r.rolname || ' ' || p || ' ' || c.relname AS g
         FROM pg_class c
@@ -775,7 +775,7 @@ describe('Review of 8ab846e · triggers and references, and bounds that move', (
     assert.ok(k.n > 20, `only ${k.n} tables found in bob`)
   })
 
-  test('F-56 · no role but the owner and superusers executes a trigger function in bob (discovered)', async () => {
+  test('F-58 · no role but the owner and superusers executes a trigger function in bob (discovered)', async () => {
     const { rows } = await db.query(`
       SELECT r.rolname || ' ' || p.proname AS g
         FROM pg_proc p
@@ -787,7 +787,7 @@ describe('Review of 8ab846e · triggers and references, and bounds that move', (
     assert.deepEqual(rows.map((r) => r.g), [])
   })
 
-  test('F-56 · a member cannot create a trigger on alert_log', async () => {
+  test('F-58 · a member cannot create a trigger on alert_log', async () => {
     await inTx(async () => {
       await db.query('SELECT set_config($1, $2, true)', ['request.jwt.claims',
         JSON.stringify({ org_id: TENANT_A, role: 'authenticated', app_role: 'admin' })])
@@ -800,7 +800,7 @@ describe('Review of 8ab846e · triggers and references, and bounds that move', (
     })
   })
 
-  test('F-57 · a threshold\'s bounds cannot move past a response\'s trigger_level', async () => {
+  test('F-59 · a threshold\'s bounds cannot move past a response\'s trigger_level', async () => {
     await inTx(async () => {
       const t = await threshold({ upper_bound: 10 })
       await response(t, { trigger_level: 15 })

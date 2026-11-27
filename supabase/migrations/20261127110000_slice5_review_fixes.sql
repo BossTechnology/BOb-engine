@@ -15,13 +15,13 @@
 --          value made bob_threshold_status raise, and with it the evaluator
 --          of the whole organization.
 --   F-55 · one evaluation of an organization at a time.
---   F-56 · no application role holds TRIGGER or REFERENCES on a bob table
+--   F-58 · no application role holds TRIGGER or REFERENCES on a bob table
 --          (review of 8ab846e, critical). The tables were created in public,
 --          where Supabase's default privileges give authenticated arwdxt, and
 --          moved to bob with that ACL; Slice 2 revoked the four DML rights
 --          only. A member could create a trigger on alert_log that stops the
 --          evaluator for every tenant.
---   F-57 · a threshold's bounds cannot move past a response's trigger_level.
+--   F-59 · a threshold's bounds cannot move past a response's trigger_level.
 --   Nits · the threshold and response an alert names, and the threshold of a
 --          breach state, are keyed with the organization; the definers end
 --          their search_path with pg_temp.
@@ -33,7 +33,7 @@
 
 BEGIN;
 
--- ── F-56 ───────────────────────────────────────────────────────────────────
+-- ── F-58 ───────────────────────────────────────────────────────────────────
 -- Every relation in bob, whatever it is called. Schema bob holds no default
 -- privileges, so a table created later gets none of these; the default
 -- privileges of public are Supabase's, and the resto creates nothing there
@@ -57,7 +57,7 @@ BEGIN
    WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
      AND has_table_privilege(r.oid, c.oid, p);
   IF left_over IS NOT NULL THEN
-    RAISE EXCEPTION 'F-56: still held after the revoke: %', left_over
+    RAISE EXCEPTION 'F-58: still held after the revoke: %', left_over
       USING ERRCODE = 'insufficient_privilege';
   END IF;
 END $$;
@@ -127,7 +127,7 @@ ALTER TABLE bob.evaluation_state
       FOREIGN KEY (org_id, threshold_id) REFERENCES bob.threshold_configs (org_id, id)
       ON DELETE CASCADE;
 
--- ── F-57 ───────────────────────────────────────────────────────────────────
+-- ── F-59 ───────────────────────────────────────────────────────────────────
 -- bob_response_level_check runs when a response is written. Moving the
 -- threshold's bounds afterwards could leave a level inside them, which fires
 -- before the threshold breaches. The same rule, from the other side.
