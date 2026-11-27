@@ -2,8 +2,8 @@
 
 **Status: SPEC, decided by Henry in the Slice 5 grill (2026-11-27). Nothing is
 built.** The product rulings it applies are Federico's and are signed: D-05
-(BOB-9, 27 Oct, with the six points answered on 5 and 10 Nov) and D-31
-(BOB-11, 4 Nov). The grill answered how to build them, not what they are.
+(Relevo task 9, 27 Oct, with the six points answered on 5 and 10 Nov) and D-31
+(Relevo task 11, 4 Nov). The grill answered how to build them, not what they are.
 Where the grill found a ruling that rests on something the schema does not
 have, it is a finding (§10) and goes to Federico before the build relies on it.
 
@@ -17,12 +17,12 @@ under the D-31 limits.
 - the acceptance tests of §9 pass, each seen failing first;
 - no evaluation happens on a cell that is not sealed and observed (A-04, O1);
 - a breaching threshold with no response still paints red (10 Nov ruling 1);
-- every limit refusal is a row with its reason, never silence (BOB-11 item 1).
+- every limit refusal is a row with its reason, never silence (Relevo task 11, item 1).
 
 **Inputs.**
 - `Documentation/contract-amendments.md`, «Slice 5 · Cooldown and escalation»,
   A-04, F-02, and «Slice 6 · Registries and the outbox, built».
-- Relevo BOB-9 (D-05, the full thread) and BOB-11 (D-31).
+- Relevo tasks 9 (D-05, the full thread) and 11 (D-31).
 - Contract 0.5.3/0.6: §4 and §4.1 (sealing, NULL lag never evaluated), §5,
   §6.1 (`hallucinations` absent until ground truth), §11 (interims).
 - `docs/slice-3-absent-not-zero.md` §2, §3, §7: `bob_cell_state` is the one
@@ -142,8 +142,8 @@ breaching. The evaluator calls this same function, so the display and the
 evaluator share one implementation of "is it breaching".
 - **Severity** (D-05, unchanged): `warning`, or `critical` when the value is
   more than 20 % past the bound.
-- **Proximity** (D-05, unchanged): `near` within 20 % of the bound,
-  display only. No alert is written for proximity (S8). If Federico wanted
+- **Proximity** (D-05, unchanged): `near` at two levels, within 20 % and
+  within 10 % inside the bound (`proximity_pct` 20 or 10), display only. No alert is written for proximity (S8). If Federico wanted
   proximity alerts, they are a response with a `trigger_level`.
 
 ## 6 · `bob.evaluation_state` (D-05 key, amended 10 Nov ruling 3)
@@ -166,6 +166,24 @@ threshold breach history has no row until its first evaluation.
 
 ## 7 · The evaluation, one subject and response at a time
 
+**The clock is the bucket's, never `now()`.** Every time in §7 is a bucket
+boundary. A bucket "ends" at `bucket_start + 300 s`. `last_fired_at` is the
+end of the bucket that fired. A duration has passed when
+`end of the current bucket − the reference time >= duration`, with `>=`.
+With `now()`, a 24-hour catch-up pass would evaluate every bucket at the same
+instant, and no cooldown would ever clear inside it. With the bucket's time,
+a pass that catches up decides exactly what the passes it replaces would have.
+
+**What is per subject and what is per response.** The breach belongs to the
+subject: `breached_since`, `inside_since` and the escalation are the same for
+every response on it. The firing belongs to the response: its level, its
+sustained count, `last_fired_at` and `last_alert_id`. So **one subject
+escalates once per breach, however many responses it has**, and each response
+that fired gets its own recovery row. `evaluation_state` stays keyed on
+(subject, response) (10 Nov ruling 3). Before writing an escalation, the
+evaluator looks for one already written for the subject inside the current
+breach, and does not write a second.
+
 For each sealed, observed bucket after `last_bucket_evaluated`, in order:
 
 1. **Breach starts.** The value is past the bound and `breached_since` is
@@ -174,17 +192,33 @@ For each sealed, observed bucket after `last_bucket_evaluated`, in order:
    cooldown is clear (`last_fired_at` is NULL, or older than the effective
    cooldown): write the alert, and the intention if it is an Action (§8).
    Then set `last_fired_at`. Inside the cooldown, write nothing.
-3. **Escalate, once.** The breach has lasted the effective
-   `escalation_after_seconds` since `breached_since` and
-   `escalated_alert_id` is NULL: write a **new** `alert_log` row, one step up
-   (`warning` → `critical`, `critical` stays), linked to the alert it
-   escalates (S6). Escalation does not depend on acknowledgement (D-05
-   point 4), does not reset the cooldown, and fires no intention.
+3. **Escalate, once per subject.** Only if **an alert was fired in this
+   breach** (`last_alert_id` is set for some response of the subject), the
+   breach has lasted the effective `escalation_after_seconds` since
+   `breached_since`, and the subject has no escalation in this breach yet:
+   write a **new** `alert_log` row, one step up (`warning` → `critical`,
+   `critical` stays), linked to the first alert of the breach (S6). A breach
+   that never reached any response's level, or whose every bucket fell in a
+   manual peak window, fired nothing and escalates nothing: there is no alert
+   to raise. Escalation does not depend on acknowledgement (D-05 point 4),
+   does not reset the cooldown, and fires no intention.
 4. **Recovery.** Back inside the bound for the effective
-   `recovery_dwell_seconds`: write `alert_type = 'recovery'`, immediately,
-   with no cooldown (D-05). Then **clear the cooldown**, `breached_since` and
-   `escalated_alert_id` (5 Nov ruling 5). A bucket that oscillates inside one
-   dwell produces no recovery, so there is no flap storm.
+   `recovery_dwell_seconds`, counted in whole sealed buckets: the dwell has
+   passed when `end of the current bucket − inside_since >= dwell`. **The
+   300 s default is one bucket**: a single sealed bucket inside the bound
+   recovers, as Federico ruled ("default one base bucket"). A response writes
+   `alert_type = 'recovery'` **only if it fired in this breach**
+   (`last_alert_id` is set), immediately, with no cooldown (D-05). A breach
+   that fired nothing ends silently. Either way, the breach, the cooldown and
+   the escalation are cleared (5 Nov ruling 5).
+
+   The consequence, stated rather than discovered: **under the default, a
+   metric that alternates between buckets in breach and buckets inside the
+   bound writes breach, recovery, breach on every alternation.** The dwell
+   damps flapping only when it is longer than one bucket: at 600 s,
+   alternation writes no recovery. What the default removes is flapping
+   inside one bucket, which bucketing already hides. To Federico, with the
+   amendment (§10).
 
 **Columns `alert_log` gains:** `threshold_id`, `response_id`, `subject_key`,
 `channel_id`, `actor_type`, `bucket_start`, `escalates_alert_id`, and
@@ -201,7 +235,7 @@ is not re-evaluated: alerts already fired are not revisited (D-12).
 ## 8 · Intentions and their refusals (D-31, S3)
 
 An Action response's firing writes the alert first, then the intention
-through `bob_outbox_admit()` with `alert_log_id` set (BOB-11 item 4).
+through `bob_outbox_admit()` with `alert_log_id` set (Relevo task 11, item 4).
 
 **`bob.outbound_queue.state` gains `'suppressed'`**, with
 `suppressed_reason TEXT` (NOT NULL when suppressed, NULL otherwise, by CHECK).
@@ -228,7 +262,7 @@ are a broken configuration, not a limit doing its job.
   row, not an error. The Slice 6 tests that expected the error are rewritten
   test first to expect the row. Anything in Bob-New that relies on the error
   must read `state`.
-- **AutoBotz execution stays off before Slice 8** (BOB-11). Slice 5 writes
+- **AutoBotz execution stays off before Slice 8** (Relevo task 11). Slice 5 writes
   intentions and executes nothing.
 
 ## 9 · Who runs it (S1, S12)
@@ -259,7 +293,7 @@ are a broken configuration, not a limit doing its job.
   constraint and fails. That repository is outside this one, so the PR names
   the check rather than making it.
 - **F-49 · The D-31 refusal was built as an error, not a row.** Slice 6's
-  admission raises over a limit. BOB-11 placed "a suppressed row with its
+  admission raises over a limit. Relevo task 11 placed "a suppressed row with its
   reason" in step 19, and this slice builds it (§8).
 - **Contract §11, retention moves from Slice 5 to P5 (S7).** Detaching and
   dropping partitions needs a scheduler, and the scheduler is P5's. The
@@ -276,7 +310,7 @@ are a broken configuration, not a limit doing its job.
 |---|---|---|
 | Nothing schedules `bob_evaluate` | The P5 caller | After 30 Nov |
 | Retention is not enforced | `pg_cron` or the P5 timer, detaching and dropping | Same |
-| Intentions are written and never executed | Execution | Not before Slice 8 (BOB-11) |
+| Intentions are written and never executed | Execution | Not before Slice 8 (Relevo task 11) |
 | `acknowledged_at` is written by nothing | An acknowledgement surface | Not in v1 |
 
 ## 12 · Acceptance tests (`tests/slice5-thresholds.test.mjs`)
@@ -304,19 +338,29 @@ migration, or against a sabotage (the table goes into amendments).
 10. A breaching threshold with no response returns `breach` from
     `bob_threshold_status`. A guard reads `pg_depend` and finds that it does
     not depend on `evaluation_state` or `response_rules`.
-11. Severity is `critical` past 20 %, and `near` within 20 % writes no alert.
+11. Severity is `critical` past 20 %; `near` at 20 % and at 10 % writes no alert.
 
 **Cooldown, escalation, recovery**
 12. Two passes over the same sealed bucket write one alert.
-13. A breach held for six buckets writes one alert under the 1800 s default,
-    and two under an override of 300.
+13. Six consecutive breached buckets, with `>=` on bucket time: one alert
+    under the 1800 s default (the seventh bucket would be the second), and six
+    under a cooldown of 300, one per bucket (the floor is one bucket, not
+    "none").
 14. Two responses at different depths on one subject have independent
     cooldowns: the shallow one does not suppress the deep one.
-15. At 7200 s sustained, exactly one escalation row, linked, one step up,
-    never a second.
+15. Exactly one escalation row per subject and breach, linked, one step up,
+    never a second, **with two responses on the subject** (run with
+    `escalation_after_seconds = 600`, so the second bucket escalates).
+15a. A breach that stays under the only response's `trigger_level` fires
+    nothing and, past the escalation time, writes no escalation.
+15b. A breach whose every bucket falls in a manual peak window fires nothing,
+    and its recovery writes no recovery row.
 16. Recovery fires immediately after the dwell. A re-breach after recovery
     alerts again, inside what would have been the cooldown.
-17. Oscillation inside one dwell writes no recovery.
+17. Under the default dwell (300 s, one bucket), breach, inside, breach,
+    inside, breach writes upper, recovery, upper, recovery, upper. With
+    `recovery_dwell_seconds = 600`, the same series writes one upper and no
+    recovery.
 18. `sustained_for_seconds = 600` fires on the second consecutive bucket, not
     the first.
 19. A manual peak window moves state and writes nothing.

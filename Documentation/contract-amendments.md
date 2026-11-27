@@ -4316,7 +4316,14 @@ move together to P5, after the Febor window (spec §9, §11). To Federico.
 
 ### Build readings of rulings carried over unchanged
 
-- Proximity (20 % and 10 %) is a display state, `near`, and writes no alert.
+- Proximity, at D-05's two levels (20 % and 10 % inside the bound), is a
+  display state, `near`, and writes no alert.
+- The recovery dwell's 300 s default is one bucket, so under the default a
+  metric alternating between breached and inside buckets writes breach,
+  recovery, breach on every alternation. Only a dwell longer than one bucket
+  damps it. Stated for Federico, who ruled "default one base bucket".
+- One escalation per subject and breach, not per response; and neither an
+  escalation nor a recovery row without an alert fired in the breach (spec §7).
 - `peak_mode = 'observed'` is not evaluated in v1; it is reported with the
   reason `peak_observed_unsupported`. `manual` windows move state and write
   nothing.
