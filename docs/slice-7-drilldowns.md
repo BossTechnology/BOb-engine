@@ -1,7 +1,7 @@
 # BOb v1 · Slice 7 · Drill-downs — spec
 
-**Status: SPEC, decided by Henry in the Slice 7 grill (2026-11-27). Nothing is
-built.** It is drawn ahead of D-33, which is open and assigned to Federico on
+**Status: SPEC, decided by Henry in the Slice 7 grill and approved by him
+(2026-11-27). Nothing is built.** It is drawn ahead of D-33, which is open and assigned to Federico on
 Relevo task 19. D-33's two questions are not decided here. §8 writes option (a),
 the one proposed on the task, as the default, and isolates everything that
 changes under (b) or (c) in that one section, one migration and one block of
