@@ -4349,3 +4349,37 @@ After `--ejecutar`, the catalog equals the pre-install one line for line, with
 Bzzz's planted objects (another neighbour, an `auth` account, a table and a
 function in `public`) untouched. A real `instalar-bob.sh cadena` from the
 empty base then accepts the database. Each guard was seen red by sabotage.
+
+### Rehearsal uninstall · independent security review of #64 (`e13452b`), applied
+
+- **`DROP SCHEMA supabase_migrations CASCADE` skipped the dependency check.**
+  G6 looked only at what hangs from `bob` and from the `public` functions. A
+  Bzzz view, foreign key or function over `supabase_migrations` would have
+  gone with the cascade, silently. The CLI history schema and everything in it
+  now join the map that the dependency check reads, and a foreign view over
+  `schema_migrations` stops the run.
+- **`public` functions were matched by name alone.** Any `postgres`-owned
+  function in `public` with a name from the migrations would have been
+  dropped, whatever its arguments. That includes generic names like
+  `update_updated_at` or `custom_access_token_hook`. The map now holds the
+  exact signatures the chain creates, read from the migrations (input types
+  only, without parameter names, defaults or OUT) and resolved with
+  `to_regprocedure`. Any other overload of the same name is unknown, and the
+  run stops (G7). A signature that cannot be resolved does not count as the
+  chain's, so it fails closed.
+- **The README's recovery misled after a death between COMMIT and `rm`.**
+  Putting `/opt/bob` back there would declare `544fe970…` over an empty
+  database. Right after COMMIT the script now writes `BASE-YA-VACIADA` into
+  each folder it set aside. The next run reads that mark before anything else
+  and stops, saying to delete them, not restore them. The README checks the
+  mark and `to_regnamespace('bob')` before any `mv`. Tested by killing the run
+  at its first `docker rm`.
+- **The clone was read twice** (once for the digest, once for the map). It is
+  now copied once into the script's own folder (`git clone --no-checkout
+  --no-local`), and both come from that copy. Not `--bare`: with
+  `safe.bareRepository=explicit`, git will not open a bare repository by `-C`.
+- **`rm -rf` now carries `--one-file-system`.** On a box a `rm` without it
+  stops the script; only test mode falls back, on a machine whose `rm` lacks
+  it.
+
+Each fix has its own test, and each was seen red by sabotage.

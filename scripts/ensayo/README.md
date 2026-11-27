@@ -83,7 +83,8 @@ Todas fallan cerradas, y `tests/ensayo-desinstalar.test.mjs` ve cada una negarse
 - **G5**: nunca la service role. Con una variable de entorno que la nombre, no empieza. En la base solo se entra
   como `supabase_admin`, que baja con `SET ROLE`.
 - **G6**: nunca toca lo que la puesta no creó: el `auth` de Bzzz, otros esquemas, otras vecinas como `opsrun`. Si
-  algo de fuera depende de lo que se va a borrar (una vista sobre `bob`, por ejemplo), se para.
+  algo de fuera depende de lo que se va a borrar (una vista sobre `bob` o sobre la historia del CLI,
+  `supabase_migrations`, por ejemplo), se para: los dos esquemas se borran con CASCADE.
 - **G7**: si encuentra algo que no está en el mapa, lo dice y se para en vez de borrarlo. Puede ser:
   - un fichero de `/opt/bob` o de `/root/bob-install` que no es de la puesta;
   - un enlace;
@@ -92,7 +93,8 @@ Todas fallan cerradas, y `tests/ensayo-desinstalar.test.mjs` ve cada una negarse
   - un rol `bob*` que la cadena no crea;
   - un permiso, una propiedad o un ajuste de un rol `bob*` fuera de lo suyo;
   - una pertenencia que no es la de ADMIN de `CREATE ROLE`;
-  - un objeto con nombre de BOb fuera de `bob` y de las funciones de `postgres` en `public`;
+  - un objeto con nombre de BOb fuera de `bob`, salvo las funciones de `postgres` en `public` con la firma exacta
+    que crea la cadena: otra sobrecarga con el mismo nombre no es suya;
   - una versión del historial del CLI que no es de este árbol;
   - otra base de datos con cosas de `bob*`.
 
@@ -113,22 +115,45 @@ Antes de la transacción, el guion para `bob-web` y mueve `/opt/bob` y `/root/bo
 falla, vuelven a su sitio y `bob-web` arranca otra vez: la caja queda como estaba, y el guion lo dice («la caja
 queda como estaba»). Solo después del COMMIT borra el contenedor, las imágenes y las dos carpetas.
 
-Si el guion muere entre el movimiento y el COMMIT (un corte de luz, un `kill -9`), las carpetas `.desinstalando.*`
-siguen ahí. La base no cambió, porque la transacción no llegó al COMMIT. Se devuelven a mano:
+Si el guion muere a la fuerza (un corte de luz, un `kill -9`) con las carpetas `.desinstalando.*` todavía ahí, lo
+primero es saber si la transacción llegó al COMMIT. **No las devuelvas sin mirar**: si la base ya está vacía,
+devolver `/opt/bob` dejaría `instalacion-firmada` diciendo `544fe970…` sobre una base sin BOb.
+
+Justo después del COMMIT, el guion deja una marca `BASE-YA-VACIADA` en cada carpeta apartada. Y la base lo dice
+ella misma: si `bob` ya no existe, el COMMIT pasó.
 
 ```bash
-sudo mv /opt/.bob.desinstalando.<pid> /opt/bob
+ls /opt/.bob.desinstalando.*/BASE-YA-VACIADA /root/.bob-install.desinstalando.*/BASE-YA-VACIADA
 ```
 
 ```bash
-sudo mv /root/.bob-install.desinstalando.<pid> /root/bob-install
+sudo docker exec bzzz-supabase-db psql -X -A -t -U supabase_admin -d postgres -c "SELECT to_regnamespace('bob') IS NULL AS base_vaciada"
 ```
 
-```bash
-sudo docker start bob-web
-```
+- **Sin marca y `base_vaciada` es `f`**: la transacción no llegó al COMMIT y la base no cambió. Se devuelven:
 
-Mientras existan, una corrida nueva se para (G7) en vez de pisarlas.
+  ```bash
+  sudo mv /opt/.bob.desinstalando.<pid> /opt/bob
+  ```
+
+  ```bash
+  sudo mv /root/.bob-install.desinstalando.<pid> /root/bob-install
+  ```
+
+  ```bash
+  sudo docker start bob-web
+  ```
+
+- **Con marca, o `base_vaciada` es `t`**: la base ya está vacía. Las carpetas no se devuelven, se borran. Después
+  se quitan `bob-web` y sus imágenes (las órdenes que el guion imprimió en seco), y se sigue con B3 desde la base
+  vacía:
+
+  ```bash
+  sudo rm -rf --one-file-system /opt/.bob.desinstalando.<pid> /root/.bob-install.desinstalando.<pid>
+  ```
+
+Mientras queden carpetas `.desinstalando.*`, una corrida nueva se para en vez de pisarlas. Si llevan la marca, dice
+que la base ya se vació y que se borren.
 
 ## Lo que se queda en Bzzz
 
@@ -166,7 +191,7 @@ baja de una vecina, y aquí no se reimplementa.
 model-01 es la caja de pruebas: lo único que se pierde es la organización `modelo` y los datos inventados. Ninguno
 es de un cliente.
 
-- **Si el guion se para antes del COMMIT**, no hay nada que devolver: la caja sigue con BOb en `544fe970…` y
+- **Si el guion se para antes del COMMIT** (y no lo mataron: ver «Si falla a medias»), no hay nada que devolver: la caja sigue con BOb en `544fe970…` y
   `bob-web` vuelve a correr. Lo que lo paró está en la última línea.
 - **Si el guion terminó**, la base está vacía. Para volver a tener BOb, se sigue el runbook desde B3 con la base
   vacía, que es justamente el ensayo:
