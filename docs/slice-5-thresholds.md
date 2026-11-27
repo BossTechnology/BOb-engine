@@ -310,6 +310,17 @@ are a broken configuration, not a limit doing its job.
   `trg_outbox_admit` points at the latter; the old public function stays,
   unreferenced, until the chain is next signed. Guarded by
   `tests/install-approval.test.mjs` («the resto (F-51)»).
+- **F-56 · TRIGGER and REFERENCES on bob tables (review of `8ab846e`).**
+  Inherited from public's default privileges; revoked from every role the
+  application runs as, checked inside the migration. **F-57:** a threshold's
+  bounds cannot move past a response's trigger_level.
+- **F-52 to F-55 · the security review of 27 Nov.** No INSERT on the outbox
+  for `authenticated`; `alert_log` written only as the owner (no INSERT or
+  UPDATE for `bob_app` or `authenticated`); `peak_windows` refused unless an
+  array of `{start, end}` in `HH:MM`; one evaluation of an organization at a
+  time (`pg_advisory_xact_lock`). Composite foreign keys for the threshold and
+  response an alert names. In `20261127110000_slice5_review_fixes.sql`, after #63; details in
+  contract-amendments.
 - **Contract §11, retention moves from Slice 5 to P5 (S7).** Detaching and
   dropping partitions needs a scheduler, and the scheduler is P5's. The
   interim row changes its "When" from Slice 5 to "P5, with the evaluator's
