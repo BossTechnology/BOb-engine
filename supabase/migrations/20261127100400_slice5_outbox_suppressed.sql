@@ -1,7 +1,7 @@
 -- ════════════════════════════════════════════════════════════════════════════
 -- BOb v1 · Slice 5 · Migration 5 of 6 · A refusal is a row (F-49)
 --
--- Spec: docs/slice-5-thresholds.md §8. D-31 (BOB-11, item 1): "a refusal is
+-- Spec: docs/slice-5-thresholds.md §8. D-31 (Relevo task 11, item 1): "a refusal is
 -- recorded as a row with its reason — a suppressed intent — never silence",
 -- placed in step 19. Slice 6 built admission to raise. Here a limit or a
 -- binding that is not verified, fresh and enabled writes the intention as

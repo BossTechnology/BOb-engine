@@ -1,7 +1,7 @@
 -- ════════════════════════════════════════════════════════════════════════════
 -- BOb v1 · Slice 5 · Migration 1 of 6 · Step 6a, the three durations
 --
--- Spec: docs/slice-5-thresholds.md §1, §2. D-05 (BOB-9, 27 Oct), its six points
+-- Spec: docs/slice-5-thresholds.md §1, §2. D-05 (Relevo task 9, 27 Oct), its six points
 -- answered on 5 and 10 Nov.
 --
 -- NULL INHERITS. Each duration is nullable and NULL means "the system default",

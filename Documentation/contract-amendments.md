@@ -4407,4 +4407,4 @@ after a suppressed eleventh is suppressed by the limit, not by the eleventh.
 - **Scope:** `entity` names a channel by id, `actor` an `actor_type`; `company`
   and `metric` reach everything.
 
-**Counts.** Slice 5 adds 41. Full suite in the PR.
+**Counts.** 532 → 573: 571 pass and 2 are `todo`, on the local stack `bob-v1-slice5` (Postgres 17, a fresh `supabase start`). Slice 5 adds 41; Slice 6 keeps its count with eight assertions rewritten.
