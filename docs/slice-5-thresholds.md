@@ -303,6 +303,13 @@ are a broken configuration, not a limit doing its job.
   its cause. Both lose DELETE and TRUNCATE, and `authenticated` loses UPDATE
   (migration 4). Consumer check: anything in Bob-New that deletes or updates
   alerts as a member.
+- **F-51 · The resto created functions in public.** On a box every migration
+  outside the install chain is pushed by bob_migrador, which holds no CREATE
+  on public. The `trigger_level` check and the new admission now live in
+  schema bob (`bob.bob_response_level_check`, `bob.bob_outbox_admit`), and
+  `trg_outbox_admit` points at the latter; the old public function stays,
+  unreferenced, until the chain is next signed. Guarded by
+  `tests/install-approval.test.mjs` («the resto (F-51)»).
 - **Contract §11, retention moves from Slice 5 to P5 (S7).** Detaching and
   dropping partitions needs a scheduler, and the scheduler is P5's. The
   interim row changes its "When" from Slice 5 to "P5, with the evaluator's
@@ -407,8 +414,9 @@ After `20261126110000` on `main`, checked on 27 Nov:
 | `20261127100500_slice5_evaluate.sql` | §7, §9 |
 
 **The O-3 install chain's fingerprint changes.** The chain is frozen and
-signed. These migrations are not added to the box install until Henry signs a
-new fingerprint, after the Febor window.
+signed. These migrations are the resto, pushed by bob_migrador, and a box
+installs them only after Henry signs the new fingerprint (base → new). Henry
+decided on 27 Nov to bring Slice 5 to Febor.
 
 ## 14 · Open, outside this spec
 

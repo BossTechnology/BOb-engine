@@ -4335,8 +4335,9 @@ move together to P5, after the Febor window (spec §9, §11). To Federico.
 Six migrations, `20261127100000` to `20261127100500`, and
 `tests/slice5-thresholds.test.mjs` (41 tests), against the spec as corrected
 after its review and approved by Henry on 27 Nov. None of them is in the O-3
-install chain (`supabase/provision/install-chain.sha256`); that waits for a new
-signature after the Febor window.
+install chain (`supabase/provision/install-chain.sha256`): they are the resto,
+pushed by bob_migrador. Henry decided on 27 Nov to bring Slice 5 to Febor, so
+a box installs them only after his signed base → new approval of the tree.
 
 ### Seen failing first
 
@@ -4382,6 +4383,25 @@ guard with no new code, which is the point of discovering rather than listing.
 Consumer impact: anything in Bob-New that deletes or updates alerts as a member
 must stop.
 
+### F-51 · The resto created functions in public — closed
+
+CI's O-3 probe ("Chain applies as bob_migrador") failed on migration 2:
+`permission denied for schema public`. Every migration outside the install
+chain is pushed on a box by bob_migrador, which owns schema bob and holds no
+CREATE on public; a local stack pushes everything as postgres and never sees
+it. Two files did it: the trigger function of `trigger_level` (new) and the
+replacement of `public.bob_outbox_admit` (owned by the chain's postgres, so
+bob_migrador could not replace it even with CREATE). Both now live in bob:
+`bob.bob_response_level_check()` and `bob.bob_outbox_admit()`, and
+`trg_outbox_admit` is dropped and recreated to point at the latter. The old
+`public.bob_outbox_admit` stays, unreferenced; dropping it waits for the next
+signature of the install chain.
+New guard, `tests/install-approval.test.mjs` («the resto (F-51)»), discovers the resto as every
+migration not in `supabase/provision/install-chain.sha256` and refuses any
+CREATE, REPLACE, ALTER or DROP of an object in public; seen red on exactly
+these two files before the fix. Consumer impact: none; the trigger keeps its
+name and behaviour.
+
 ### F-49, built · Slice 6's tests now expect the row
 
 The seven Slice 6 tests that expected an error from a limit or an unverified,
@@ -4407,4 +4427,4 @@ after a suppressed eleventh is suppressed by the limit, not by the eleventh.
 - **Scope:** `entity` names a channel by id, `actor` an `actor_type`; `company`
   and `metric` reach everything.
 
-**Counts.** 532 → 573: 571 pass and 2 are `todo`, on the local stack `bob-v1-slice5` (Postgres 17, a fresh `supabase start`). Slice 5 adds 41; Slice 6 keeps its count with eight assertions rewritten.
+**Counts.** 532 → 575: 573 pass and 2 are `todo`, on the local stack `bob-v1-slice5` (Postgres 17, a fresh `supabase start`). Slice 5 adds 41, the F-51 guard 2; Slice 6 keeps its count with eight assertions rewritten.

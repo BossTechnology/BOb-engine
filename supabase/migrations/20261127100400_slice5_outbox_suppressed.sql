@@ -18,6 +18,11 @@
 --
 -- Consumer impact: an INSERT over a limit returns a row whose state is
 -- `suppressed` instead of an error.
+--
+-- In schema bob, not public (F-51): this file is pushed by bob_migrador, which
+-- holds no CREATE on public and does not own public.bob_outbox_admit (the
+-- install chain's postgres does). The trigger is pointed at the new function;
+-- the old one stays, unreferenced, until the install chain is next signed.
 -- ════════════════════════════════════════════════════════════════════════════
 
 BEGIN;
@@ -31,7 +36,7 @@ ALTER TABLE bob.outbound_queue
   ADD CONSTRAINT outbound_queue_suppressed_why
       CHECK ((state = 'suppressed') = (suppressed_reason IS NOT NULL));
 
-CREATE OR REPLACE FUNCTION public.bob_outbox_admit()
+CREATE FUNCTION bob.bob_outbox_admit()
 RETURNS trigger LANGUAGE plpgsql
 SET search_path = bob, public
 AS $$
@@ -108,5 +113,10 @@ BEGIN
   END IF;
   RETURN NEW;
 END $$;
+
+DROP TRIGGER trg_outbox_admit ON bob.outbound_queue;
+CREATE TRIGGER trg_outbox_admit
+  BEFORE INSERT ON bob.outbound_queue
+  FOR EACH ROW EXECUTE FUNCTION bob.bob_outbox_admit();
 
 COMMIT;
