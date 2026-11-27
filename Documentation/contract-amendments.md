@@ -4401,6 +4401,10 @@ migration not in `supabase/provision/install-chain.sha256` and refuses any
 CREATE, REPLACE, ALTER or DROP of an object in public; seen red on exactly
 these two files before the fix. Consumer impact: none; the trigger keeps its
 name and behaviour.
+Sabotaged once in CI: 6207ae2 put `bob_response_level_check` back in public.
+"Chain applies as bob_migrador (O-3)" failed with `permission denied for schema
+public` and the guard named the file; d118c98 restored it, a tree identical to
+5d06893, where O-3 had passed.
 
 ### F-49, built · Slice 6's tests now expect the row
 
