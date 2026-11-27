@@ -10,7 +10,10 @@
 # Opciones:
 #   --caja lab-02|local   obligatoria; cualquier otro valor se rechaza.
 #                         lab-02: el nombre de esta máquina (hostname) debe
-#                         contener «lab-02». local: PGHOST vacío o de loopback.
+#                         contener «lab-02». local: PGHOST y PGHOSTADDR vacíos
+#                         o de loopback, sin PGSERVICE. Esto solo frena un
+#                         descuido aquí; quien decide es la base (guarda G8:
+#                         la org lleva settings.bob_demo_caja igual a --caja).
 #   --tenant <slug>       el slug de la única organización de la caja
 #                         (bzzz.tenant; el mismo que usa provision-user.mjs).
 #   --zona <IANA>         la hora local de la curva diaria; America/Bogota.
@@ -58,7 +61,12 @@ case "$caja" in
     case "${PGHOST:-}" in
       ''|127.0.0.1|localhost|::1|/*) ;;
       *) no "--caja local pero PGHOST no es de loopback" ;;
-    esac ;;
+    esac
+    case "${PGHOSTADDR:-}" in
+      ''|127.0.0.1|::1) ;;
+      *) no "--caja local pero PGHOSTADDR no es de loopback" ;;
+    esac
+    [ -z "${PGSERVICE:-}${PGSERVICEFILE:-}" ] || no "--caja local no acepta PGSERVICE: el destino tiene que verse" ;;
   '') no "falta --caja: la semilla solo corre con un destino de laboratorio explícito (lab-02 o local)" ;;
   *)  no "--caja ${caja}: no es una caja de laboratorio (solo lab-02 o local)" ;;
 esac

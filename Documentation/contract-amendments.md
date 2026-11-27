@@ -4234,6 +4234,18 @@ things about the boxes:
   summary warns when it is NULL. Whether lab-02's organization gets it is
   Henry's call; the PR asks.
 
+- **A destination flag proves nothing about the database.** An independent
+  review of #61 found that `--caja lab-02` only checked the hostname of the
+  machine running psql. The database now has to say it: G8 requires the
+  organization's `settings.bob_demo_caja` to equal the destination. Only
+  Henry sets it, by hand, in the lab box. A customer box has no such key, so
+  the guard fails closed.
+- **ON DELETE CASCADE reaches rows the seed never wrote.** `actor_shifts`,
+  `actor_channel_skills`, `actor_ref_history` and `member_refs_seen` cascade
+  from actors and channels. Before deleting, `--quitar` reads every foreign key
+  to `bob.channels` and `bob.actors` from the catalog, and G9 refuses if any
+  row the seed did not write hangs off a demo channel or actor.
+
 The seed writes channels, capabilities, mix, actors and refs as `bob_app` under
 the organization's claim, and the projections as `bob_feeder`, creating the
 months through `bob.proj_ensure_partition`, as the feeder would. Every row is
@@ -4245,6 +4257,7 @@ organization, with any projection row or interaction it did not write, and as
 an API role or a role that reads under RLS. `tests/demo-semilla.test.mjs`
 covers each guard; each was seen red by sabotage.
 
-The files live in the repository tree, so they are inside the digest any later
-install approval covers (as every file is). Nothing in the install path names
-them; the test asserts it.
+The files live in the repository tree, so merging changes the digest an
+install approval covers, as any commit does. Febor installs the signed commit
+`00f79b7`, and the seed reaches lab-02 by copying `scripts/demo/` alone. Nothing
+in the install path names it; the test asserts it.

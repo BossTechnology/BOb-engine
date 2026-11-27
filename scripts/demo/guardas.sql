@@ -12,7 +12,8 @@
 --   bob_demo.accion   'sembrar' o 'quitar'.
 --
 -- Se niega, y no queda nada escrito, cuando:
---   G1  el destino no es una caja de laboratorio;
+--   G1  el destino declarado no es una caja de laboratorio. Es solo lo que
+--       dice quien corre; quien lo demuestra es la base (G8);
 --   G2  falta la acción o el tenant;
 --   G3  la base no tiene exactamente una organización, o no es la del tenant
 --       (una caja, una organización: P5, objeción 3);
@@ -24,7 +25,12 @@
 --       cualquier proyección de cualquier organización con otro feeder_version,
 --       o una fila en bob.interactions;
 --   G7  (solo al sembrar) un canal o un actor usa un nombre de la semilla sin
---       llevar su marca.
+--       llevar su marca, o una ref demo-… es de un actor que no es de la
+--       semilla (sus conteos caerían en ese actor);
+--   G8  la BASE no dice que es ese laboratorio: la organización no tiene
+--       settings.bob_demo_caja igual al destino. Nadie lo pone sino a mano,
+--       en la caja de laboratorio; una caja de cliente no lo tiene, y la
+--       guarda falla cerrada. Se pone y se quita con una línea (ver el PR).
 -- Si todo pasa, deja bob_demo.guarda = 'pasada' solo para esta transacción. La
 -- semilla y el borrado se niegan sin esa marca: no corren sin las guardas, ni
 -- fuera de una transacción.
@@ -97,6 +103,12 @@ BEGIN
     RAISE EXCEPTION 'bob-demo G3: la organización de la caja no es %', tenant;
   END IF;
 
+  -- G8: el flag no basta; la base tiene que decir que es este laboratorio.
+  IF NOT EXISTS (SELECT 1 FROM bob.organizations o
+                  WHERE o.slug = tenant AND (o.settings ->> 'bob_demo_caja') = caja) THEN
+    RAISE EXCEPTION 'bob-demo G8: la base no está marcada como la caja de laboratorio % (bob.organizations.settings.bob_demo_caja)', caja;
+  END IF;
+
   IF accion = 'sembrar' THEN
     -- G6. Las proyecciones se descubren, no se enumeran: toda tabla particionada
     -- de `bob` con feeder_version.
@@ -131,6 +143,12 @@ BEGIN
                 WHERE a.display_id LIKE 'demo-%'
                   AND (a.attributes ->> 'bob_demo') IS DISTINCT FROM 'true') THEN
       RAISE EXCEPTION 'bob-demo G7: hay un actor con display_id demo-… sin la marca de la semilla';
+    END IF;
+    IF EXISTS (SELECT 1 FROM bob.actor_external_refs r JOIN bob.actors a ON a.id = r.actor_id
+                WHERE r.ref LIKE 'demo-%'
+                  AND (a.display_id <> r.ref OR (a.attributes ->> 'bob_demo') IS DISTINCT FROM 'true'))
+       OR EXISTS (SELECT 1 FROM bob.actor_ref_history h WHERE h.ref LIKE 'demo-%') THEN
+      RAISE EXCEPTION 'bob-demo G7: una ref demo-… es de un actor que no es de la semilla';
     END IF;
   END IF;
 

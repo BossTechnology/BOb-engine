@@ -68,6 +68,13 @@ describe('the wrapper refuses without a lab destination', () => {
     assert.match(r.stderr, /no es de loopback/)
   })
 
+  test('--caja local through PGHOSTADDR or a service file', () => {
+    for (const extra of [{ PGHOSTADDR: '10.0.0.5' }, { PGSERVICE: 'otra' }]) {
+      const r = wrapper(['--caja', 'local', '--tenant', 'lab-demo'], pgEnv(extra))
+      assert.equal(r.status, 2, `${JSON.stringify(extra)}: ${r.stderr}`)
+    }
+  })
+
   test('a tenant or a zone that could carry SQL', () => {
     for (const args of [['--tenant', "x'; DROP SCHEMA bob; --"], ['--tenant', 'lab-demo', '--zona', "UTC'"]]) {
       const r = wrapper(['--caja', 'local', ...args])
@@ -139,7 +146,8 @@ describe('the SQL, in a transaction over one lab organization', () => {
     await db.query('SET LOCAL client_min_messages = warning')
     await db.query(`TRUNCATE bob.organizations, ${parted.map((p) => p.t).join(', ')} CASCADE`)
     await db.query(
-      "INSERT INTO bob.organizations (name, slug, telemetry_started_at) VALUES ('Laboratorio Demo', 'lab-demo', now() - interval '60 days')")
+      `INSERT INTO bob.organizations (name, slug, telemetry_started_at, settings)
+       VALUES ('Laboratorio Demo', 'lab-demo', now() - interval '60 days', '{"bob_demo_caja": "local"}')`)
     // As on a box: the connecting role is not a member of the two app roles.
     for (const r of ['bob_app', 'bob_feeder']) {
       const { rows: [m] } = await db.query("SELECT pg_has_role(current_user, $1, 'MEMBER') AS m", [r])
@@ -169,6 +177,21 @@ describe('the SQL, in a transaction over one lab organization', () => {
       await db.query("INSERT INTO bob.organizations (name, slug) VALUES ('Otra Demo', 'otra-demo')")
       await run({}, 'guardas.sql')
     })
+  })
+
+  test('G8: the database does not say it is this lab box', async () => {
+    // The flag alone passed G1; a customer box has no mark.
+    await refused(/G8/, async () => {
+      await db.query("UPDATE bob.organizations SET settings = '{}'")
+      await run({}, 'guardas.sql')
+    })
+    // The mark of another lab box.
+    await refused(/G8: la base no está marcada como la caja de laboratorio local/, async () => {
+      await db.query(`UPDATE bob.organizations SET settings = '{"bob_demo_caja": "lab-02"}'`)
+      await run({}, 'guardas.sql')
+    })
+    // And lab-02 declared against a database marked local.
+    await refused(/G8/, () => run({ caja: 'lab-02' }, 'guardas.sql'))
   })
 
   test('G4: a role that reads under RLS cannot run the guard', async () => {
@@ -295,8 +318,37 @@ describe('the SQL, in a transaction over one lab organization', () => {
     })
   })
 
+  test('G7: a seed ref held by an actor that is not the seed\'s', async () => {
+    await refused(/G7: una ref demo/, async () => {
+      await db.query("DELETE FROM bob.actor_external_refs WHERE ref = 'demo-asistente'")
+      await db.query(`
+        WITH a AS (INSERT INTO bob.actors (org_id, actor_type, display_id, display_name)
+                   SELECT id, 'human', 'agente-real', 'Persona Demo' FROM bob.organizations RETURNING org_id, id)
+        INSERT INTO bob.actor_external_refs (org_id, actor_id, ref) SELECT org_id, id, 'demo-asistente' FROM a`)
+      await run({}, 'guardas.sql')
+    })
+  })
+
+  test('G9: the removal refuses when rows it did not write hang off its actors or channels', async () => {
+    const cases = [
+      [/G9: .*bob\.actor_shifts\.actor_id \(1\)/, `
+        INSERT INTO bob.actor_shifts (org_id, actor_id, starts_at, ends_at)
+        SELECT org_id, id, now(), now() + interval '8 hours' FROM bob.actors WHERE display_id = 'demo-agente-01'`],
+      [/G9: .*bob\.actor_channel_skills/, `
+        INSERT INTO bob.actor_channel_skills (org_id, actor_id, channel_id)
+        SELECT a.org_id, a.id, c.id FROM bob.actors a, bob.channels c
+         WHERE a.display_id = 'demo-agente-01' AND c.source_key = 'demo-pbx'`],
+    ]
+    for (const [re, insert] of cases) {
+      await refused(re, async () => {
+        await db.query(insert)
+        await run({ accion: 'quitar' }, 'guardas.sql', 'quitar.sql')
+      })
+    }
+  })
+
   test('the removal stops when a row it did not write points at a seed channel', async () => {
-    await refused(/foreign key|llave/, async () => {
+    await refused(/G9: .*bob\.proj_metric_counts\.channel_id \(1\)/, async () => {
       await db.query(`
         INSERT INTO bob.proj_metric_counts (org_id, channel_id, actor_type, metric_id, bucket_start,
                event_count, session_count, sealed, source_watermark, feeder_version)
