@@ -142,6 +142,10 @@ jobs:
         env:
           SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
         run: node --test --test-concurrency=1 tests/slice6-registries-outbox.test.mjs
+      - name: Slice 5 · step 6a, the breach without responses, cooldown, escalation, recovery, suppressed intentions
+        env:
+          SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+        run: node --test --test-concurrency=1 tests/slice5-thresholds.test.mjs
       - name: Who may sign in · bob_app reads its organization's users, signing up makes no row, provisioning, the box warning
         env:
           SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres

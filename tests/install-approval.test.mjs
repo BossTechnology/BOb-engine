@@ -907,3 +907,37 @@ describe('the empty base, against the database', () => {
     await admin.query(`DROP ROLE ${role}`); role = null
   })
 })
+
+// F-51: on a box every migration outside the install chain is pushed by
+// bob_migrador, whose footprint is schema bob. It holds no CREATE on public and
+// owns nothing there, so a file of the resto that creates, replaces, alters or
+// drops an object in public fails on the box ("permission denied for schema
+// public"), while a local stack, where postgres pushes everything, applies it.
+// Discovered, not listed: the chain is supabase/provision/install-chain.sha256,
+// and every other file in supabase/migrations is the resto.
+describe('the resto (F-51)', () => {
+  const MIG = join(REPO_ROOT, 'supabase/migrations')
+  const chain = new Set(
+    readFileSync(join(REPO_ROOT, 'supabase/provision/install-chain.sha256'), 'utf8')
+      .split('\n').filter((l) => l && !l.startsWith('#'))
+      .map((l) => l.trim().split(/\s+/)[1]))
+  const resto = readdirSync(MIG).filter((f) => f.endsWith('.sql') && !chain.has(f)).sort()
+  // SQL comments out, so a comment that names public.x is not a hit.
+  const code = (sql) => sql.replace(/--[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '')
+  const DDL = /\b(CREATE(\s+OR\s+REPLACE)?|ALTER|DROP)\s+(FUNCTION|PROCEDURE|TABLE|VIEW|MATERIALIZED\s+VIEW|SEQUENCE|TYPE|DOMAIN|TRIGGER\s+\w+\s+.*?\bON)\s+(IF\s+(NOT\s+)?EXISTS\s+)?"?public"?\./gis
+
+  test('the chain is found and the resto is not empty', () => {
+    assert.ok(chain.size > 0)
+    assert.ok(resto.length > 0)
+  })
+
+  test('creates, replaces, alters or drops nothing in public', () => {
+    const hits = []
+    for (const f of resto) {
+      for (const m of code(readFileSync(join(MIG, f), 'utf8')).matchAll(DDL)) {
+        hits.push(`${f}: ${m[0].replace(/\s+/g, ' ').slice(0, 80)}`)
+      }
+    }
+    assert.deepEqual(hits, [], 'bob_migrador cannot do these on a box:\n' + hits.join('\n'))
+  })
+})
