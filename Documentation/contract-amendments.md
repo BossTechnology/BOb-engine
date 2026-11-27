@@ -4280,6 +4280,166 @@ install approval covers, as any commit does. Febor installs the signed commit
 `00f79b7`, and the seed reaches lab-02 by copying `scripts/demo/` alone. Nothing
 in the install path names it; the test asserts it.
 
+## Rehearsal uninstall of model-01 (`scripts/ensayo/`), outside the chain
+
+Febor goes on Monday 30 Nov in one step, from the empty base to `544fe970…`
+(engine `00f79b7`) with the approval `e3b0c442…-544fe970…`. model-01 reached
+the same digest in two steps. To rehearse Febor's exact path there,
+`scripts/ensayo/desinstalar-bob.sh` leaves model-01 as it was before its first
+install. It runs only on model-01, by Henry, as root; nothing in the install
+path names it. Nothing in the contract changes. Recorded here because
+measuring what the first install leaves found these things about the box
+layout. The measurement compared a fresh `17.6.1.136` stack with the same
+stack after `cadena`, the alta's CI stand-in, `resto`, B8 and B8b:
+
+- **The alta's `GRANT USAGE ON SCHEMA auth TO bob_migrador` can only be
+  removed by `supabase_admin`.** It is granted as `supabase_admin` (77.22). As
+  `postgres`, `REVOKE` quietly removes nothing (`no privileges could be
+  revoked`), `DROP OWNED BY bob_migrador` leaves it, and `DROP ROLE
+  bob_migrador` fails on it. The uninstall therefore opens its one transaction
+  as `supabase_admin`, as the alta does. It runs everything else under `SET
+  LOCAL ROLE postgres` or as the owner of `bob`, and resets only for that
+  REVOKE. It never uses the service role.
+- **The chain changes four things outside `bob` that `DROP SCHEMA bob CASCADE`
+  does not undo:**
+  - 25 functions in `public`, owned by `postgres` (`bob_*`, `update_updated_at`,
+    `cap_alert_log`, `enforce_slug_immutability`, `custom_access_token_hook`).
+    `public.bob_outbox_drain` goes with the cascade (F-47).
+  - `USAGE` on `public` for `supabase_auth_admin` (`20260606120001`) and for
+    `bob_app`, `bob_feeder` and `bob_ai_ro`. The uninstall leaves
+    `supabase_auth_admin`'s (see the second review below).
+  - `postgres`'s default privileges in `public`: `20261121170000` took TRUNCATE
+    from `anon` and `authenticated`. The uninstall grants it back, so the
+    catalog matches the fresh one.
+  - The schema `supabase_migrations`, which did not exist before the first
+    `cadena` (B0 measured it absent on model-01 and Febor).
+
+  The four `bob` tables in `supabase_realtime` leave the publication with the
+  cascade. The publication stays.
+- **The ADMIN rows for `postgres` (16+) go with `DROP ROLE`.** Each role the
+  chain creates under CREATEROLE leaves `bob_* → postgres` with `admin_option =
+  t`, `inherit_option = f`, `set_option = f`, granted by `supabase_admin`. The
+  uninstall lists them as expected; any other membership stops it.
+- **Nothing in `auth` is BOb's.** The chain creates no users and no claims:
+  `on_auth_user_created` is created by `20260606120000` and dropped by
+  `20261121130000`. Bzzz does not use BOb's custom access token hook.
+- **`pg_identify_object` gives no schema for defaults, constraints, triggers,
+  policies or rules.** A dependency guard that trusts its `schema` column sees
+  every column default of `bob` as foreign. The uninstall reads each object's
+  namespace from its own catalog (`pg_attrdef.adrelid`, `pg_trigger.tgrelid`,
+  `pg_policy.polrelid`, `pg_rewrite.ev_class`, and so on). A Bzzz view over
+  `bob` shows up as its `_RETURN` rule, and stops it (G6).
+- **The rehearsal differs from Febor at B6, on Bzzz's side.** Bzzz has no way
+  to remove a neighbour. The network `bzzz-vecina-bob` and the neighbours'
+  pg_hba stay on model-01, so the alta there exits 0 without `--reiniciar`;
+  on Febor it exits 3 the first time and asks for `--reiniciar [ventana]`.
+  `BZZZ_HOST_BOB` (B10) can be removed with Bzzz's own commands. The script
+  prints them, and does not run them.
+
+The uninstall is fail-closed. The map is the migrations of the installed
+commit, whose digest must equal `instalacion-firmada`. Anything not in the map
+stops it before anything is written: a file, a container, a role, a grant, a
+dependent object, a CLI history version. The transaction rebuilds the plan and
+compares its md5 with the one shown. Before COMMIT, and again after it in a
+new session, `cadena`'s empty-base check (`BOB_BASE_VACIA=1`) must find
+nothing. If the transaction fails, `/opt/bob`, `/root/bob-install` and
+`bob-web` are put back.
+
+`tests/ensayo-desinstalar.test.mjs` runs in its own CI job on the box's image.
+After `--ejecutar`, the catalog equals the pre-install one line for line, with
+Bzzz's planted objects (another neighbour, an `auth` account, a table and a
+function in `public`) untouched. A real `instalar-bob.sh cadena` from the
+empty base then accepts the database. Each guard was seen red by sabotage.
+
+### Rehearsal uninstall · independent security review of #64 (`e13452b`), applied
+
+- **`DROP SCHEMA supabase_migrations CASCADE` skipped the dependency check.**
+  G6 looked only at what hangs from `bob` and from the `public` functions. A
+  Bzzz view, foreign key or function over `supabase_migrations` would have
+  gone with the cascade, silently. The CLI history schema and everything in it
+  now join the map that the dependency check reads, and a foreign view over
+  `schema_migrations` stops the run.
+- **`public` functions were matched by name alone.** Any `postgres`-owned
+  function in `public` with a name from the migrations would have been
+  dropped, whatever its arguments. That includes generic names like
+  `update_updated_at` or `custom_access_token_hook`. The map now holds the
+  exact signatures the chain creates, read from the migrations (input types
+  only, without parameter names, defaults or OUT) and resolved with
+  `to_regprocedure`. Any other overload of the same name is unknown, and the
+  run stops (G7). A signature that cannot be resolved does not count as the
+  chain's, so it fails closed.
+- **The README's recovery misled after a death between COMMIT and `rm`.**
+  Putting `/opt/bob` back there would declare `544fe970…` over an empty
+  database. Right after COMMIT the script now writes `BASE-YA-VACIADA` into
+  each folder it set aside. The next run reads that mark before anything else
+  and stops, saying to delete them, not restore them. The README checks the
+  mark and `to_regnamespace('bob')` before any `mv`. Tested by killing the run
+  at its first `docker rm`.
+- **The clone was read twice** (once for the digest, once for the map). It is
+  now copied once into the script's own folder (`git clone --no-checkout
+  --no-local`), and both come from that copy. Not `--bare`: with
+  `safe.bareRepository=explicit`, git will not open a bare repository by `-C`.
+- **`rm -rf` now carries `--one-file-system`.** On a box a `rm` without it
+  stops the script; only test mode falls back, on a machine whose `rm` lacks
+  it.
+
+Each fix has its own test, and each was seen red by sabotage.
+
+### Rehearsal uninstall · second review of #64 (`915c950`), applied
+
+- **`supabase_auth_admin`'s `USAGE` on `public` is left in place.** The chain
+  grants it as `postgres` (`20260606120001`), but Postgres records the grantor
+  as `pg_database_owner`. It would record the same grantor if Bzzz granted it
+  as `supabase_admin` for an auth hook of its own. So the grantor cannot tell
+  BOb's grant from Bzzz's, and revoking Bzzz's would break the portal's
+  sign-in. Stopping on it instead would block every run on model-01, where
+  BOb's grant is always there. The uninstall keeps the grant, says so in the
+  plan, and prints the `REVOKE` for Henry to run once he has checked that no
+  Bzzz auth hook lives in `public`. The chain grants it again without error.
+  The test plants that grant before BOb's install, as Bzzz would, and the
+  catalog after `--ejecutar` still equals the pre-install one line for line.
+- **After a `kill -9`, the script's `psql` can outlive it and COMMIT later.**
+  Every session of the script now carries `application_name =
+  desinstalar-bob`. Before reading the mark or the database, the README's
+  recovery waits until neither the `docker exec … psql` process nor a
+  `desinstalar-bob` row in `pg_stat_activity` remains. If one hangs, it can be
+  cut with `pg_terminate_backend`. The test holds the script's transaction on a
+  lock and finds it there by that name.
+
+### Rehearsal uninstall · third review of #64 (`afbea5e`), applied
+
+- **GoTrue calls `public.custom_access_token_hook` by name.** The URI is
+  `pg-functions://postgres/public/custom_access_token_hook`
+  (`supabase/config.toml`). If Bzzz's GoTrue on model-01 has that hook on, the
+  uninstall's `DROP FUNCTION` makes every token issuance fail after the COMMIT.
+  Nobody could then sign in, the Bzzz portal included, until BOb is
+  reinstalled. New guard G8 reads the environment of every container, with no
+  list of hooks. Any variable whose value is `pg-functions://<db>/public/<fn>`
+  with `<fn>` among the chain's public functions stops the run, unless the
+  variable ends in `_URI` and its `<prefix>_ENABLED` is exactly `false` or
+  `0`. A missing `_ENABLED` counts as on, so the guard fails closed. The guard
+  stops instead of warning. Stopping touches nothing. Going on would leave the
+  box without sign-in, and the only way back is a reinstall. Turning the hook
+  off is Bzzz's call: the stop message and the README give the exact step.
+- **G2 matched a substring**, so `model-010` and `febor-ex-model-01` passed.
+  It now needs the short hostname (`uname -n` up to its first dot, the same as
+  `hostname -s`) to be exactly `bzzz-model-01`, which is what the box answers
+  (checked read-only). The box's logical name (`--caja model-01`,
+  `CAJA_ENSAYO`) and its expected hostname (`MAQUINA_ENSAYO`) are now two
+  constants. `model-01` alone, `model-010`, `bzzz-model-010`,
+  `bzzz-model-01x` and `febor-ex-model-01` are refused.
+- **Giving `TRUNCATE` back to `anon` and `authenticated`** in `postgres`'s
+  default privileges on `public` undoes F-44 for every table `postgres`
+  creates there later, Bzzz's included, until the chain's B5 removes it again.
+  It is the pre-install state, so it stays, but the plan and the README now
+  say so.
+- Tests: G8 on (`true`, `TRUE`, `1`, no `_ENABLED`) and in another variable
+  or container stops; a hook on a function that is not the chain's does not;
+  off shows as info. G2 refuses each of those names and
+  `bzzz-model-010.example.com`, and takes `bzzz-model-01.example.com`. Box mode run without root stops. Each guard was seen
+  red by sabotage. The `-t 0` check of G4 only runs in box mode, which a test
+  cannot reach without root, so it has no test.
+
 ---
 
 ## Slice 5 · Thresholds and their evaluator, spec
@@ -4514,3 +4674,58 @@ after a suppressed eleventh is suppressed by the limit, not by the eleventh.
   and `metric` reach everything.
 
 **Counts.** 532 → 575: 573 pass and 2 are `todo`, on the local stack `bob-v1-slice5` (Postgres 17, a fresh `supabase start`). Slice 5 adds 41, the F-51 guard 2; Slice 6 keeps its count with eight assertions rewritten.
+
+---
+
+## Slice 7 · Drill-downs, spec
+
+`docs/slice-7-drilldowns.md`, decided by Henry in the Slice 7 grill (27 Nov, T1
+to T8, each with the recommended option). Nothing is built. Drawn ahead of
+D-33, which stays open on Relevo task 19.
+
+### Slice 3 §10 closed · the per-actor zero is derived at read time
+
+`bob_actor_cell_state` derives `observed` 0 for a human with no row, skilled on
+the channel, on shift at `bucket_start` (`bob_shift_is_live()`), under a channel
+cell that is `observed` from a row. It carries `none_observed` and the new
+`liveness_source = 'shift'`. ASA and members are never given a derived zero:
+nothing proves they were there. No row is written. Proposed for 0.6 as a
+clarification of contract §5: "the feeder must never write a zero it did not
+observe" stands, and the drill-down derives one it can prove (spec §2).
+
+### The unattributed remainder
+
+Actors of a type add up to at most their channel cell. The difference is a row,
+`unattributed`, and a negative one is `actor_sum_exceeds_channel`, never
+clamped (spec §4). Route B's unresolved refs are the expected cause on a box.
+
+### F-56 · Extending `bob_actor_cell_state` changes its return type — finding
+
+Adding `liveness_source` needs DROP and CREATE, with the grants, in one
+transaction. A caller selecting `*` gets one more column; bob-web is outside
+this repository (spec §3, §9).
+
+### F-57 · The rebuilt marker reads today's lag — finding
+
+Under D-33 Q1 (a), "rebuilt" is a sealed row with
+`computed_at > bucket_start + 5 min + lag_seconds + 5 min`. Raising a lag later
+hides old markers. The alert's own flag (`computed_at > alert_log.created_at`)
+is unaffected. Storing the seal instant would fix it and is not proposed
+(spec §8.2).
+
+### D-33 · implemented at option (a), isolated
+
+Q1 (a): a quiet "rebuilt at <time>" marker, and the alert shows the figure at
+firing (`alert_log.value`) beside the current one. Q2 (a): `observed` with an
+`unvouched` marker, per source once it emits coverage records (D63 in BzzzBX);
+false everywhere in v1. Both live in one function, `bob_cell_markers`, one
+migration and one test block (D1–D5). Under Q2 (b) the change leaves that
+section: `bob_cell_state` itself would turn unvouched buckets `not_observed`
+(spec §8.3). To Federico on Relevo task 19.
+
+### Migration numbers
+
+`20261128100000` and `20261128100100`, above Slice 5's `20261127100000` to
+`20261127100500` and its review fixes (`20261127110000`, F-52 to F-55). `bob_cell_alerts` reads Slice 5's `alert_log` columns, so
+Slice 7 is built after Slice 5 merges. Not part of the Febor window; nothing
+touches the O-3 chain or `/opt/bob`.
