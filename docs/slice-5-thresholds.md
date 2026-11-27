@@ -1,7 +1,7 @@
 # BOb v1 · Slice 5 · Cooldown and escalation — spec
 
-**Status: SPEC, decided by Henry in the Slice 5 grill (2026-11-27). Nothing is
-built.** The product rulings it applies are Federico's and are signed: D-05
+**Status: SPEC, decided by Henry in the Slice 5 grill (2026-11-27), corrected
+after its review and approved by Henry the same day. Built test first (§13).** The product rulings it applies are Federico's and are signed: D-05
 (Relevo task 9, 27 Oct, with the six points answered on 5 and 10 Nov) and D-31
 (Relevo task 11, 4 Nov). The grill answered how to build them, not what they are.
 Where the grill found a ruling that rests on something the schema does not
@@ -295,6 +295,14 @@ are a broken configuration, not a limit doing its job.
 - **F-49 · The D-31 refusal was built as an error, not a row.** Slice 6's
   admission raises over a limit. Relevo task 11 placed "a suppressed row with its
   reason" in step 19, and this slice builds it (§8).
+- **F-50 · Alerts could be deleted by the application.** An escalation keys
+  the alert it raises, so the Slice 6 trace guard, which discovers every table
+  that keys `alert_log`, found `alert_log` itself. `bob_app` and
+  `authenticated` held DELETE on it, and `authenticated` held UPDATE. Deleting
+  an alert would leave an escalation, an intention or a breach state without
+  its cause. Both lose DELETE and TRUNCATE, and `authenticated` loses UPDATE
+  (migration 4). Consumer check: anything in Bob-New that deletes or updates
+  alerts as a member.
 - **Contract §11, retention moves from Slice 5 to P5 (S7).** Detaching and
   dropping partitions needs a scheduler, and the scheduler is P5's. The
   interim row changes its "When" from Slice 5 to "P5, with the evaluator's

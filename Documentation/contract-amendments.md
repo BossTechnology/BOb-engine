@@ -4327,3 +4327,84 @@ move together to P5, after the Febor window (spec §9, §11). To Federico.
 - `peak_mode = 'observed'` is not evaluated in v1; it is reported with the
   reason `peak_observed_unsupported`. `manual` windows move state and write
   nothing.
+
+---
+
+## Slice 5 · Thresholds and their evaluator, built
+
+Six migrations, `20261127100000` to `20261127100500`, and
+`tests/slice5-thresholds.test.mjs` (41 tests), against the spec as corrected
+after its review and approved by Henry on 27 Nov. None of them is in the O-3
+install chain (`supabase/provision/install-chain.sha256`); that waits for a new
+signature after the Febor window.
+
+### Seen failing first
+
+Against the chain without the six migrations, 37 of 39 failed. The two that
+passed did so for the wrong reason (a missing column or function also raises),
+and each is covered again by a sabotage below. The four added after the
+review (15, 15a, 15b, 17) were seen failing against the evaluator as first
+written, or by the sabotage in the table.
+
+### Verified by sabotage
+
+Each one applied to the database, the suite file run, and the change undone.
+
+| Sabotage | Red |
+|---|---|
+| A provisional cell counted as evaluable | a provisional bucket on a declared channel |
+| The evaluator does not stop at an unsealed bucket | A-04 (it advanced past an unsealed bucket) |
+| `bob_threshold_status` joins `evaluation_state` | the pg_depend guard |
+| Escalation per response, not per subject | 15 |
+| Escalation with no alert fired in the breach | 15a |
+| Recovery row with no alert fired in the breach | 15b; sustained 600 |
+| Recovery keeps the cooldown | 16; 17 |
+| The recovery dwell ignored | 17 |
+| `last_fired_at` on the wall clock, not the bucket's | six buckets at 300; the eleventh firing; the daily cap |
+| A default function that skips the floor (120) | the defaults; the pg_depend floor guard; six tests that read the default |
+| EXECUTE on `bob_evaluate` to `bob_app` | the discovered EXECUTE guard |
+| DELETE on `alert_log` to `bob_app` | the Slice 6 trace guard |
+
+A-04 has two layers, and each sabotage removes one: the status refuses a
+provisional cell, and the evaluator stops at the first unsealed bucket. On a
+channel whose lag is NULL the buckets before the first row are already
+`pending`, so the stop alone keeps A-04 green when the status is broken. The
+declared-channel test is the one that sees the status layer.
+
+### F-50 · Alerts could be deleted by the application — closed
+
+An escalation keys the alert it raises (`alert_log.escalates_alert_id`), so the
+Slice 6 trace guard, which discovers every table that keys `alert_log`, found
+`alert_log` itself: `bob_app` and `authenticated` held DELETE, `authenticated`
+held UPDATE. Deleting an alert would leave an escalation, an intention or a
+breach state without its cause. Revoked in migration 4. Found by an existing
+guard with no new code, which is the point of discovering rather than listing.
+Consumer impact: anything in Bob-New that deletes or updates alerts as a member
+must stop.
+
+### F-49, built · Slice 6's tests now expect the row
+
+The seven Slice 6 tests that expected an error from a limit or an unverified,
+failed, stale or disabled binding now expect a `suppressed` row with its
+reason, including the concurrent case. The structural refusals (another
+organization, a binding the response does not attach, no limit declared, a
+duplicate key) still raise and their tests are unchanged. A twelfth intention
+after a suppressed eleventh is suppressed by the limit, not by the eleventh.
+
+### Choices the build made — for Henry
+
+- **`bob.evaluation_state` is read-only for `bob_app`**, added to the §10
+  grants guard's `READ_ONLY` beside `audit_log`, because only the evaluator
+  writes it.
+- **The evaluator reports a structural refusal of an intention** as
+  `fired_intention_refused` with the error, and goes on: one broken Action
+  response does not stop the organization's evaluation. The alert is written.
+- **`idempotency_key` of an evaluator intention is the alert's id.** One alert,
+  one intention per response.
+- **Peak windows are `[{"start": "HH:MM", "end": "HH:MM"}]` in UTC.** The shape
+  is BOb's reading; nothing in this repository wrote one before. Bob-New's
+  shape, if it has one, must match.
+- **Scope:** `entity` names a channel by id, `actor` an `actor_type`; `company`
+  and `metric` reach everything.
+
+**Counts.** Slice 5 adds 41. Full suite in the PR.
