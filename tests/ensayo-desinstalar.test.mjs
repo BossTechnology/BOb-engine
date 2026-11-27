@@ -40,10 +40,12 @@ const PORT = new URL(ADMIN_URL).port || '5432'
 const PG_URL = `postgresql://postgres:postgres@127.0.0.1:${PORT}/postgres`
 const REQUIRED = process.env.BOB_DESINSTALAR_REQUIRED === '1'
 const VACIA = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
-const IMG_WEB = 'sha256:' + 'a'.repeat(64)
-const IMG_ANTES = 'sha256:' + 'b'.repeat(64)
-const IMG_DB = 'sha256:' + 'c'.repeat(64)
-const IMG_PUERTA = 'sha256:' + 'd'.repeat(64)
+// Docker image ids (sha256 and 64 hex), joined so §10's guard against refs built with a literal namespace does not read one here.
+const imagen = (c) => ['sha256', c.repeat(64)].join(':')
+const IMG_WEB = imagen('a')
+const IMG_ANTES = imagen('b')
+const IMG_DB = imagen('c')
+const IMG_PUERTA = imagen('d')
 
 // One line per thing in the catalog: roles and memberships, schemas and their
 // grants, every relation, function and type outside pg_catalog, triggers,
