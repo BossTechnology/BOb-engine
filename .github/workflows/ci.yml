@@ -271,6 +271,15 @@ jobs:
         env:
           SUPABASE_DB_URL: postgresql://supabase_admin:postgres@127.0.0.1:54322/postgres
         run: node --test --test-concurrency=1 --test-name-pattern='^(R6|F-46) ' tests/tenancy.test.mjs
+      # The demo seed's G5 on the box's image: there postgres is a member of
+      # bob_app and bob_feeder without SET, as on lab-02, which 15 cannot
+      # express. supabase_admin, so the test can SET SESSION AUTHORIZATION to a
+      # role shaped like the box's postgres; a skip here is a failure.
+      - name: Demo seed G5 on Postgres 16+ (lab-02 membership without SET)
+        env:
+          SUPABASE_DB_URL: postgresql://supabase_admin:postgres@127.0.0.1:54322/postgres
+          BOB_DEMO_G5_REQUIRED: '1'
+        run: node --test --test-concurrency=1 --test-name-pattern='^G5 on Postgres 16' tests/demo-semilla.test.mjs
       # Step 3 applies what came after the install chain (Slice 3's two files
       # today), then the samples below.
       # Sample migrations show what it does with one, after the check so they

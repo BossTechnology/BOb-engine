@@ -18,6 +18,7 @@ import { spawnSync } from 'node:child_process'
 import { readFileSync, readdirSync } from 'node:fs'
 import { hostname } from 'node:os'
 import { join } from 'node:path'
+import pg from 'pg'
 import { connect, loadFixture, DB_URL, REPO_ROOT } from './helpers/db.mjs'
 
 const DEMO = join(REPO_ROOT, 'scripts/demo')
@@ -366,6 +367,114 @@ describe('the SQL, in a transaction over one lab organization', () => {
     assert.equal(await demoActors(), 0)
     assert.equal(await count("SELECT count(*)::int AS n FROM bob.actor_external_refs WHERE ref LIKE 'demo-%'"), 0)
     assert.equal(await count('SELECT count(*)::int AS n FROM bob.organizations'), 1)
+  })
+})
+
+// G5 on Postgres 16+, as lab-02 has it: the connecting role is already a member
+// of bob_app and bob_feeder, granted by a superuser WITH ADMIN TRUE, INHERIT
+// FALSE, SET FALSE. Membership is not the privilege SET ROLE uses: a guard that
+// asks MEMBER lends nothing and the seed dies at its first SET LOCAL ROLE.
+// It needs 16+ and a superuser connection (SET SESSION AUTHORIZATION, so that
+// session_user is the role under test, as on the box). CI's 15 stack skips it;
+// the job on the box's image runs it with BOB_DEMO_G5_REQUIRED=1, where a skip
+// is a failure.
+const g5Probe = await (async () => {
+  const c = new pg.Client({ connectionString: DB_URL })
+  try {
+    await c.connect()
+    const { rows: [r] } = await c.query(`
+      SELECT current_setting('server_version_num')::int >= 160000 AS pg16, rolsuper
+        FROM pg_roles WHERE rolname = current_user`)
+    return r.pg16 && r.rolsuper ? false : 'needs Postgres 16+ and a superuser connection'
+  } catch (e) {
+    return `no database: ${e.message}`
+  } finally {
+    await c.end().catch(() => {})
+  }
+})()
+if (g5Probe && process.env.BOB_DEMO_G5_REQUIRED) throw new Error(`G5 on 16+ cannot run: ${g5Probe}`)
+
+describe('G5 on Postgres 16+: a membership that cannot SET ROLE (lab-02)', { skip: g5Probe }, () => {
+  let db
+  const quien = 'bob_demo_sembrador_ci'
+  const run = async (accion, ...files) => {
+    await db.query(
+      `SELECT set_config('bob_demo.caja', 'local', true), set_config('bob_demo.tenant', 'lab-demo', true),
+              set_config('bob_demo.accion', $1, true)`, [accion])
+    for (const f of files) await db.query(sql(f))
+  }
+  // Every case under its own savepoint, back as the superuser after it.
+  const caso = async (fn) => {
+    await db.query('SAVEPOINT caso')
+    try {
+      await fn()
+    } finally {
+      await db.query('ROLLBACK TO SAVEPOINT caso')
+      await db.query('RESET SESSION AUTHORIZATION')
+    }
+  }
+  const memberships = async () => (await db.query(`
+    SELECT r.rolname AS rol, g.rolname AS grantor, m.admin_option, m.inherit_option, m.set_option
+      FROM pg_auth_members m
+      JOIN pg_roles r ON r.oid = m.roleid
+      JOIN pg_roles g ON g.oid = m.grantor
+     WHERE m.member = (SELECT oid FROM pg_roles WHERE rolname = $1)
+       AND r.rolname IN ('bob_app', 'bob_feeder')
+     ORDER BY 1, 2`, [quien])).rows
+  const demoChannels = async () => (await db.query(
+    "SELECT count(*)::int AS n FROM bob.channels WHERE source_key LIKE 'demo-%'")).rows[0].n
+
+  before(async () => {
+    db = await connect()
+    await db.query('BEGIN')
+    const { rows: parted } = await db.query(`
+      SELECT format('%I.%I', n.nspname, c.relname) AS t
+        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'bob' AND c.relkind = 'p' AND NOT c.relispartition`)
+    await db.query('SET LOCAL client_min_messages = warning')
+    await db.query(`TRUNCATE bob.organizations, ${parted.map((p) => p.t).join(', ')} CASCADE`)
+    await db.query(
+      `INSERT INTO bob.organizations (name, slug, telemetry_started_at, settings)
+       VALUES ('Laboratorio Demo', 'lab-demo', now() - interval '60 days', '{"bob_demo_caja": "local"}')`)
+    // The box's postgres: no superuser, CREATEROLE, BYPASSRLS, and it reads bob.
+    await db.query(`CREATE ROLE ${quien} NOLOGIN NOSUPERUSER CREATEROLE BYPASSRLS`)
+    await db.query(`GRANT pg_read_all_data TO ${quien}`)
+  })
+  after(async () => {
+    await db?.query('ROLLBACK')
+    await db?.end()
+  })
+
+  test('G5 lends SET, seed and removal run, and the membership is left as it was', async () => {
+    await caso(async () => {
+      await db.query(`GRANT bob_app, bob_feeder TO ${quien} WITH ADMIN TRUE, INHERIT FALSE, SET FALSE`)
+      const antes = await memberships()
+      assert.equal(antes.length, 2)
+      assert.ok(antes.every((m) => m.admin_option && !m.set_option), 'the lab-02 membership')
+
+      await db.query(`SET SESSION AUTHORIZATION ${quien}`)
+      await run('sembrar', 'guardas.sql', 'semilla.sql', 'resumen.sql', 'devolver.sql')
+      assert.equal(await demoChannels(), 5)
+      await run('quitar', 'guardas.sql', 'quitar.sql', 'resumen.sql', 'devolver.sql')
+      assert.equal(await demoChannels(), 0)
+      await db.query('RESET SESSION AUTHORIZATION')
+
+      // The grant of the superuser untouched, and nothing lent left behind.
+      assert.deepEqual(await memberships(), antes)
+    })
+  })
+
+  test('without ADMIN, G5 refuses before anything is written', async () => {
+    await caso(async () => {
+      await db.query(`GRANT bob_app, bob_feeder TO ${quien} WITH ADMIN FALSE, INHERIT FALSE, SET FALSE`)
+      await db.query(`SET SESSION AUTHORIZATION ${quien}`)
+      await assert.rejects(run('sembrar', 'guardas.sql'), /bob-demo G5: .* no puede bajar a bob_app/)
+    })
+    await caso(async () => {
+      await db.query(`GRANT bob_app, bob_feeder TO ${quien} WITH ADMIN FALSE, INHERIT FALSE, SET FALSE`)
+      await db.query(`SET SESSION AUTHORIZATION ${quien}`)
+      await assert.rejects(run('quitar', 'guardas.sql'), /bob-demo G5/)
+    })
   })
 })
 
