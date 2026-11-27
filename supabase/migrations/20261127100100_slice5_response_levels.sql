@@ -24,7 +24,7 @@ ALTER TABLE bob.response_rules
 -- bound would fire before the threshold breaches. It depends on another table,
 -- so a trigger checks it on write. In schema bob, which bob_migrador owns on a
 -- box; it holds no CREATE on public (F-51).
-CREATE FUNCTION public.bob_response_level_check()
+CREATE FUNCTION bob.bob_response_level_check()
 RETURNS trigger LANGUAGE plpgsql
 SET search_path = bob, public
 AS $$
@@ -47,6 +47,6 @@ END $$;
 
 CREATE TRIGGER trg_response_level_check
   BEFORE INSERT OR UPDATE OF trigger_level, threshold_id ON bob.response_rules
-  FOR EACH ROW EXECUTE FUNCTION public.bob_response_level_check();
+  FOR EACH ROW EXECUTE FUNCTION bob.bob_response_level_check();
 
 COMMIT;
