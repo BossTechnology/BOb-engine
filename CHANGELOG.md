@@ -3,6 +3,7 @@
 Una línea por cambio entregado, en lenguaje de usuario.
 
 ## Sin publicar
+- Spec del Slice 5 (`docs/slice-5-thresholds.md`): cooldown, escalamiento y recuperación por umbral, el evaluador que solo mira celdas selladas y observadas, y los rechazos de los topes como filas suprimidas con su motivo. Todavía no se construye nada.
 - La semilla demo ya corre en lab-02: en Postgres 16+ la guarda G5 pregunta si `postgres` puede bajar a `bob_app` y `bob_feeder` (`SET`), no solo si es miembro. En la caja lo es, pero sin `SET`. Si le falta, se presta una concesión propia solo para la transacción y `devolver.sql` quita solo esa. La de `supabase_admin` queda como estaba. Sin ADMIN sobre el rol, la guarda se niega.
 - Semilla demo para lab-02 (`scripts/demo/bob-demo.sh`): 28 días de datos inventados en cinco canales (conmutador, WhatsApp, dos webs y formularios) para ver las pantallas de bob-web con contenido. Escribe como `bob_app` y `bob_feeder`, en seco por defecto, se quita con `--quitar`, y se niega fuera de lab-02, en una base con más de una organización o con datos que no sean suyos. No es una migración: no entra en la instalación de ninguna caja.
 - El alta sola como viewer guarda el correo en minúsculas, como lo guarda GoTrue: un correo que llega con otras mayúsculas ya no hace una fila que no casa con la cuenta (`20261126110000_claim_viewer_seat_lower_email.sql`).

@@ -4279,3 +4279,44 @@ The files live in the repository tree, so merging changes the digest an
 install approval covers, as any commit does. Febor installs the signed commit
 `00f79b7`, and the seed reaches lab-02 by copying `scripts/demo/` alone. Nothing
 in the install path names it; the test asserts it.
+
+---
+
+## Slice 5 · Thresholds and their evaluator, spec
+
+`docs/slice-5-thresholds.md`, decided by Henry in the Slice 5 grill
+(27 Nov, S1 to S13, each with the recommended option). Nothing is built.
+
+### F-48 · D-05 point 6 rested on a step that did not happen — finding
+
+Federico ruled (10 Nov) that step 6 drops `UNIQUE (org_id, metric_id)` on
+`threshold_configs`, so "per threshold" is per threshold by the time step 6a
+lands. Slice 6 added `scope_kind` and `scope_ref`
+(`20261121100100_registry_verification_and_scope.sql:46`) and left the
+constraint (`20260729130000_v3_config_persistence.sql:53`). Slice 5 replaces it
+with a unique index on `(org_id, metric_id, scope_kind, COALESCE(scope_ref, ''))`
+(spec §2). An upsert in Bob-New on `ON CONFLICT (org_id, metric_id)` would stop
+matching; that repository is outside this one.
+
+### F-49 · The D-31 refusal was built as an error, not a row — finding
+
+BOB-11 item 1: "a refusal is recorded as a row with its reason — a suppressed
+intent — never silence", placed in step 19. Slice 6's `bob_outbox_admit()`
+raises. Slice 5 adds `suppressed` to `outbound_queue.state` with
+`suppressed_reason`, written for limit and verification refusals. Structural
+errors still raise (spec §8). Consumer impact: a direct INSERT over a limit
+returns a suppressed row instead of an error.
+
+### Proposed for 0.6 · retention moves to P5
+
+Contract §11 lists "retention is not enforced" as superseded in Slice 5 by
+`pg_cron`. pg_cron is not on P5 §6.3's approved list, and on a box it would run
+from one database of Bzzz's Postgres. The evaluator's scheduler and retention
+move together to P5, after the Febor window (spec §9, §11). To Federico.
+
+### Build readings of rulings carried over unchanged
+
+- Proximity (20 % and 10 %) is a display state, `near`, and writes no alert.
+- `peak_mode = 'observed'` is not evaluated in v1; it is reported with the
+  reason `peak_observed_unsupported`. `manual` windows move state and write
+  nothing.
