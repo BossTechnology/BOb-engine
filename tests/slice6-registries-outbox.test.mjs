@@ -118,6 +118,23 @@ const intend = (org, rule, alert, key) => db.query(`
   INSERT INTO outbound_queue (org_id, response_rule_id, alert_log_id, idempotency_key)
   VALUES ($1, $2, $3, $4) RETURNING *`, [org, rule, alert, key])
 
+// Slice 5 (F-49): a refusal by a limit, or by a binding that is not enabled,
+// verified and fresh, is a row with its reason, never an error. Returns the
+// row as written, or the error if one was raised.
+async function written(sql, params) {
+  await db.query('SAVEPOINT probe')
+  try {
+    const { rows: [r] } = await db.query(`${sql} RETURNING state, suppressed_reason`, params)
+    await db.query('RELEASE SAVEPOINT probe')
+    return r
+  } catch (e) {
+    await db.query('ROLLBACK TO SAVEPOINT probe')
+    return { error: e.message }
+  }
+}
+const suppressedAs = (r, reason) =>
+  assert.deepEqual(r, { state: 'suppressed', suppressed_reason: reason })
+
 // ── RS-30 ──────────────────────────────────────────────────────────────────
 describe('RS-30 · four verification states, never-verified distinct from verified', () => {
   test('unverified, ok, failed and stale read as four different states', async () => {
@@ -513,15 +530,16 @@ describe('A binding that changes the real world is attached only with a limit', 
 
 // ── The outbox ─────────────────────────────────────────────────────────────
 describe('The outbox · limits apply when the intention is written', () => {
-  test('with a limit of ten an hour, the eleventh intention is refused', async () => {
+  test('with a limit of ten an hour, the eleventh intention is refused, as a suppressed row', async () => {
     await inTenantTx(async () => {
       await db.query('UPDATE autobotz SET rate_limit_per_hour = 10 WHERE id = $1', [AB1])
       const { rule, alert } = await actionFor(AB1)
       for (let i = 1; i <= 10; i++) await intend(TENANT_A, rule, alert, `k-${i}`)
-      const e = await refusal(`INSERT INTO outbound_queue (org_id, response_rule_id, alert_log_id, idempotency_key)
-                               VALUES ($1, $2, $3, 'k-11')`, [TENANT_A, rule, alert])
-      assert.equal(e?.code, '23514')
-      assert.match(e.message, /rate_limit_per_hour/)
+      suppressedAs(await written(`INSERT INTO outbound_queue (org_id, response_rule_id, alert_log_id, idempotency_key)
+                                  VALUES ($1, $2, $3, 'k-11')`, [TENANT_A, rule, alert]), 'rate_limit_per_hour')
+      // A suppressed row counts toward nothing: the twelfth is refused the same way, not by it.
+      suppressedAs(await written(`INSERT INTO outbound_queue (org_id, response_rule_id, alert_log_id, idempotency_key)
+                                  VALUES ($1, $2, $3, 'k-12')`, [TENANT_A, rule, alert]), 'rate_limit_per_hour')
     })
   })
 
@@ -530,13 +548,11 @@ describe('The outbox · limits apply when the intention is written', () => {
       await db.query('UPDATE autobotz SET invocation_cap_daily = 2 WHERE id = $1', [AB1])
       const { rule, alert } = await actionFor(AB1)
       await intend(TENANT_A, rule, alert, 'd-1'); await intend(TENANT_A, rule, alert, 'd-2')
-      const daily = await refusal(`INSERT INTO outbound_queue (org_id, response_rule_id, alert_log_id, idempotency_key)
-                                   VALUES ($1, $2, $3, 'd-3')`, [TENANT_A, rule, alert])
-      assert.match(daily?.message ?? '', /invocation_cap_daily/)
+      suppressedAs(await written(`INSERT INTO outbound_queue (org_id, response_rule_id, alert_log_id, idempotency_key)
+                                  VALUES ($1, $2, $3, 'd-3')`, [TENANT_A, rule, alert]), 'invocation_cap_daily')
       await db.query('UPDATE autobotz SET invocation_cap_daily = NULL, rate_limit_per_hour = 50, concurrency_limit = 2 WHERE id = $1', [AB1])
-      const busy = await refusal(`INSERT INTO outbound_queue (org_id, response_rule_id, alert_log_id, idempotency_key)
-                                  VALUES ($1, $2, $3, 'c-3')`, [TENANT_A, rule, alert])
-      assert.match(busy?.message ?? '', /concurrency_limit/)
+      suppressedAs(await written(`INSERT INTO outbound_queue (org_id, response_rule_id, alert_log_id, idempotency_key)
+                                  VALUES ($1, $2, $3, 'c-3')`, [TENANT_A, rule, alert]), 'concurrency_limit')
     })
   })
 
@@ -545,9 +561,9 @@ describe('The outbox · limits apply when the intention is written', () => {
       await db.query('UPDATE autobotz SET rate_limit_per_hour = 1 WHERE id = $1', [AB1])
       const { rule, alert } = await actionFor(AB1)
       await intend(TENANT_A, rule, alert, 'b-1')
-      const e = await refusal(`INSERT INTO outbound_queue (org_id, response_rule_id, alert_log_id, idempotency_key, created_at)
-                               VALUES ($1, $2, $3, 'b-2', now() - interval '2 hours')`, [TENANT_A, rule, alert])
-      assert.match(e?.message ?? '', /rate_limit_per_hour/)
+      suppressedAs(await written(`INSERT INTO outbound_queue (org_id, response_rule_id, alert_log_id, idempotency_key, created_at)
+                                  VALUES ($1, $2, $3, 'b-2', now() - interval '2 hours')`, [TENANT_A, rule, alert]),
+      'rate_limit_per_hour')
     })
   })
 
@@ -576,8 +592,8 @@ describe('The outbox · limits apply when the intention is written', () => {
       assert.ok(await refusal(`INSERT INTO outbound_queue (org_id, response_rule_id, autobotz_id, alert_log_id, idempotency_key)
                                VALUES ($1, $2, $3, $4, 'other')`, [TENANT_A, rule, AB5, alert]))
       await db.query('UPDATE autobotz SET enabled = false WHERE id = $1', [AB1])
-      assert.match((await refusal(`INSERT INTO outbound_queue (org_id, response_rule_id, alert_log_id, idempotency_key)
-                                   VALUES ($1, $2, $3, 'off')`, [TENANT_A, rule, alert]))?.message ?? '', /disabled/)
+      suppressedAs(await written(`INSERT INTO outbound_queue (org_id, response_rule_id, alert_log_id, idempotency_key)
+                                  VALUES ($1, $2, $3, 'off')`, [TENANT_A, rule, alert]), 'binding_disabled')
     })
   })
 })
@@ -677,8 +693,8 @@ describe('The outbox · the trace from action to alert cannot be cut', () => {
       assert.equal((await refusal('DELETE FROM outbound_queue WHERE id = $1', [q.id]))?.code, '42501')
       assert.equal((await refusal(`UPDATE outbound_queue SET state = 'drained' WHERE id = $1`, [q.id]))?.code, '42501')
       // And the limit still holds: the one written counts.
-      assert.match((await refusal(`INSERT INTO outbound_queue (org_id, response_rule_id, alert_log_id, idempotency_key)
-                                   VALUES ($1, $2, $3, 'cut-2')`, [TENANT_A, rule, alert]))?.message ?? '', /rate_limit_per_hour/)
+      suppressedAs(await written(`INSERT INTO outbound_queue (org_id, response_rule_id, alert_log_id, idempotency_key)
+                                  VALUES ($1, $2, $3, 'cut-2')`, [TENANT_A, rule, alert]), 'rate_limit_per_hour')
     })
   })
 })
@@ -703,7 +719,7 @@ describe('The outbox · the clock is the statement\'s, not the transaction\'s', 
 
 // ── Admission needs a verified, fresh binding (Henry, 21 Nov) ──────────────
 describe('The outbox · only a binding whose verification passed and is fresh gets an intention', () => {
-  const write = (rule, alert, key) => refusal(`
+  const write = (rule, alert, key) => written(`
     INSERT INTO outbound_queue (org_id, response_rule_id, alert_log_id, idempotency_key)
     VALUES ($1, $2, $3, $4)`, [TENANT_A, rule, alert, key])
 
@@ -711,13 +727,11 @@ describe('The outbox · only a binding whose verification passed and is fresh ge
     await inTx(async () => {
       await db.query('UPDATE autobotz SET rate_limit_per_hour = 10 WHERE id = $1', [AB1])
       const { rule, alert } = await actionFor(AB1, TENANT_A, { verify: false })
-      const never = await write(rule, alert, 'v-1')
-      assert.equal(never?.code, '23514')
-      assert.match(never.message, /unverified/)
+      suppressedAs(await write(rule, alert, 'v-1'), 'binding_unverified')
       await verifyOk(AB1)
-      assert.equal(await write(rule, alert, 'v-2'), null)
+      assert.deepEqual(await write(rule, alert, 'v-2'), { state: 'queued', suppressed_reason: null })
       await db.query('UPDATE autobotz SET reference = $2 WHERE id = $1', [AB1, 'https://example.com/hook-2'])
-      assert.match((await write(rule, alert, 'v-3'))?.message ?? 'accepted', /unverified/)
+      suppressedAs(await write(rule, alert, 'v-3'), 'binding_unverified')
     })
   })
 
@@ -729,10 +743,10 @@ describe('The outbox · only a binding whose verification passed and is fresh ge
         WITH c AS MATERIALIZED (SELECT set_config('request.jwt.claims', $2, true) AS x)
         SELECT public.bob_autobotz_record_verification($1, false, 'gone') FROM c`,
       [AB1, JSON.stringify({ org_id: TENANT_A })])
-      assert.match((await write(rule, alert, 's-1'))?.message ?? 'accepted', /failed/)
+      suppressedAs(await write(rule, alert, 's-1'), 'binding_failed')
       await db.query(`UPDATE autobotz SET verify_state = 'ok',
                       verified_at = now() - interval '31 days' WHERE id = $1`, [AB1])
-      assert.match((await write(rule, alert, 's-2'))?.message ?? 'accepted', /stale/)
+      suppressedAs(await write(rule, alert, 's-2'), 'binding_stale')
     })
   })
 })
@@ -756,21 +770,21 @@ describe('Concurrency · two writers cannot both find room', () => {
   const settle = (p) => p.then(() => null, (e) => e)
   const pause = (ms) => new Promise((r) => setTimeout(r, ms))
 
-  test('with a limit of one an hour, the second of two concurrent intentions is refused', async () => {
+  test('with a limit of one an hour, the second of two concurrent intentions is suppressed', async () => {
     await db.query('UPDATE autobotz SET rate_limit_per_hour = 1 WHERE id = $1', [AB1])
     const { rule, alert } = await actionFor(AB1)
     rules.push(rule)
     const sql = `INSERT INTO outbound_queue (org_id, response_rule_id, alert_log_id, idempotency_key)
-                 VALUES ($1, $2, $3, $4)`
+                 VALUES ($1, $2, $3, $4) RETURNING state, suppressed_reason`
     await c1.query('BEGIN'); await claim(c1)
     await c2.query('BEGIN'); await claim(c2)
     await c1.query(sql, [TENANT_A, rule, alert, 'race-1'])
-    const second = settle(c2.query(sql, [TENANT_A, rule, alert, 'race-2']))
+    const second = c2.query(sql, [TENANT_A, rule, alert, 'race-2']).then((r) => r.rows[0], (e) => ({ error: e.message }))
     await pause(300)
     await c1.query('COMMIT')
-    const e = await second
-    await c2.query(e ? 'ROLLBACK' : 'COMMIT')
-    assert.match(e?.message ?? 'both were accepted', /rate_limit_per_hour/)
+    const r = await second
+    await c2.query(r.error ? 'ROLLBACK' : 'COMMIT')
+    suppressedAs(r, 'rate_limit_per_hour')
   })
 
   test('a rule attaching a binding and an edit removing its limit cannot both win', async () => {

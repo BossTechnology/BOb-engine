@@ -4282,6 +4282,159 @@ in the install path names it; the test asserts it.
 
 ---
 
+## Slice 5 · Thresholds and their evaluator, spec
+
+`docs/slice-5-thresholds.md`, decided by Henry in the Slice 5 grill
+(27 Nov, S1 to S13, each with the recommended option). Nothing is built.
+
+### F-48 · D-05 point 6 rested on a step that did not happen — finding
+
+Federico ruled (10 Nov) that step 6 drops `UNIQUE (org_id, metric_id)` on
+`threshold_configs`, so "per threshold" is per threshold by the time step 6a
+lands. Slice 6 added `scope_kind` and `scope_ref`
+(`20261121100100_registry_verification_and_scope.sql:46`) and left the
+constraint (`20260729130000_v3_config_persistence.sql:53`). Slice 5 replaces it
+with a unique index on `(org_id, metric_id, scope_kind, COALESCE(scope_ref, ''))`
+(spec §2). An upsert in Bob-New on `ON CONFLICT (org_id, metric_id)` would stop
+matching; that repository is outside this one.
+
+### F-49 · The D-31 refusal was built as an error, not a row — finding
+
+BOB-11 item 1: "a refusal is recorded as a row with its reason — a suppressed
+intent — never silence", placed in step 19. Slice 6's `bob_outbox_admit()`
+raises. Slice 5 adds `suppressed` to `outbound_queue.state` with
+`suppressed_reason`, written for limit and verification refusals. Structural
+errors still raise (spec §8). Consumer impact: a direct INSERT over a limit
+returns a suppressed row instead of an error.
+
+### Proposed for 0.6 · retention moves to P5
+
+Contract §11 lists "retention is not enforced" as superseded in Slice 5 by
+`pg_cron`. pg_cron is not on P5 §6.3's approved list, and on a box it would run
+from one database of Bzzz's Postgres. The evaluator's scheduler and retention
+move together to P5, after the Febor window (spec §9, §11). To Federico.
+
+### Build readings of rulings carried over unchanged
+
+- Proximity, at D-05's two levels (20 % and 10 % inside the bound), is a
+  display state, `near`, and writes no alert.
+- The recovery dwell's 300 s default is one bucket, so under the default a
+  metric alternating between breached and inside buckets writes breach,
+  recovery, breach on every alternation. Only a dwell longer than one bucket
+  damps it. Stated for Federico, who ruled "default one base bucket".
+- One escalation per subject and breach, not per response; and neither an
+  escalation nor a recovery row without an alert fired in the breach (spec §7).
+- `peak_mode = 'observed'` is not evaluated in v1; it is reported with the
+  reason `peak_observed_unsupported`. `manual` windows move state and write
+  nothing.
+
+---
+
+## Slice 5 · Thresholds and their evaluator, built
+
+Six migrations, `20261127100000` to `20261127100500`, and
+`tests/slice5-thresholds.test.mjs` (41 tests), against the spec as corrected
+after its review and approved by Henry on 27 Nov. None of them is in the O-3
+install chain (`supabase/provision/install-chain.sha256`): they are the resto,
+pushed by bob_migrador. Henry decided on 27 Nov to bring Slice 5 to Febor, so
+a box installs them only after his signed base → new approval of the tree.
+
+### Seen failing first
+
+Against the chain without the six migrations, 37 of 39 failed. The two that
+passed did so for the wrong reason (a missing column or function also raises),
+and each is covered again by a sabotage below. The four added after the
+review (15, 15a, 15b, 17) were seen failing against the evaluator as first
+written, or by the sabotage in the table.
+
+### Verified by sabotage
+
+Each one applied to the database, the suite file run, and the change undone.
+
+| Sabotage | Red |
+|---|---|
+| A provisional cell counted as evaluable | a provisional bucket on a declared channel |
+| The evaluator does not stop at an unsealed bucket | A-04 (it advanced past an unsealed bucket) |
+| `bob_threshold_status` joins `evaluation_state` | the pg_depend guard |
+| Escalation per response, not per subject | 15 |
+| Escalation with no alert fired in the breach | 15a |
+| Recovery row with no alert fired in the breach | 15b; sustained 600 |
+| Recovery keeps the cooldown | 16; 17 |
+| The recovery dwell ignored | 17 |
+| `last_fired_at` on the wall clock, not the bucket's | six buckets at 300; the eleventh firing; the daily cap |
+| A default function that skips the floor (120) | the defaults; the pg_depend floor guard; six tests that read the default |
+| EXECUTE on `bob_evaluate` to `bob_app` | the discovered EXECUTE guard |
+| DELETE on `alert_log` to `bob_app` | the Slice 6 trace guard |
+
+A-04 has two layers, and each sabotage removes one: the status refuses a
+provisional cell, and the evaluator stops at the first unsealed bucket. On a
+channel whose lag is NULL the buckets before the first row are already
+`pending`, so the stop alone keeps A-04 green when the status is broken. The
+declared-channel test is the one that sees the status layer.
+
+### F-50 · Alerts could be deleted by the application — closed
+
+An escalation keys the alert it raises (`alert_log.escalates_alert_id`), so the
+Slice 6 trace guard, which discovers every table that keys `alert_log`, found
+`alert_log` itself: `bob_app` and `authenticated` held DELETE, `authenticated`
+held UPDATE. Deleting an alert would leave an escalation, an intention or a
+breach state without its cause. Revoked in migration 4. Found by an existing
+guard with no new code, which is the point of discovering rather than listing.
+Consumer impact: anything in Bob-New that deletes or updates alerts as a member
+must stop.
+
+### F-51 · The resto created functions in public — closed
+
+CI's O-3 probe ("Chain applies as bob_migrador") failed on migration 2:
+`permission denied for schema public`. Every migration outside the install
+chain is pushed on a box by bob_migrador, which owns schema bob and holds no
+CREATE on public; a local stack pushes everything as postgres and never sees
+it. Two files did it: the trigger function of `trigger_level` (new) and the
+replacement of `public.bob_outbox_admit` (owned by the chain's postgres, so
+bob_migrador could not replace it even with CREATE). Both now live in bob:
+`bob.bob_response_level_check()` and `bob.bob_outbox_admit()`, and
+`trg_outbox_admit` is dropped and recreated to point at the latter. The old
+`public.bob_outbox_admit` stays, unreferenced; dropping it waits for the next
+signature of the install chain.
+New guard, `tests/install-approval.test.mjs` («the resto (F-51)»), discovers the resto as every
+migration not in `supabase/provision/install-chain.sha256` and refuses any
+CREATE, REPLACE, ALTER or DROP of an object in public; seen red on exactly
+these two files before the fix. Consumer impact: none; the trigger keeps its
+name and behaviour.
+Sabotaged once in CI: 6207ae2 put `bob_response_level_check` back in public.
+"Chain applies as bob_migrador (O-3)" failed with `permission denied for schema
+public` and the guard named the file; d118c98 restored it, a tree identical to
+5d06893, where O-3 had passed.
+
+### F-49, built · Slice 6's tests now expect the row
+
+The seven Slice 6 tests that expected an error from a limit or an unverified,
+failed, stale or disabled binding now expect a `suppressed` row with its
+reason, including the concurrent case. The structural refusals (another
+organization, a binding the response does not attach, no limit declared, a
+duplicate key) still raise and their tests are unchanged. A twelfth intention
+after a suppressed eleventh is suppressed by the limit, not by the eleventh.
+
+### Choices the build made — for Henry
+
+- **`bob.evaluation_state` is read-only for `bob_app`**, added to the §10
+  grants guard's `READ_ONLY` beside `audit_log`, because only the evaluator
+  writes it.
+- **The evaluator reports a structural refusal of an intention** as
+  `fired_intention_refused` with the error, and goes on: one broken Action
+  response does not stop the organization's evaluation. The alert is written.
+- **`idempotency_key` of an evaluator intention is the alert's id.** One alert,
+  one intention per response.
+- **Peak windows are `[{"start": "HH:MM", "end": "HH:MM"}]` in UTC.** The shape
+  is BOb's reading; nothing in this repository wrote one before. Bob-New's
+  shape, if it has one, must match.
+- **Scope:** `entity` names a channel by id, `actor` an `actor_type`; `company`
+  and `metric` reach everything.
+
+**Counts.** 532 → 575: 573 pass and 2 are `todo`, on the local stack `bob-v1-slice5` (Postgres 17, a fresh `supabase start`). Slice 5 adds 41, the F-51 guard 2; Slice 6 keeps its count with eight assertions rewritten.
+
+---
+
 ## Slice 7 · Drill-downs, spec
 
 `docs/slice-7-drilldowns.md`, decided by Henry in the Slice 7 grill (27 Nov, T1
@@ -4304,13 +4457,13 @@ Actors of a type add up to at most their channel cell. The difference is a row,
 `unattributed`, and a negative one is `actor_sum_exceeds_channel`, never
 clamped (spec §4). Route B's unresolved refs are the expected cause on a box.
 
-### F-51 · Extending `bob_actor_cell_state` changes its return type — finding
+### F-56 · Extending `bob_actor_cell_state` changes its return type — finding
 
 Adding `liveness_source` needs DROP and CREATE, with the grants, in one
 transaction. A caller selecting `*` gets one more column; bob-web is outside
 this repository (spec §3, §9).
 
-### F-52 · The rebuilt marker reads today's lag — finding
+### F-57 · The rebuilt marker reads today's lag — finding
 
 Under D-33 Q1 (a), "rebuilt" is a sealed row with
 `computed_at > bucket_start + 5 min + lag_seconds + 5 min`. Raising a lag later
@@ -4330,7 +4483,7 @@ section: `bob_cell_state` itself would turn unvouched buckets `not_observed`
 
 ### Migration numbers
 
-`20261127110000` and `20261127110100`, above Slice 5's `20261127100000` to
-`20261127100500`. `bob_cell_alerts` reads Slice 5's `alert_log` columns, so
+`20261128100000` and `20261128100100`, above Slice 5's `20261127100000` to
+`20261127100500` and its review fixes (`20261127110000`, F-52 to F-55). `bob_cell_alerts` reads Slice 5's `alert_log` columns, so
 Slice 7 is built after Slice 5 merges. Not part of the Febor window; nothing
 touches the O-3 chain or `/opt/bob`.

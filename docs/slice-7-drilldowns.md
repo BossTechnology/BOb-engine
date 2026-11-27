@@ -131,7 +131,7 @@ No state is added. The six states and their order are Slice 3's §2.
 - **`bob_actor_cell_state` gains `liveness_source`**, so a derived zero is told
   apart from a written one by a value, not by inference. That changes the
   function's return type. `CREATE OR REPLACE` cannot do that, so the migration
-  drops and recreates it, with its grants, in one transaction (F-51).
+  drops and recreates it, with its grants, in one transaction (F-56).
 - "Observed / not observed / not configured" mean what contract §5 says, at
   every level. A drill-down never turns an em dash into a zero.
 
@@ -228,7 +228,7 @@ row per `alert_log` row of the cells in the frame:
 ## 8 · Open, depends on D-33 (Relevo task 19)
 
 **This section is the only part of the spec that changes with Federico's
-ruling.** It is built in its own migration, `…_slice7_cell_markers.sql`, into one
+ruling.** It is built in its own migration, `20261128100100_slice7_cell_markers.sql`, into one
 function, `bob.bob_cell_markers`, and tested in its own block (§11, "D-33").
 `bob_cell_detail` and `bob_cell_alerts` read the function's columns and
 nothing else about D-33. If Federico chooses (b) or (c), this section, that
@@ -262,7 +262,7 @@ What (a) builds:
 - **`rebuilt_after_firing`** in `bob_cell_alerts` is true when the cell's
   `computed_at > alert_log.created_at`. It is exact, needs no grace, and is
   what explains a gap between `value_at_firing` and `value_now`.
-- **The cost, stated (F-52).** `lag_seconds` is read as declared now. Raising a
+- **The cost, stated (F-57).** `lag_seconds` is read as declared now. Raising a
   channel's lag later moves the deadline, and an old bucket rebuilt inside the
   new window loses its marker. The alert's flag does not depend on the lag and
   is unaffected. The fix, if it matters, is to store the seal instant, a
@@ -302,12 +302,12 @@ Q2 changes nothing visible in v1 under (a) or (c).
 
 ## 9 · Findings and contract changes
 
-- **F-51 · Extending `bob_actor_cell_state` changes its return type.** The new
+- **F-56 · Extending `bob_actor_cell_state` changes its return type.** The new
   `liveness_source` column (§3) cannot be added with `CREATE OR REPLACE`. The
   migration drops and recreates the function with its grants in one transaction.
   Consumer check: a caller that selects `*` gets one more column. bob-web is
   outside this repository, so the PR names the check rather than making it.
-- **F-52 · The rebuilt marker depends on today's lag** (§8.2). Stated, not fixed:
+- **F-57 · The rebuilt marker depends on today's lag** (§8.2). Stated, not fixed:
   storing the seal instant is a projection change.
 - **Contract §5, proposed for 0.6: the derived zero.** "The feeder must never
   write a zero it did not observe" stays. Added: the per-actor drill-down
@@ -395,18 +395,18 @@ fixture and the Slice 1 roster are the ground. CI gains a Slice 7 step.
 
 ## 12 · Migrations
 
-After `20261126110000` on `main` (checked 27 Nov), and after Slice 5's
-`20261127100000` to `20261127100500` (PR #63, building in another worktree).
-Slice 7 takes `20261127110000` onward, so Slice 5 can still add a migration
-below it:
+After Slice 5 on `main` (PR #63, merged 27 Nov as `8ab846e`): its six
+migrations `20261127100000` to `20261127100500`. Slice 5's security-review
+fixes take `20261127110000` and F-52 to F-55, so Slice 7 moves to the next
+day and to F-56 and F-57:
 
 | Number | Contents |
 |---|---|
-| `20261127110000_slice7_drilldowns.sql` | §2 to §7: `bob_actor_cell_state` recreated, `bob_actor_unattributed`, `bob_cell_detail`, `bob_cell_alerts`, grants |
-| `20261127110100_slice7_cell_markers.sql` | §8: `bob_cell_markers`, the only D-33 migration |
+| `20261128100000_slice7_drilldowns.sql` | §2 to §7: `bob_actor_cell_state` recreated, `bob_actor_unattributed`, `bob_cell_detail`, `bob_cell_alerts`, grants |
+| `20261128100100_slice7_cell_markers.sql` | §8: `bob_cell_markers`, the only D-33 migration |
 
 If Slice 7 is built on a later day, the numbers move to that day and stay above
-Slice 5's last.
+the last migration on `main`.
 
 **Not for the Febor window.** Slice 7 is not part of the 30 Nov delivery. These
 migrations do not touch the O-3 install chain or anything under `/opt/bob`, and
