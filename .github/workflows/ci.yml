@@ -148,6 +148,10 @@ jobs:
         env:
           SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
         run: node --test --test-concurrency=1 tests/slice5-thresholds.test.mjs
+      - name: Slice 7 · the drill-downs, the derived per-actor zero, the unattributed remainder, the bucket and its alerts, D-33 at option (a)
+        env:
+          SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+        run: node --test --test-concurrency=1 tests/slice7-drilldowns.test.mjs
       - name: Who may sign in · bob_app reads its organization's users, signing up makes no row, provisioning, the box warning
         env:
           SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
