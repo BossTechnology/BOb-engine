@@ -16,9 +16,11 @@ de todos los tenants. Con MAINTAIN puede bloquear la tabla.
 
 **Qué no es.** No es una migración y no está en la cadena de instalación:
 `supabase/provision/install-chain.sha256` no cambia. No toca `00f79b7` ni su
-firma. No incluye nada del Slice 5. El arreglo definitivo es la migración
-`20261127110000` del PR #66, que entra cuando se firme la cadena siguiente.
-Correr este paso y después esa migración no es problema: los dos son
+firma. No incluye nada del Slice 5. La migración `20261127110000` del PR #66,
+que entra cuando se firme la cadena siguiente, hoy quita solo TRIGGER y
+REFERENCES de tabla: no quita MAINTAIN, el TRUNCATE de `service_role` ni la
+REFERENCES de columna. Hasta que se alinee con este SQL, el que cubre todo es
+este paso. Correr este paso y después esa migración no es problema: los dos son
 idempotentes.
 
 **Quién lo corre.** Henry, en Febor. Los agentes, solo en los ensayos de
@@ -69,20 +71,28 @@ wrapper se niega con la service role o con un rol `bob_*`.
 
 Justo después de que `caja` termine `resto` sobre `00f79b7`. Se corre desde la
 copia del motor que la caja ya tiene, `~/bob-engine`, sin `scp` y sin `/tmp`.
-`<commit>` es el head del PR #67, o el de `main` cuando se fusione.
+Hay que poner en `C` el **SHA completo, de 40 caracteres**, del head del PR #67
+(o del commit de `main` cuando se fusione). Está escrito tal cual en la
+descripción del PR. Si `C` no es un SHA completo, el comando no hace nada.
 
 ```bash
-cd ~/bob-engine && git fetch -q origin && git checkout -q --detach <commit> && sudo install -d -o root -g root -m 700 /root/f58 && sudo install -o root -g root -m 755 scripts/f58/revocar.sh scripts/f58/revocar.sql /root/f58/ && sudo bash /root/f58/revocar.sh
+( set -eu; C=SHA_COMPLETO_DEL_PR; [ ${#C} -eq 40 ] && [ -z "$(printf %s "$C" | tr -d 0-9a-f)" ] || { echo "C must be the full 40-character SHA" >&2; exit 2; }; cd ~/bob-engine; antes=$(git symbolic-ref -q --short HEAD || git rev-parse HEAD); git fetch -q origin "$C"; git checkout -q --detach "$C"; trap 'git checkout -q "$antes"' EXIT; [ "$(git rev-parse HEAD)" = "$C" ] || { echo "HEAD is not $C" >&2; exit 2; }; sudo install -d -o root -g root -m 700 /root/f58; sudo install -o root -g root -m 755 scripts/f58/revocar.sh scripts/f58/revocar.sql /root/f58/; sudo bash /root/f58/revocar.sh )
 ```
 
+- **Qué comprueba antes.** Que `C` sea un SHA completo y que `HEAD` sea
+  exactamente ese commit, con `git rev-parse HEAD`, antes de copiar o correr
+  nada.
+- **Cómo deja la copia.** Al terminar, salga bien o mal, `~/bob-engine` vuelve a
+  la rama o al commit en que estaba (`trap … EXIT`). El código de salida es el
+  del paso.
 - **Qué ejecuta root.** Root solo ejecuta copias suyas: `install -o root` las
   deja en `/root/f58`, de root y con modo 700. Es lo mismo que hace el
   instalador del desinstalador. El wrapper vuelve a comprobarlo y se niega si
   algo de eso lo puede escribir otro.
 - **Qué no toca.** Nada de `/opt/bob`, así que la huella de lo instalado no
   cambia. `caja` lee el commit del repositorio, no el árbol de trabajo.
-- **Si `git checkout` se niega por cambios locales en `~/bob-engine`,** parar y
-  avisar. No forzar.
+- **Si `git checkout` se niega por cambios locales en `~/bob-engine`,** el
+  comando para sin correr nada. Avisar; no forzar.
 - **Por qué `sudo`.** Hace falta para leer `/opt/bob/secrets/migrador.env`.
 
 ## Salida esperada

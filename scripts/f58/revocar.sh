@@ -33,6 +33,9 @@ ENVF=${MIGRADOR_ENV:-/opt/bob/secrets/migrador.env}
 key() { sed -n "s/^$1=//p" "$ENVF" | tail -1 | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/"; }
 M_USER=$(key MIGRADOR_USUARIO); M_HOST=$(key MIGRADOR_HOST); M_NET=$(key MIGRADOR_RED)
 M_PORT=${MIGRADOR_PUERTO:-5432}
+# A port is digits, 1 to 65535: anything else would reach the pgpass line.
+[[ "$M_PORT" =~ ^[0-9]{1,5}$ ]] && [ "$M_PORT" -ge 1 ] && [ "$M_PORT" -le 65535 ] \
+  || { echo "MIGRADOR_PUERTO is not a port number" >&2; exit 2; }
 mpw=$(key MIGRADOR_CLAVE)
 [ -n "$M_USER" ] && [ -n "$M_HOST" ] && [ -n "$mpw" ] || { echo "$ENVF lacks MIGRADOR_USUARIO, MIGRADOR_HOST or MIGRADOR_CLAVE" >&2; exit 2; }
 [[ "$M_USER" =~ ^[a-z_][a-z0-9_]*$ ]] || { echo "MIGRADOR_USUARIO is not a role name" >&2; exit 2; }
@@ -40,9 +43,14 @@ case "$M_USER" in service_role|authenticated|anon|bob_app|bob_feeder|bob_ai_ro)
   echo "refused: $M_USER is not the owner of bob; this runs as bob_migrador" >&2; exit 2 ;; esac
 # Passwords go only to loopback or a host in /opt/bob/hosts-permitidos
 # (root's), as in scripts/instalar-bob.sh; never in the clear (SCRAM only).
+# As root the list is always that file; F58_HOSTS_PERMITIDOS, another list,
+# is honoured only for a non-root run (the tests), which cannot read a box's
+# migrador.env anyway.
+HOSTS=/opt/bob/hosts-permitidos
+[ "$me" != 0 ] && [ -n "${F58_HOSTS_PERMITIDOS:-}" ] && HOSTS=$F58_HOSTS_PERMITIDOS
 case "$M_HOST" in 127.0.0.1|localhost|::1) ;; *)
-  { [ -f /opt/bob/hosts-permitidos ] && sed -e 's/#.*//' -e 's/[[:space:]]//g' /opt/bob/hosts-permitidos | grep -qxF -- "$M_HOST"; } \
-    || { echo "MIGRADOR_HOST $M_HOST is not permitted (/opt/bob/hosts-permitidos)" >&2; exit 2; } ;; esac
+  { [ -f "$HOSTS" ] && sed -e 's/#.*//' -e 's/[[:space:]]//g' "$HOSTS" | grep -qxF -- "$M_HOST"; } \
+    || { echo "MIGRADOR_HOST $M_HOST is not permitted ($HOSTS)" >&2; exit 2; } ;; esac
 export PGREQUIREAUTH=scram-sha-256
 
 # The pgpass goes on tmpfs ($XDG_RUNTIME_DIR or /dev/shm), never on disk; with

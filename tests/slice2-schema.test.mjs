@@ -904,6 +904,7 @@ describe('F-58 · the separate REVOKE step', () => {
   const F58 = resolve(REPO_ROOT, 'scripts/f58')
   // Runs the wrapper as the runbook does. env: user, host (into migrador.env),
   // dir (another copy of scripts/f58), path (a directory put first on PATH),
+  // port (MIGRADOR_PUERTO), hosts (a hosts-permitidos list, non-root only),
   // xdg (XDG_RUNTIME_DIR; off Linux there is no /dev/shm, so a private one).
   function revocar(env = {}) {
     const d = mkdtempSync(join(tmpdir(), 'f58-'))
@@ -915,7 +916,8 @@ describe('F-58 · the separate REVOKE step', () => {
       return spawnSync('bash', [join(env.dir ?? F58, 'revocar.sh')], {
         encoding: 'utf8',
         env: { PATH: env.path ? `${env.path}:${process.env.PATH}` : process.env.PATH, MIGRADOR_ENV: f,
-               MIGRADOR_PUERTO: u.port || '5432', ...(xdg ? { XDG_RUNTIME_DIR: xdg } : {}) } })
+               MIGRADOR_PUERTO: env.port ?? (u.port || '5432'), ...(xdg ? { XDG_RUNTIME_DIR: xdg } : {}),
+               ...(env.hosts ? { F58_HOSTS_PERMITIDOS: env.hosts } : {}) } })
     } finally { rmSync(d, { recursive: true, force: true }) }
   }
   // A psql that only reports how it was called: where its pgpass is, whether
@@ -1045,6 +1047,96 @@ describe('F-58 · the separate REVOKE step', () => {
         } finally { rmSync(disk, { recursive: true, force: true }) }
       }
     } finally { rmSync(fake, { recursive: true, force: true }) }
+  })
+
+  test('a host in hosts-permitidos is accepted; a port that is not a number is refused', () => {
+    const fake = fakePsql()
+    const d = mkdtempSync(join(tmpdir(), 'f58-hosts-'))
+    try {
+      const list = join(d, 'hosts-permitidos')
+      writeFileSync(list, '# the box\n  db.f58.test  # its database\nother.f58.test\n')
+      const ok = revocar({ host: 'db.f58.test', hosts: list, path: fake })
+      assert.equal(ok.status, 0, ok.stdout + ok.stderr)
+      assert.match(ok.stdout, /^ran PGPASSFILE=/m)
+      assert.match(ok.stdout, /as [a-z_]+@db\.f58\.test:/)
+      const no = revocar({ host: 'db2.f58.test', hosts: list, path: fake })
+      assert.equal(no.status, 2, no.stdout + no.stderr)
+      assert.match(no.stderr, /MIGRADOR_HOST db2\.f58\.test is not permitted/)
+      for (const port of ['5432:*:x', '0', '65536', '54 32', '']) {
+        const r = revocar({ port, path: fake })
+        if (port === '') { assert.equal(r.status, 0, r.stdout + r.stderr); continue } // empty: the default, 5432
+        assert.equal(r.status, 2, `port ${JSON.stringify(port)}: ${r.stdout}${r.stderr}`)
+        assert.match(r.stderr, /MIGRADOR_PUERTO is not a port number/)
+        assert.doesNotMatch(r.stdout, /^ran /m)
+      }
+    } finally {
+      rmSync(d, { recursive: true, force: true }); rmSync(fake, { recursive: true, force: true })
+    }
+  })
+
+  // The runbook's command, run as written but for what needs root: a
+  // throwaway clone for ~/bob-engine, no sudo and no -o root -g root (the
+  // files are the runner's, which the wrapper checks), a private directory for
+  // /root/f58. Henry copies it as it is.
+  test('the runbook command checks the full SHA, runs that commit, and leaves the checkout where it was', () => {
+    const readme = readFileSync(join(F58, 'README.md'), 'utf8')
+    const blocks = [...readme.matchAll(/```bash\n([\s\S]*?)```/g)].map((m) => m[1].trim())
+    const cmd = blocks.find((b) => b.includes('revocar.sh'))
+    assert.ok(cmd, 'no bash block runs revocar.sh')
+    assert.equal(cmd.split('\n').length, 1, 'the command is one line')
+    assert.doesNotMatch(cmd, /\bscp\b|\/tmp\b/)
+    // Before copying anything, HEAD is checked to be that very commit.
+    const check = cmd.indexOf('[ "$(git rev-parse HEAD)" = "$C" ]')
+    assert.ok(check > 0 && check < cmd.indexOf('install '), 'HEAD is not checked against C before the install')
+    const fake = fakePsql()
+    const d = mkdtempSync(join(tmpdir(), 'f58-runbook-'))
+    const git = (cwd, ...a) => execFileSync('git', a, { cwd, encoding: 'utf8' }).trim()
+    try {
+      // origin: a repository holding this tree's scripts/f58 at a commit.
+      const origin = join(d, 'origin')
+      execFileSync('mkdir', ['-p', join(origin, 'scripts/f58')])
+      for (const f of ['revocar.sh', 'revocar.sql']) writeFileSync(join(origin, 'scripts/f58', f), readFileSync(join(F58, f)), { mode: 0o755 })
+      git(origin, 'init', '-q', '-b', 'main')
+      git(origin, 'add', 'scripts/f58')
+      git(origin, '-c', 'user.name=f58', '-c', 'user.email=f58@example.com', 'commit', '-q', '-m', 'f58')
+      const C = git(origin, 'rev-parse', 'HEAD')
+      // The box's copy, on its own branch, which the command must leave it on.
+      const copy = join(d, 'bob-engine')
+      git(d, 'clone', '-q', origin, copy)
+      git(copy, 'checkout', '-q', '-b', 'caja-local')
+      const root = join(d, 'root-f58')
+      const run = (sha, extra = {}) => {
+        const line = cmd.replace('C=SHA_COMPLETO_DEL_PR', `C=${sha}`)
+          .replaceAll('~/bob-engine', copy).replaceAll('sudo ', '').replaceAll('-o root -g root ', '')
+          .replaceAll('/root/f58', root)
+        const u2 = new URL(DB_URL)
+        const envf = join(d, 'migrador.env')
+        writeFileSync(envf, `MIGRADOR_USUARIO=${decodeURIComponent(u2.username)}\nMIGRADOR_CLAVE=x\nMIGRADOR_HOST=127.0.0.1\n`, { mode: 0o600 })
+        const xdg = process.platform === 'linux' ? {} : { XDG_RUNTIME_DIR: mkdtempSync(join(d, 'run-')) }
+        return spawnSync('bash', ['-c', line], { encoding: 'utf8',
+          env: { PATH: `${fake}:${process.env.PATH}`, HOME: d, MIGRADOR_ENV: envf, ...xdg, ...extra } })
+      }
+      assert.ok(cmd.includes('C=SHA_COMPLETO_DEL_PR'), 'the placeholder the command checks is gone')
+      // The placeholder as written, or a short SHA: nothing runs.
+      for (const sha of ['SHA_COMPLETO_DEL_PR', C.slice(0, 12)]) {
+        const r = run(sha)
+        assert.equal(r.status, 2, `${sha}: ${r.stdout}${r.stderr}`)
+        assert.match(r.stderr, /C must be the full 40-character SHA/)
+        assert.doesNotMatch(r.stdout, /^ran /m)
+      }
+      // The full SHA: it runs that commit's wrapper, and the copy is back.
+      const r = run(C)
+      assert.equal(r.status, 0, r.stdout + r.stderr)
+      assert.match(r.stdout, /^ran PGPASSFILE=/m)
+      assert.equal(git(copy, 'symbolic-ref', '--short', 'HEAD'), 'caja-local')
+      // And when the step fails, the copy is back too, and the failure shows.
+      writeFileSync(join(fake, 'psql'), '#!/bin/bash\necho ran-and-failed\nexit 3\n', { mode: 0o755 })
+      const bad = run(C)
+      assert.equal(bad.status, 3, bad.stdout + bad.stderr)
+      assert.equal(git(copy, 'symbolic-ref', '--short', 'HEAD'), 'caja-local')
+    } finally {
+      rmSync(d, { recursive: true, force: true }); rmSync(fake, { recursive: true, force: true })
+    }
   })
 
   test('it runs nothing that someone else could have written', () => {

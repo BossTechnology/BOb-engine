@@ -4720,7 +4720,22 @@ Henry's OK, each with a test seen red under its sabotage:
    would give an application role or PUBLIC more than SELECT, INSERT, UPDATE
    and DELETE on future tables. It does not change them.
 
+Re-review of #67 at `2c737b0`, «aprobar con nits», fixed, each with a test
+seen red under its sabotage:
+1. The runbook command takes the full 40-character SHA in `C` and refuses
+   anything else, the placeholder included. It checks `git rev-parse HEAD`
+   against `C` before installing anything, and leaves `~/bob-engine` on the
+   branch or commit it was on, whether the step passes or fails (`trap …
+   EXIT`). The test runs the README's own line against a throwaway clone.
+2. `MIGRADOR_PUERTO` must be a number from 1 to 65535 before it reaches the
+   pgpass line.
+3. A host listed in hosts-permitidos is accepted, and an unlisted one is
+   refused. For a non-root run only, the list can be another file
+   (`F58_HOSTS_PERMITIDOS`); as root it is always `/opt/bob/hosts-permitidos`.
+
 The lasting fix is migration `20261127110000` in PR #66 (TRIGGER and
 REFERENCES); both are idempotent, so running this step and later that
-migration is fine. Open: #66 does not yet take TRUNCATE or MAINTAIN on a box
-whose tables still carry them; this step does.
+migration is fine. Open: #66 takes only table-level TRIGGER and REFERENCES; it
+does not take MAINTAIN (17), service_role's TRUNCATE or column REFERENCES.
+Until #66 is aligned with this SQL, this step is the one that covers all of
+it, and `scripts/f58/README.md` says so.
