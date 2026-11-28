@@ -179,7 +179,7 @@ the panel gets exactly these, from `bob_cell_state`:
 - **Voice produces no ORGA today** (mono audio has no turns; ruled 5 Nov and
   restated by Federico on 17 Nov). A voice channel has no `orga_conversation`
   declaration, so its ORGA cell is `not_configured`, not `not_observed`. This is
-  declared, not inferred: no code maps a channel type to a capability (BOB-10).
+  declared, not inferred: no code maps a channel type to a capability (Relevo task 10).
 - **An agent has no ORGA reading** (D-17). ORGA and MECA cells are channel
   grain. The panel has no `actor_type` column and the actor cells of Slice 3
   are unchanged.
@@ -261,7 +261,7 @@ installs these only after Henry signs the new fingerprint.
   renders `not_observed` where `meca_rum` is declared and the bucket is sealed,
   and `pending` where the channel declares no lag. The read side is complete
   and tested against rows the fixture writes by hand.
-- No classifier, no model, no provider, no relay, no term matcher (BOB-16 is a
+- No classifier, no model, no provider, no relay, no term matcher (Relevo task 16 is a
   different card).
 - No screen. The panel is bob-web's.
 - No new capability: `orga_conversation` and `meca_rum` already exist (§9.1).
@@ -332,7 +332,7 @@ sentiment rows written by hand, with fictitious data only.
 ## 9 · Open: D55
 
 **D55 is the decision that replaces D51 for chat** («The AI drone · a per-customer
-VPS for all AI work», Relevo task 14, BOB-14). Federico ruled its shape on 13 to
+VPS for all AI work», Relevo task 14). Federico ruled its shape on 13 to
 23 Nov. It is not signed: Henry has not signed it and Federico asked on 23 Nov
 that it be built when it reaches the front of the queue. This section writes
 what Slice 4 would do under the recommended reading and what it would take to
@@ -354,7 +354,7 @@ relay (P5). The database sees only its effect, which is that no ORGA row arrives
 for that source. The cell for a channel whose switch is off reads
 `not_configured`, reason `sentiment_switch_off`, when the **feeder declares it**
 by dropping `orga_conversation` for the channel (the capability is presence-only
-configuration, BOB-10). No new column, no new table.
+configuration, Relevo task 10). No new column, no new table.
 
 *To change it:* if D55 wants the database to hold the switch, add
 `slice4_d55_switch` (§6): a per-channel `sentiment_switch` row, with
@@ -394,7 +394,7 @@ Henry's.
 ### D55-d · What the provider returns besides a label
 
 *Recommended:* **out of Slice 4.** Themes, proposed topics and questions are
-BOB-16, which has its own registry and its own cap. They do not enter
+Relevo task 16, which has its own registry and its own cap. They do not enter
 `proj_sentiment`, and the closed return form (the five states plus `abstained`
 and `classifier_down`) is what this slice reads.
 
