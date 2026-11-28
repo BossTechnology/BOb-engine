@@ -1,0 +1,38 @@
+# The build context is the repository root. Only package.json, pnpm-lock.yaml
+# and feeder/ are copied by the Dockerfile; this keeps everything else out of the
+# context, so a later COPY cannot pick it up and nothing sensitive is sent to the
+# daemon.
+
+# secrets and environments
+.env
+.env.*
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+**/*.crt
+**/*.p12
+**/*.pfx
+**/*.sig
+**/id_*
+**/.npmrc
+**/.netrc
+
+# not the feeder
+.git
+.github
+.claude
+node_modules
+**/node_modules
+supabase
+tests
+scripts
+docs
+Documentation
+outbox
+reconciliation
+*.md
+!feeder/README.md
+Dockerfile
+.dockerignore
+.gitignore
