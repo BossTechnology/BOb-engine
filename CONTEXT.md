@@ -39,6 +39,8 @@ Términos del proyecto y su significado exacto. Úsalos en código, commits, doc
 | Intención (*intention*) | Fila de `bob.outbound_queue`: lo que BOb pide que se haga. BOb la escribe y nunca la ejecuta ni guarda credenciales; la transmite otro. Lleva el alerta que la causó. | Slice 6, `20261121100200_outbound_queue.sql` |
 | Outbox | `bob.outbound_queue`. Estados: `queued` (se drena), `awaiting_approval` (nada lo drena) y `drained`. Los límites se aplican al escribir. | Slice 6 |
 | Vencida (*stale*) | Estado de verificación de un binding ok cuya verificación pasó de 30 días. Se calcula, no se guarda (RS-31). | `bob_autobotz_state()` |
+| Cero derivado (*derived zero*) | Cero por agente que el drill-down calcula al leer, nunca escrito: un humano en turno, sin fila, bajo un bucket de canal `observed` desde una fila. Sale como `observed`, `none_observed`, con `liveness_source = 'shift'`. | Spec Slice 7 §2 |
+| No atribuido (*unattributed*) | Lo que la celda del canal cuenta y ningún agente explica: una fila propia del drill-down, con su cifra. Si los agentes suman más que el canal, `actor_sum_exceeds_channel`, con cifra negativa, sin recortar. | Spec Slice 7 §4 |
 | Aprovisionamiento (*provisioning*) | Dar a una cuenta de GoTrue una fila en `bob.users`, con org y rol. La hace el operador con `scripts/provision-user.mjs` y la credencial de migración; registrarse no crea fila, y sin fila bob-web responde 403. | `20261121130000_users_bob_app_access.sql` |
 | A-11 / A-12 | Números del registro para lo que en Relevo se llamó A-07 (drill-through de miembros) y A-09 (conteo de abstenciones). | `contract-amendments.md` |
 
