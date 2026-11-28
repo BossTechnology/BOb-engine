@@ -267,7 +267,8 @@ its credential (`/opt/bob/secrets/migrador.env`). That is a procedural control,
 checked by a `verify-deployment.sh` check in Bzzz (a separate PR). The
 guarantee does not cover the install path: `postgres` applies the 33 files of
 the install chain once, at installation (decision of 24 Nov, «postgres una vez,
-luego el migrador»; P5 §6.2, `scripts/instalar-bob.sh`). The 12 and 21 are a
+luego el migrador»; P5 §6.2, `scripts/instalar-bob.sh`,
+`scripts/owner-chain-check.mjs`). The 12 and 21 are a
 measurement: `bob_migrador` could apply only 12 of those 33 and stops at the
 other 21. That is acceptable because installation is a supervised, one-time
 operation.
