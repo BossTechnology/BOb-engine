@@ -12,12 +12,12 @@
 
 import { test, before, after, describe } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs'
+import { readFileSync, writeFileSync, mkdtempSync, rmSync, chmodSync } from 'node:fs'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { resolve, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import {
-  connect, loadFixture, loadRoster, tenantTables, REPO_ROOT, TENANT_A, TENANT_B, DB_URL,
+  connect, loadFixture, loadRoster, tenantTables, REPO_ROOT, TENANT_A, TENANT_B, DB_URL, USER_A,
 } from './helpers/db.mjs'
 import {
   projectionTables, projectionGrantFindings, structuralFindings, feederStagingTables,
@@ -831,39 +831,141 @@ describe('§10 · nothing typed that must be declared', () => {
 // owner is postgres. It leaves the grants revoked, which is the state wanted.
 describe('F-58 · the separate REVOKE step', () => {
   const APP = ['anon', 'authenticated', 'service_role', 'bob_app', 'bob_feeder', 'bob_ai_ro']
+  // Everything an application role holds on bob beyond SELECT, INSERT, UPDATE
+  // and DELETE: by inheritance, in the ACL under any type (MAINTAIN on 17,
+  // or one nobody has named yet), and REFERENCES on a column.
   const held = async () => (await db.query(`
-    SELECT r.rolname || ' ' || p || ' ' || c.relname AS g
-      FROM pg_class c
-      JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'bob'
-      JOIN pg_roles r ON r.rolname = ANY ($1)
-      CROSS JOIN unnest(ARRAY['TRIGGER', 'REFERENCES']) AS p
-     WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f') AND has_table_privilege(r.oid, c.oid, p)
+    WITH rels AS (SELECT c.oid, c.relname, c.relacl FROM pg_class c
+                    JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'bob'
+                   WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')),
+         roles AS (SELECT oid, rolname FROM pg_roles WHERE rolname = ANY ($1)),
+         extra AS (SELECT p FROM unnest(ARRAY['TRUNCATE', 'REFERENCES', 'TRIGGER']) p
+                   UNION ALL SELECT 'MAINTAIN' WHERE current_setting('server_version_num')::int >= 170000)
+    SELECT r.rolname || ' ' || e.p || ' ' || x.relname AS g
+      FROM rels x, roles r, extra e WHERE has_table_privilege(r.oid, x.oid, e.p)
+    UNION
+    SELECT coalesce(r.rolname, 'PUBLIC') || ' ' || a.privilege_type || ' ' || x.relname
+      FROM rels x, aclexplode(x.relacl) a LEFT JOIN roles r ON r.oid = a.grantee
+     WHERE (r.oid IS NOT NULL OR a.grantee = 0)
+       AND a.privilege_type NOT IN ('SELECT', 'INSERT', 'UPDATE', 'DELETE')
+    UNION
+    SELECT r.rolname || ' REFERENCES (' || t.attname || ') ' || x.relname
+      FROM rels x JOIN pg_attribute t ON t.attrelid = x.oid AND t.attnum > 0,
+           aclexplode(t.attacl) a JOIN roles r ON r.oid = a.grantee
+     WHERE a.privilege_type = 'REFERENCES'
      ORDER BY 1`, [APP])).rows.map((r) => r.g)
 
+  // SELECT, INSERT, UPDATE and DELETE of every role on every relation of bob,
+  // table-wide and on any column: the step must leave all of it as it was.
+  const dml = async () => (await db.query(`
+    SELECT r.rolname || ' ' || p || ' ' || c.relname || ' '
+           || has_table_privilege(r.oid, c.oid, p) || ' '
+           || CASE WHEN p <> 'DELETE' THEN has_any_column_privilege(r.oid, c.oid, p)::text ELSE '-' END AS g
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'bob',
+           pg_roles r, unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE']) p
+     WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f') AND r.rolname = ANY ($1)
+     ORDER BY 1`, [APP])).rows.map((r) => r.g)
+
+  // What a signed-in member reads (bob-web's viewer reads as authenticated):
+  // every relation of bob authenticated may SELECT, read as an admin and as a
+  // viewer of tenant A, each with its row count or its error. Discovered, so
+  // any SELECT the viewer makes is one of these.
+  const reads = async () => {
+    const { rows: rels } = await db.query(`
+      SELECT format('%I.%I', n.nspname, c.relname) AS rel FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'bob'
+       WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f') AND has_table_privilege('authenticated', c.oid, 'SELECT')
+       ORDER BY 1`)
+    assert.ok(rels.length > 0, 'authenticated reads nothing in bob: the probe would pass empty')
+    const out = []
+    for (const appRole of ['admin', 'viewer']) {
+      await db.query('BEGIN')
+      try {
+        await db.query('SELECT set_config($1, $2, true)', ['request.jwt.claims',
+          JSON.stringify({ org_id: TENANT_A, sub: USER_A, role: 'authenticated', app_role: appRole })])
+        await db.query('SET LOCAL ROLE authenticated')
+        for (const { rel } of rels) {
+          await db.query('SAVEPOINT f58')
+          try {
+            const { rows } = await db.query(`SELECT count(*)::int AS n FROM ${rel}`)
+            out.push(`${appRole} ${rel} ${rows[0].n}`)
+            await db.query('RELEASE SAVEPOINT f58')
+          } catch (x) {
+            out.push(`${appRole} ${rel} ${x.code}`)
+            await db.query('ROLLBACK TO SAVEPOINT f58')
+          }
+        }
+      } finally { await db.query('ROLLBACK') }
+    }
+    return out
+  }
+
   const u = new URL(DB_URL)
+  const F58 = resolve(REPO_ROOT, 'scripts/f58')
+  // Runs the wrapper as the runbook does. env: user, host (into migrador.env),
+  // dir (another copy of scripts/f58), path (a directory put first on PATH),
+  // xdg (XDG_RUNTIME_DIR; off Linux there is no /dev/shm, so a private one).
   function revocar(env = {}) {
     const d = mkdtempSync(join(tmpdir(), 'f58-'))
     try {
       const f = join(d, 'migrador.env')
       writeFileSync(f, `MIGRADOR_USUARIO=${env.user ?? decodeURIComponent(u.username)}\n`
-        + `MIGRADOR_CLAVE=${decodeURIComponent(u.password)}\nMIGRADOR_HOST=${u.hostname}\nMIGRADOR_RED=\n`, { mode: 0o600 })
-      return spawnSync('bash', [resolve(REPO_ROOT, 'scripts/f58/revocar.sh')], {
-        encoding: 'utf8', env: { PATH: process.env.PATH, MIGRADOR_ENV: f, MIGRADOR_PUERTO: u.port || '5432' } })
+        + `MIGRADOR_CLAVE=${decodeURIComponent(u.password)}\nMIGRADOR_HOST=${env.host ?? u.hostname}\nMIGRADOR_RED=\n`, { mode: 0o600 })
+      const xdg = 'xdg' in env ? env.xdg : (process.platform === 'linux' ? undefined : mkdtempSync(join(d, 'run-')))
+      return spawnSync('bash', [join(env.dir ?? F58, 'revocar.sh')], {
+        encoding: 'utf8',
+        env: { PATH: env.path ? `${env.path}:${process.env.PATH}` : process.env.PATH, MIGRADOR_ENV: f,
+               MIGRADOR_PUERTO: u.port || '5432', ...(xdg ? { XDG_RUNTIME_DIR: xdg } : {}) } })
     } finally { rmSync(d, { recursive: true, force: true }) }
   }
+  // A psql that only reports how it was called: where its pgpass is, whether
+  // SCRAM is required, and that it ran at all.
+  function fakePsql() {
+    const d = mkdtempSync(join(tmpdir(), 'f58-psql-'))
+    writeFileSync(join(d, 'psql'), '#!/bin/bash\n'
+      + 'echo "ran PGPASSFILE=$PGPASSFILE PGREQUIREAUTH=$PGREQUIREAUTH"\n'
+      + 'stat -c "mode=%a" "$(dirname "$PGPASSFILE")" 2>/dev/null || stat -f "mode=%Lp" "$(dirname "$PGPASSFILE")"\n', { mode: 0o755 })
+    return d
+  }
+  // The SQL alone, inside the caller's transaction: its BEGIN and COMMIT out,
+  // so whatever it does is rolled back with the caller's ROLLBACK.
+  const sqlInTx = () => readFileSync(join(F58, 'revocar.sql'), 'utf8')
+    .replace(/^BEGIN;$/m, '').replace(/^COMMIT;$/m, '')
 
-  test('before, authenticated can attach a trigger to a bob table; after, no application role can, and again is a no-op', async () => {
-    // As installed from 00f79b7 the grant is there. Planted only if a later
-    // migration already took it, so the step is always seen doing something.
-    if (!(await held()).length) await db.query('GRANT TRIGGER ON bob.alert_log TO authenticated')
-    assert.ok((await held()).some((g) => g.startsWith('authenticated TRIGGER ')))
+  // The grants Supabase's defaults leave, and the kinds a later default could:
+  // planted where absent, so each run is seen taking every kind away.
+  async function plant() {
+    await db.query('GRANT TRIGGER, REFERENCES, TRUNCATE ON bob.alert_log TO authenticated')
+    await db.query('GRANT REFERENCES (id) ON bob.organizations TO bob_app')
+    const { rows } = await db.query(`SELECT current_setting('server_version_num')::int >= 170000 AS m`)
+    if (rows[0].m) await db.query('GRANT MAINTAIN ON bob.alert_log TO anon')
+    return rows[0].m
+  }
+
+  test('before, application roles hold more than SELECT, INSERT, UPDATE and DELETE; after, none, and again is a no-op', async () => {
+    const maintain = await plant()
+    const before = await held()
+    for (const g of ['authenticated TRIGGER alert_log', 'authenticated REFERENCES alert_log',
+      'authenticated TRUNCATE alert_log', 'bob_app REFERENCES (id) organizations',
+      ...(maintain ? ['anon MAINTAIN alert_log'] : [])]) assert.ok(before.includes(g), `${g} not held before`)
     const r = revocar()
     assert.equal(r.status, 0, r.stdout + r.stderr)
-    assert.match(r.stderr + r.stdout, /F-58 after: 0 grants left on \d+ relations of bob\. OK/)
+    assert.match(r.stderr + r.stdout, /F-58 after: 0 grants left on \d+ relations of bob; SELECT, INSERT, UPDATE and DELETE unchanged\. OK/)
     assert.deepEqual(await held(), [])
     const again = revocar()
     assert.equal(again.status, 0, again.stdout + again.stderr)
     assert.match(again.stderr + again.stdout, /F-58 before: 0 grants/)
+  })
+
+  test('the viewer keeps reading: SELECT, INSERT, UPDATE and DELETE and what a member reads are the same after', async () => {
+    await loadFixture(db)
+    await plant()
+    const [g0, r0] = [await dml(), await reads()]
+    assert.ok(r0.some((x) => / \d+$/.test(x)), 'authenticated reads nothing as a member: the probe would pass empty')
+    const r = revocar()
+    assert.equal(r.status, 0, r.stdout + r.stderr)
+    assert.deepEqual(await dml(), g0)
+    assert.deepEqual(await reads(), r0)
   })
 
   test('a grant it cannot take away fails the step, and nothing changes', async () => {
@@ -881,7 +983,7 @@ describe('F-58 · the separate REVOKE step', () => {
       await db.query('GRANT REFERENCES ON bob.organizations TO bob_feeder')
       const r = revocar()
       assert.notEqual(r.status, 0, 'the step passed with a grant left')
-      assert.match(r.stderr, /F-58: still held after the revoke: authenticated TRIGGER alert_log/)
+      assert.match(r.stderr, /F-58: still held after the revoke: authenticated TRIGGER bob\.alert_log/)
       assert.ok((await held()).includes('bob_feeder REFERENCES organizations'), 'the failed step changed something')
     } finally {
       await db.query('RESET ROLE')
@@ -902,8 +1004,86 @@ describe('F-58 · the separate REVOKE step', () => {
     await db.query('BEGIN')
     try {
       await db.query('SET LOCAL ROLE service_role')
-      const e = await db.query(readFileSync(resolve(REPO_ROOT, 'scripts/f58/revocar.sql'), 'utf8')).then(() => null, (x) => x)
+      const e = await db.query(sqlInTx()).then(() => null, (x) => x)
       assert.match(e?.message ?? 'ran', /run as the owner of schema bob/)
     } finally { await db.query('ROLLBACK') }
+  })
+
+  test('the password goes only to loopback or a permitted host, over SCRAM, from a pgpass on tmpfs', () => {
+    const fake = fakePsql()
+    try {
+      // A migrador.env edited to point elsewhere: refused before any psql runs.
+      const far = revocar({ host: 'db.example.com', path: fake })
+      assert.equal(far.status, 2, far.stdout + far.stderr)
+      assert.match(far.stderr, /MIGRADOR_HOST db\.example\.com is not permitted/)
+      assert.doesNotMatch(far.stdout, /^ran /m)
+      // Loopback: psql runs with SCRAM required and its pgpass in a private
+      // directory on tmpfs (/dev/shm on Linux, never the disk's temp).
+      const xdg = process.platform === 'linux' ? undefined : mkdtempSync(join(tmpdir(), 'f58-xdg-'))
+      try {
+        const near = revocar({ path: fake, xdg })
+        assert.equal(near.status, 0, near.stdout + near.stderr)
+        assert.match(near.stdout, /PGREQUIREAUTH=scram-sha-256/)
+        const base = process.platform === 'linux' ? '/dev/shm/' : `${xdg}/`
+        assert.match(near.stdout, new RegExp(`PGPASSFILE=${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}bob-f58\\.[^/]+/pgpass`))
+        assert.match(near.stdout, /^mode=700$/m)
+      } finally { if (xdg) rmSync(xdg, { recursive: true, force: true }) }
+      // With no tmpfs at all it stops rather than write the password to disk.
+      // Off Linux there is no /dev/shm, so leaving XDG_RUNTIME_DIR out is that case.
+      if (process.platform !== 'linux') {
+        const none = revocar({ path: fake, xdg: undefined })
+        assert.equal(none.status, 2, none.stdout + none.stderr)
+        assert.match(none.stderr, /no tmpfs for the password file/)
+        assert.doesNotMatch(none.stdout, /^ran /m)
+      } else {
+        // On Linux a disk directory in XDG_RUNTIME_DIR is passed over for /dev/shm.
+        const disk = mkdtempSync(join(REPO_ROOT, '.f58-disk-'))
+        try {
+          const r = revocar({ path: fake, xdg: disk })
+          assert.equal(r.status, 0, r.stdout + r.stderr)
+          assert.match(r.stdout, /PGPASSFILE=\/dev\/shm\/bob-f58\./)
+        } finally { rmSync(disk, { recursive: true, force: true }) }
+      }
+    } finally { rmSync(fake, { recursive: true, force: true }) }
+  })
+
+  test('it runs nothing that someone else could have written', () => {
+    const fake = fakePsql()
+    for (const [what, mode] of [['revocar.sql', 0o664], ['revocar.sh', 0o775], ['.', 0o777]]) {
+      const d = mkdtempSync(join(tmpdir(), 'f58-copia-'))
+      try {
+        for (const f of ['revocar.sh', 'revocar.sql']) writeFileSync(join(d, f), readFileSync(join(F58, f)), { mode: 0o644 })
+        chmodSync(join(d, what), mode)
+        const r = revocar({ dir: d, path: fake })
+        assert.equal(r.status, 2, `${what} ${mode.toString(8)}: ${r.stdout}${r.stderr}`)
+        assert.match(r.stderr, /is writable by someone other than uid/)
+        assert.doesNotMatch(r.stdout, /^ran /m)
+      } finally { rmSync(d, { recursive: true, force: true }) }
+    }
+    rmSync(fake, { recursive: true, force: true })
+  })
+
+  test('a schema bob with no relation is a failure, not «0 grants left»', async () => {
+    await db.query('BEGIN')
+    try {
+      await db.query('ALTER SCHEMA bob RENAME TO bob_f58_aparte')
+      await db.query('CREATE SCHEMA bob')
+      const e = await db.query(sqlInTx()).then(() => null, (x) => x)
+      assert.match(e?.message ?? 'passed', /schema bob holds no relation/)
+    } finally { await db.query('ROLLBACK') }
+  })
+
+  test('default privileges that would give new tables in bob more are reported', async () => {
+    await db.query('ALTER DEFAULT PRIVILEGES IN SCHEMA bob GRANT TRIGGER, REFERENCES ON TABLES TO authenticated')
+    try {
+      const r = revocar()
+      assert.equal(r.status, 0, r.stdout + r.stderr)
+      assert.match(r.stderr, /WARNING: {2}F-58 default privileges: .*gives authenticated (TRIGGER|REFERENCES) on new tables in bob/)
+    } finally {
+      await db.query('ALTER DEFAULT PRIVILEGES IN SCHEMA bob REVOKE TRIGGER, REFERENCES ON TABLES FROM authenticated')
+    }
+    const clean = revocar()
+    assert.equal(clean.status, 0, clean.stdout + clean.stderr)
+    assert.match(clean.stderr, /F-58 default privileges: none beyond/)
   })
 })
