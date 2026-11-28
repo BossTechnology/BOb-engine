@@ -212,6 +212,10 @@ its in-memory truth store, as the rehearsal does it. Once 3.7 holds
 Measured: the rebuilt projections were identical, row for row, to the ones
 before the damage (`computed_at` aside).
 
+Since BZZ-19 (28 Nov) the guarantee is narrower than «derived from
+ClickHouse»: rebuildable from what bzzz-vecinos exposes, **NOT VERIFIED by that
+path** until the rebuild test runs against the real feeder (contract §8.5).
+
 ### 4.7 · After
 
 - Count against the manifest's `postgres:bob` line.

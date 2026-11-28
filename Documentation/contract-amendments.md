@@ -4839,6 +4839,94 @@ REFERENCES, revokes SELECT, or grants anything at all after the step. Its own ch
 the test's comparison off. Run by hand on `supabase/postgres:17.6.1.136` as
 `bob_migrador`: `arwdDxtm` became `arwd`, and the column REFERENCES went.
 
+## Slice 7 · Drill-downs, built
+
+Spec: `docs/slice-7-drilldowns.md`, approved by Henry on 27 Nov (PR #65). Built
+test first on top of Slice 5 and its review fixes (`d235954`). Three migrations,
+`20261128100000` to `20261128100200`, and `tests/slice7-drilldowns.test.mjs`.
+Not for the Febor window: nothing here touches the install chain, `scripts/f58/`
+or `supabase/provision/`.
+
+- **F-63 · The detail and the alerts come after the markers (spec §12 had them
+  first).** A SQL-standard body is bound when the function is created, so
+  `bob_cell_detail` cannot be created before `bob_cell_markers`, which it calls.
+  The chain is: `100000` the actor level (`bob_actor_cell_state` recreated,
+  `bob_actor_unattributed`, and `bob_cell_provenance`, which the detail, the
+  alerts and the markers all read); `100100` `bob_cell_markers`, the one D-33
+  file; `100200` `bob_cell_detail` and `bob_cell_alerts`. Under (b) or (c) of
+  D-33 the markers file is rewritten whole (it has not shipped) and the D-33
+  columns leave `bob_cell_detail` (`rebuilt_at`, `unvouched`) and
+  `bob_cell_alerts` (`rebuilt_after_firing`, and `value_now` under (c)), as the
+  table in spec §8 says. `bob_cell_provenance` is one function more than the
+  spec names; it exists so provenance is read once and not three times.
+- **F-56 · built as specified.** `bob_actor_cell_state` is dropped and recreated
+  with `liveness_source` in the last position, with its grants, in one
+  transaction. The migration first checks `pg_depend` and refuses if anything
+  depends on it (nothing does). bob-web is outside this repository: the PR names
+  the check (a caller that selects `*` gets one more column) and does not make
+  it.
+- **F-57 · built as specified.** `rebuilt_at` reads today's lag; stated in the
+  migration, not fixed.
+- **The derived zero.** The order inside `bob_actor_cell_state` is the spec's:
+  channel's `not_applicable`/`not_configured`, a row, the declared-absent zero,
+  `off_shift`, `pending`, the derived zero, `not_observed`. The shift rule is
+  `public.bob_shift_is_live`, called; test 8 reads `pg_depend` and refuses an
+  inline copy. "Skilled on the channel" (§2 rule 2) holds by construction: the
+  function's `who` is the skilled actors plus whoever has a row, and an actor
+  with a row never reaches the derived step, so there is no separate check to
+  sabotage. A derived zero is `provisional` exactly when its channel row is.
+  Humans only; an ASA and a member with no row stay `not_observed`.
+- **The remainder** is computed for every channel cell that is `observed` from
+  a row and whose metric is a per-actor count, whatever the actor type. On the
+  fixture, after the reference feeder, it returns nothing for either tenant
+  (test 10), so the feeder's two counts agree there. A negative figure is
+  returned as it is.
+- **Tenancy.** All six new functions are invoker, `BEGIN ATOMIC`, STABLE,
+  `search_path = bob, public`, granted to `bob_app` and `authenticated` and to
+  no other role, discovered by prefix (`bob_cell_*`, `bob_actor_*`) and compared
+  with `bob_cell_state`'s holders. Test 22 calls each discovered function with
+  the arguments its own signature names, as tenant A asking for tenant B's
+  organization, and fails if no function returned a row for its own tenant
+  (so it cannot pass empty). BObee gets nothing.
+
+Sabotages, each seen turning the named test red and then restored (the run after
+the last restore is green, 40 of 40):
+
+| | Sabotage | Red |
+|---|---|---|
+| S1 | the shift window compared inline instead of `bob_shift_is_live` | 8 |
+| S2 | the derived zero for every actor type | 4 |
+| S3 | the derived zero never provisional | 7 |
+| S4 | the remainder clamped at 0 | 12 |
+| S5 | the derived zero labelled `traffic` | 1, 7 |
+| S6 | the derived zero taken before `pending` | 3, 6 |
+| S7 | the marker without the feeder-cycle grace | D2 |
+| S8 | `unvouched` true | D5 |
+| S9 | `rebuilt_after_firing` with `>=` | D4 |
+| S10 | a NULL lag shown as 0 | 15 |
+| S11 | an `event_name` in the affected frame | 16 |
+| S12 | `bob_cell_detail` as SECURITY DEFINER | 21, 22 |
+| S13 | `value_now` read from the alert's own figure | D3 |
+
+Before any migration existed, 29 of the 40 tests failed; the 11 that passed
+were the ones that describe what Slice 3 already does (a human off shift, an
+ASA with no row, the declared-absent zero, the permissions of the existing
+functions).
+
+**D-33 ruled by Federico on 28 Nov (Relevo task 19), built.** Q1 (a): the marker, the
+cell stays `observed`, the six states of F-31 unchanged; his added reason is
+that a channel with many rebuilt cells has its lag declared too low, and the
+marker is what shows it. Q2 (a) with no new switch: the fourteenth capability
+`coverage_records` in `channel_capabilities` (the check constraint is widened in
+the markers migration). Absent: no marker; present with a record: nothing;
+present with no record: `unvouched`, for cells with counts. The record is D63
+and does not exist, so until it does every such cell is unvouched; no channel
+declares the capability, so none is. Derived per-actor zeros approved on one
+condition, the shift judged at the bucket's instant: test 2e moves shifts around
+the bucket and a shift current at reading time but not at the bucket gives
+`off_shift`. Sabotages: S14 (the shift read at `now()`) red on 1, 2e, 3, 7; S15
+(the capability ignored) red on D6. The tests are now 42.
+
 ## Slice 4 · Sentiment, the part that does not wait for D55 — spec (27 Nov)
 
 `docs/slice-4-sentiment.md`. Spec only, proposed, nothing built. D55 («The AI

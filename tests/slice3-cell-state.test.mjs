@@ -198,7 +198,9 @@ describe('§4 · the catalog', () => {
       SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint
        WHERE conname = 'channel_capabilities_capability_check'`)
     const accepted = new Set([...def.matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1]))
-    assert.equal(accepted.size, 13, 'F-29: thirteen capabilities')
+    // F-29: thirteen; Slice 7 adds coverage_records (D-33 Q2, no metric requires it).
+    assert.equal(accepted.size, 14, 'F-29: thirteen capabilities and coverage_records')
+    assert.ok(accepted.has('coverage_records'))
     for (const c of ['disambiguation', 'escalation', 'queue']) assert.ok(accepted.has(c), c)
     const unknown = (await catalog()).flatMap((k) => k.required_capabilities)
       .filter((c) => !accepted.has(c))

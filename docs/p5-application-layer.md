@@ -90,8 +90,8 @@ not be read as permission to apply them to any box.
 | The reference feeder holds `bob_feeder` first; 3.7 takes the same credential later | **[DECIDED]** (Henry, BZZ-19, 18 Nov) | §3.1 |
 | `organizations` / `org_id` replace runbook §7.3's `tenants` / `app_entities` for BOb; `organizations.slug` = `bzzz.tenant` | **[DECIDED]** (Federico, Q2) | §5.1 |
 | Development runs on a local Supabase pinned to the box's images and CI's CLI; lab-02 is the integration and rehearsal target; the hosted project is the demo's again and never hosts BOb | **[DECIDED]** (Q3 in its 15 Nov form, accepted by Federico on BZZ-3) | §5.1, §6.2 |
-| PR-4: BOb never writes a projection, enforced by grant | **[DECIDED]** (Handoff §4.3; A-05) | §3.2 |
-| One writer, `bob_feeder`; it reads exactly two views from BOb | **[DECIDED]** (contract §1, §7.4) | §3.2 |
+| PR-4: BOb never writes a projection, enforced by grant among the components that run; for the owner (`bob_migrador`), by procedure (no running container holds its credential) | **[DECIDED]** (Handoff §4.3; A-05) | §3.2 |
+| One writer among the components that run, `bob_feeder` (the owner, `bob_migrador`, is held back by procedure, not by grant); it reads exactly two views from BOb | **[DECIDED]** (contract §1, §7.4) | §3.2 |
 | The feeder never creates an actor; ghosts are created by BOb as `bob_app` | **[DECIDED]** (Relevo task 6 Q13, 11 Nov) | §3.2 |
 | `bob_ai_ro` reads named `v_ai_*` views and nothing else | **[DECIDED]** (IR-1) | §3.2 |
 | One service holds the read-only role, and the MCP reads through that service | **[DECIDED]** (BZZ-3, Federico accepted it on 10 Nov) | §3.4 |
@@ -173,32 +173,35 @@ local Supabase (§5.1) before 3.7 exists. So F-21 and F-22 are exercised against
 a database, not only read, and 3.7 inherits a credential whose access has
 already been exercised.
 
-`anon`, `authenticated`, `service_role` and the migration owner are Supabase's
-own. They are not among the three, but §3.2 states what each may do here.
+`anon`, `authenticated` and `service_role` are Supabase's own. The migration
+owner, `bob_migrador`, is BOb's own and is a fourth role (BZZ-19, 28 Nov), not
+among the three. §3.2 states what each may do here.
 
 ### 3.2 The grant matrix
 
 Every LOGIN role is `NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE`. The
-migration owner is the only role that owns objects or bypasses RLS.
+migration owner is the only role that owns objects or bypasses RLS. Since
+BZZ-19 (28 Nov) the matrix has a fourth role, `bob_migrador`, the migration
+owner (see below); the three of §3.1 are still the three.
 
-| Object | `bob_app` | `bob_feeder` | `bob_ai_ro` | `authenticated` | `anon` / PUBLIC |
-|---|---|---|---|---|---|
-| Configuration and live state (every `org_id` table that is not a projection) | SELECT, INSERT, UPDATE, DELETE | none | none | A-05b's choice (§3.3) | none |
-| The eight projections and every partition | SELECT | SELECT, INSERT, UPDATE, DELETE | none | SELECT | none |
-| `actors` | SELECT, INSERT, UPDATE, DELETE (ghost reconciliation) | none (reads through the view) | none | A-05b's choice | none |
-| `actor_external_refs`, `actor_ref_history` (Slice 2) | As built: SELECT, INSERT, UPDATE, DELETE. `actor_ref_history` is append-only by trigger, not by grant (see below) | none | none | As built: SELECT, INSERT, UPDATE, DELETE, under RLS (A-05b's choice) | none |
-| `channel_capabilities` (Slice 2, 0.5.3) | SELECT, INSERT, UPDATE, DELETE | none (reads the column on its view) | none | SELECT, INSERT, UPDATE, DELETE, under RLS | none |
-| `v_channel_declaration_gaps` (Slice 2) | SELECT | none | none | SELECT | none |
-| `member_refs_seen` (Q6 (a), F-41) | SELECT, DELETE (the ghost reconciliation consumes what was staged) | INSERT only, under the tenant's claim | none | none | none |
-| `member_refs_runs` (Q6 (a), F-41, review of PR #33) | SELECT, DELETE | INSERT only, one row per tenant per staging run | none | none | none |
-| `v_feeder_channel_map` (with `capabilities`, 0.5.3) | none | SELECT | none | none | none |
-| `v_feeder_actor_map` (Slice 2) | none | SELECT | none | none | none |
-| `v_ai_*` views (none exist yet) | none | none | SELECT | none | none |
-| `v_roster` | SELECT | none | none | none | none |
-| Partition function (contract §3) | none | EXECUTE | none | none | none |
-| `bob_grant_projection()` | none | none | none | none | none |
-| `bob_grant_feeder_staging()` (Q6 (a)) | none (EXECUTE revoked from PUBLIC, `anon`, `authenticated` and `service_role`; the migration owner alone) | none | none | none | none |
-| The truth store (ClickHouse) | only through `affected_members` and the evidence packages, never directly | ~~read-only ClickHouse role (task 3.6)~~ none (D77, 77.3): it reads through `bzzz-vecinos`, which holds `bob_lector` | its own ClickHouse access, per task 5.3 | none | none |
+| Object | `bob_app` | `bob_feeder` | `bob_ai_ro` | `bob_migrador` | `authenticated` | `anon` / PUBLIC |
+|---|---|---|---|---|---|---|
+| Configuration and live state (every `org_id` table that is not a projection) | SELECT, INSERT, UPDATE, DELETE | none | none | owner (`bob`) | A-05b's choice (§3.3) | none |
+| The eight projections and every partition | SELECT | SELECT, INSERT, UPDATE, DELETE | none | owner (`bob`) | SELECT | none |
+| `actors` | SELECT, INSERT, UPDATE, DELETE (ghost reconciliation) | none (reads through the view) | none | owner (`bob`) | A-05b's choice | none |
+| `actor_external_refs`, `actor_ref_history` (Slice 2) | As built: SELECT, INSERT, UPDATE, DELETE. `actor_ref_history` is append-only by trigger, not by grant (see below) | none | none | owner (`bob`) | As built: SELECT, INSERT, UPDATE, DELETE, under RLS (A-05b's choice) | none |
+| `channel_capabilities` (Slice 2, 0.5.3) | SELECT, INSERT, UPDATE, DELETE | none (reads the column on its view) | none | owner (`bob`) | SELECT, INSERT, UPDATE, DELETE, under RLS | none |
+| `v_channel_declaration_gaps` (Slice 2) | SELECT | none | none | owner (`bob`) | SELECT | none |
+| `member_refs_seen` (Q6 (a), F-41) | SELECT, DELETE (the ghost reconciliation consumes what was staged) | INSERT only, under the tenant's claim | none | owner (`bob`) | none | none |
+| `member_refs_runs` (Q6 (a), F-41, review of PR #33) | SELECT, DELETE | INSERT only, one row per tenant per staging run | none | owner (`bob`) | none | none |
+| `v_feeder_channel_map` (with `capabilities`, 0.5.3) | none | SELECT | none | owner (`bob`) | none | none |
+| `v_feeder_actor_map` (Slice 2) | none | SELECT | none | owner (`bob`) | none | none |
+| `v_ai_*` views (none exist yet) | none | none | SELECT | owner (`bob`) | none | none |
+| `v_roster` | SELECT | none | none | owner (`bob`) | none | none |
+| Partition function (contract §3) | none | EXECUTE | none | owner (`bob`) | none | none |
+| `bob_grant_projection()` | none | none | none | EXECUTE (`bob.sql`) | none | none |
+| `bob_grant_feeder_staging()` (Q6 (a)) | none (EXECUTE revoked from PUBLIC, `anon`, `authenticated` and `service_role`; the migration owner alone) | none | none | none (the function is `postgres`'s, in `public`) | none | none |
+| The truth store (ClickHouse) | only through `affected_members` and the evidence packages, never directly | ~~read-only ClickHouse role (task 3.6)~~ none (D77, 77.3): it reads through `bzzz-vecinos`, which holds `bob_lector` | its own ClickHouse access, per task 5.3 | none | none | none |
 
 Each entry and its source:
 
@@ -206,6 +209,32 @@ Each entry and its source:
   read projections and cannot write them. `bob_grant_projection()` already
   applies this per table, revoking from `anon` and `authenticated` the write
   that Supabase's default privileges give them in `public`.
+  - **What PR-4 delivers, rewritten** (BZZ-19, 28 Nov, Federico): the feeder
+    is the only writer among the components that run, by permission. The owner
+    (`bob_migrador`) can write; what stops it is that no running container
+    holds its credential (`/opt/bob/secrets/migrador.env`). That is a
+    procedural control, checked by a `verify-deployment.sh` check in Bzzz (a
+    separate PR).
+  - **Note on installation.** `postgres` applies the 33 files of the install
+    chain once, at installation (decision of 24 Nov, «postgres una vez, luego
+    el migrador»; §6.2, `scripts/instalar-bob.sh`, `scripts/owner-chain-check.mjs`).
+    The 12 and 21 are a measurement: `bob_migrador` could apply only 12 of
+    those 33 and stops at the other 21. PR-4's guarantee does not cover the
+    install path, and that is acceptable: it is a supervised, one-time
+    operation.
+- **`bob_migrador`**, the fourth role (BZZ-19, 28 Nov; D77 §2.8, §6.2): the
+  owner of the objects in `bob`, and the `bob_migrador` column of the matrix
+  above. Its privileges are an owner's, not an application's. Attributes:
+  LOGIN, NOSUPERUSER, NOBYPASSRLS, NOCREATEDB, NOCREATEROLE (and
+  NOREPLICATION, CONNECTION LIMIT 1; Bzzz's alta creates it NOLOGIN and
+  `supabase_admin` sets LOGIN and the password). No CREATE on the database:
+  the alta grants it and revokes it inside its transaction. It owns `bob` and
+  everything in it. Outside `bob` it holds EXECUTE on
+  `public.bob_grant_projection(regclass)` (`bob.sql`) and USAGE on `auth`,
+  which `supabase_admin` grants because every tenant policy calls
+  `auth.jwt()`. Plus CONNECT and TEMPORARY on the database and USAGE on
+  `public`. What it must not be able to do is checked by
+  `scripts/owner-chain-check.mjs`.
 - **The feeder's reads** **[DECIDED]** (Handoff §4.3, contract §7.4): exactly
   two views, and anything more is a finding about the contract. It holds no
   grant on `channels`, `organizations` or `actors`.
@@ -1132,7 +1161,7 @@ the other three were built on 2026-11-20. The third column says where each one s
 
 | Guard | Asserts | State on 2026-11-19 |
 |---|---|---|
-| Three roles, no more | The only non-Supabase LOGIN roles with any privilege in `bob` are `bob_app`, `bob_feeder` and `bob_ai_ro`. None is SUPERUSER or BYPASSRLS | Built (2026-11-20, `tests/p5-roles.test.mjs`). Discovered from the catalog, LOGIN or not, through ownership, grants, column grants, default privileges and membership. Also checks the three are not CREATEDB or CREATEROLE (§3.2), and none can become another role. Runs in the box check |
+| Three application roles, no more (plus `bob_migrador` as the owner) | Besides `bob_migrador`, the owner and fourth role (BZZ-19, 28 Nov; §3.2), the only non-Supabase LOGIN roles with any privilege in `bob` are `bob_app`, `bob_feeder` and `bob_ai_ro`. None is SUPERUSER or BYPASSRLS | Built (2026-11-20, `tests/p5-roles.test.mjs`). Discovered from the catalog, LOGIN or not, through ownership, grants, column grants, default privileges and membership. Also checks the three are not CREATEDB or CREATEROLE (§3.2), and none can become another role. Runs in the box check |
 | Feeder views readable | As `bob_feeder`, both feeder views return rows for both fixture tenants, and the base tables refuse (F-21) | Built (PR #20) |
 | Feeder scoped by claim | As `bob_feeder` with tenant A's claim, a tenant B row is refused (F-22) | Built (PR #20, PR #21) |
 | Feeder reads nothing else | As `bob_feeder`, every non-projection table and every view other than the two refuses SELECT | Built (PR #20) |
@@ -1362,7 +1391,9 @@ Ordered from the most damaging to the least.
    - **Answered** (Henry, 2026-11-19): **(a) a shared database, with `bob`
      recovered on its own.** A separate Postgres for BOb was rejected. The
      answer rests on one property: the eight projections are derived from
-     ClickHouse, and the feeder rebuilds them (Slice 2). Only `bob`'s
+     ClickHouse, and the feeder rebuilds them (Slice 2). Since BZZ-19 (28 Nov)
+     that property is narrower: rebuildable from what bzzz-vecinos exposes,
+     and **NOT VERIFIED by that path** (contract §8.5). Only `bob`'s
      configuration and live state are BOb's alone: actors, refs and their
      history, channels and capabilities, thresholds.
      - **Backup.** `backup.sh` dumps `bob` on its own, with the data of the
