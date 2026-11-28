@@ -1,11 +1,10 @@
 # BOb v1 · Slice 7 · Drill-downs — spec
 
-**Status: SPEC, decided by Henry in the Slice 7 grill and approved by him
-(2026-11-27). Nothing is built.** It is drawn ahead of D-33, which is open and assigned to Federico on
-Relevo task 19. D-33's two questions are not decided here. §8 writes option (a),
-the one proposed on the task, as the default, and isolates everything that
-changes under (b) or (c) in that one section, one migration and one block of
-tests. Federico signs the product rulings; this spec proposes.
+**Status: BUILT, decided by Henry in the Slice 7 grill and approved by him
+(2026-11-27). D-33 was ruled by Federico on 28 Nov (Relevo task 19): option (a) on both
+questions, with Q2 declared as a capability, not a switch (§8.3).** The
+ruling is recorded in §8 and built in its one migration and one block of tests.
+Federico signs the product rulings; this spec proposes.
 
 **What Slice 7 is.** The three levels of the drill-down, in the database:
 channel → actor → bucket. Slice 3 already resolves the first two
@@ -225,9 +224,16 @@ row per `alert_log` row of the cells in the frame:
   body, and EXECUTE held by `bob_app` and `authenticated` and by no other
   application role. It does not list them.
 
-## 8 · Open, depends on D-33 (Relevo task 19)
+## 8 · D-33, ruled by Federico on 28 Nov (Relevo task 19)
 
-**This section is the only part of the spec that changes with Federico's
+**Ruling: (a) on Q1 and on Q2.** Q1 adds a reason: a channel with many rebuilt
+cells has its lag declared too low, and the marker in the matrix is what makes
+that pattern visible. Q2 takes no new switch: "emits coverage records" is the
+capability `coverage_records` in `channel_capabilities` (§8.3). He also approved
+the derived per-actor zero, on one condition: the shift is judged at the
+bucket's instant, not at the instant of reading (test 2e).
+
+**This section is the only part of the spec that would change with another
 ruling.** It is built in its own migration, `20261128100100_slice7_cell_markers.sql`, into one
 function, `bob.bob_cell_markers`, and tested in its own block (§11, "D-33").
 `bob_cell_detail` and `bob_cell_alerts` read the function's columns and
@@ -279,18 +285,18 @@ The coverage record is the one reserved as D63 in BzzzBX and not built. When it
 exists, a source says "this bucket of mine is complete". A bucket with counts
 and no such record has figures nobody vouched for.
 
-**Proposed default, option (a):** `observed` with an "unvouched" marker,
-**switched on per source only once that source emits coverage records.**
+**Ruled, option (a):** `observed` with an "unvouched" marker, switched on per
+channel by a capability, not by a new switch.
 
-What (a) builds in Slice 7: **the switch, off everywhere.**
-- `unvouched` is `false` for every cell in v1, because no source emits coverage
-  records and there is nothing to compare against. A marker switched on before
-  D63 exists would be on for every bucket of every box, and ignored within a
-  week. That is why (a) switches per source.
-- The column and its test exist now so the shape is fixed: test D5 asserts that
-  no cell is unvouched while no source declares coverage. When D63 lands, the
-  per-source declaration, the coverage table and the rule are one migration
-  that replaces `bob_cell_markers`, with its own spec.
+What is built in Slice 7:
+- The fourteenth capability, `coverage_records`. Capability absent: no marker.
+  Capability present and a record present: nothing. Capability present and no
+  record: `unvouched`. Only a cell with counts (a projection row) can be.
+- The coverage record is D63 in BzzzBX and is not built, so no record can be
+  found: until it lands, every cell with counts on a channel that declares the
+  capability is unvouched. No channel declares it today, so test D5 holds, and
+  test D6 declares it on one to see the rule. When D63 lands, the record check
+  is a change inside `bob_cell_markers` alone.
 
 | If Federico picks | What changes |
 |---|---|
@@ -324,7 +330,7 @@ Q2 changes nothing visible in v1 under (a) or (c).
 | `unvouched` is false everywhere | Coverage records per source (D63) | When BzzzBX builds D63, and D-33 Q2 is ruled |
 | `rebuilt_at` reads today's lag | A stored seal instant, if 0.6 takes it | Not proposed |
 | `affected_members` is returned as a frame, not called | The application layer calling 3.7 | When bob-web wires the drill-through |
-| D-33 is implemented at option (a) | Federico's ruling | Relevo task 19 |
+| The coverage record is not read (none exists) | D63 | When BzzzBX builds it |
 
 ## 11 · Acceptance tests (`tests/slice7-drilldowns.test.mjs`)
 
@@ -414,7 +420,6 @@ they are not added to a box's install until Henry signs a new fingerprint.
 
 ## 13 · Open, outside this spec
 
-- D-33 Q1 and Q2 (Relevo task 19, Federico).
 - D63, coverage records in BzzzBX.
 - An actor-level face for BObee.
 - The routes and the painting, in bob-web.
