@@ -84,7 +84,13 @@ $$;
 REVOKE CREATE ON DATABASE postgres FROM bob_migrador;
 REVOKE bob_migrador FROM postgres GRANTED BY postgres;
 
--- bob.sql, where #450 reads config/supabase/vecinas/bob.sql: after the two
--- temporary permissions are revoked.
-\ir bob.sql
+-- The FUERA= line of Bzzz's config/supabase/vecinas/bob.conf, as the alta grants it: by
+-- postgres, after the two temporary permissions are revoked, and only if the
+-- function exists. bob.sql itself no longer runs here: the alta runs it in a
+-- session of its own as bob_migrador (Bzzz scripts/generar-secretos-vecina.sh,
+-- step 4b), and today it is only a comment. owner-chain-check.mjs pins its bytes.
+DO $$ DECLARE o text := to_regprocedure('public.bob_grant_projection(pg_catalog.regclass)')::text; BEGIN
+  IF o IS NOT NULL THEN
+    EXECUTE format('GRANT EXECUTE ON ROUTINE %s TO %I', o, 'bob_migrador');
+  END IF; END $$;
 COMMIT;
