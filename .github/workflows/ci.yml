@@ -126,6 +126,10 @@ jobs:
         run: node --test --test-concurrency=1 tests/slice2-feeder.test.mjs
       - name: Task 3.7 · the HTTPS truth store against a fake bzzz-vecinos (mTLS, paging, windows, 429, timeout, tenants), the entry point, the awaits
         run: node --test --test-concurrency=1 tests/vecinos-truth-store.test.mjs tests/feeder-awaits.test.mjs tests/feeder-main.test.mjs
+      - name: P-H8 · the feeder's image runs as 65534, writes nowhere, answers, and carries no .env nor secret
+        env:
+          BOB_FEEDER_IMAGE_REQUIRED: '1'
+        run: node --test --test-concurrency=1 tests/feeder-image.test.mjs
       - name: Task 3.7 · the feeder through bzzz-vecinos writes the same projections as through memory
         env:
           SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres

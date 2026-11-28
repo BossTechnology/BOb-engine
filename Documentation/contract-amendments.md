@@ -5060,3 +5060,48 @@ that made the store hang now fail by a test timeout):
 
 `.env.example` names every variable `main.mjs` reads, found in the code: a test
 fails if one is not documented.
+
+
+## P-H8 · The feeder's image (28 Nov)
+
+`Dockerfile`, `.dockerignore`, `tests/feeder-image.test.mjs`. No contract text,
+no migration. It is what Bzzz's `scripts/construir-imagen-bob.sh` builds with
+`SERVICIO=bob-feeder` (bzzz#504); Henry decided on 28 Nov that it lives here,
+next to the feeder's code.
+
+- **Path: `Dockerfile` at the root.** The script's default is `DOCKERFILE=Dockerfile`,
+  relative to the root of the commit, and the context is the root. No variable
+  needed. (bzzz#504 proposed `feeder/Dockerfile` with `DOCKERFILE=feeder/Dockerfile`;
+  the script takes both, the root one needs nothing from whoever builds.)
+- **Base** `node:22.21.1-alpine` by digest, the same as `bob-web`. pnpm goes in
+  with `npm install -g pnpm@12.3.4`: `corepack enable` does not find the binary of
+  that version. Two stages: dependencies (`pnpm install --prod --frozen-lockfile`,
+  so `pg` and nothing else) and the run image with `feeder/`, `package.json` and
+  `node_modules`. Nothing from `tests/`, `supabase/`, `scripts/`, `docs/`.
+- **User 65534, code owned by root.** The first draft (bzzz#504) copied with
+  `--chown=65534`; measured, `/app/feeder` was then writable by the user that runs
+  it on a box that mounts the root read-write. Without `--chown` it is not.
+- **`--help` does not exist.** `main.mjs` reads `--from`, `--to` and `--member-refs`
+  and refuses anything else by name: `--help` exits 2 with
+  `{"event":"config_error","message":"unknown argument --help"}`. The test takes
+  that as the answer (it proves the entry point loads, `pg` resolves and the
+  configuration is read before any connection); it does not add a `--help` to the
+  feeder.
+- **Secrets stay out by construction and by guard.** The Dockerfile copies three
+  paths by name; `.dockerignore` keeps `.env*`, keys, certificates, `.npmrc` and
+  the rest of the repository out of the context. `.env.example` is tracked and is
+  not in the image either. The guard (`findLeaks`, run on the real image) fails on
+  any `.env*`, `.npmrc`, `.netrc`, `id_*`, `*.pem`, `*.key`, `*.p12`, `*.pfx`,
+  `*.crt`, `*.jks` file in `/app`, `/root`, `/home`, or any `.env*`/`.npmrc` anywhere
+  in the image outside npm's own, and on text in `/app` that looks like a private key,
+  a service-role mention, a Postgres URL with a password or a JWT.
+- **Seen failing.** With the Dockerfile made to `COPY . ./all`, the `.dockerignore`
+  stripped and a planted `.env.sabotaje`, the guard failed naming
+  `/app/all/.env.example` and `/app/all/.env.sabotaje`, and the "only the feeder"
+  test failed with it; both restored. The guard itself is also tested against
+  planted names without docker.
+- **Not proved.** The image was not run against a real `bzzz-vecinos` or a real
+  database: the container reaches no network in the test. The signature is
+  Henry's (`firmar-atestacion-bob.sh`); his public key is not yet in
+  `firmantes_imagen`. The build needs network (npm, the registry); the digest is
+  the one bzzz#504 measured, built here on linux/arm64, not on the box's platform.

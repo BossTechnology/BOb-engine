@@ -12,7 +12,11 @@ methods the run needs, `watermark()` and `events({from, to})`, and a third,
 
 `main.mjs` is the entry point: it reads its configuration, builds the HTTPS
 store and runs `runFeeder`. Scheduling it, and the signed image that carries it
-(P-H8), belong to the box's compose in Bob-New (`deploy/caja`), not here.
+(P-H8), belong to the box's compose in Bob-New (`deploy/caja`), not here. The
+image's recipe is the `Dockerfile` at the root of this repository (Bzzz's
+`construir-imagen-bob.sh` with `SERVICIO=bob-feeder` builds it; the signature is
+Henry's). The entry point takes no `--help`: an argument it does not know exits 2
+with a `config_error`.
 
 ## Invoking it
 
