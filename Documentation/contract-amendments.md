@@ -4815,13 +4815,29 @@ seen red under its sabotage:
    refused. For a non-root run only, the list can be another file
    (`F58_HOSTS_PERMITIDOS`); as root it is always `/opt/bob/hosts-permitidos`.
 
-<<<<<<< HEAD
-The lasting fix is migration `20261127110000` in PR #66 (TRIGGER and
-REFERENCES); both are idempotent, so running this step and later that
-migration is fine. Open: #66 takes only table-level TRIGGER and REFERENCES; it
-does not take MAINTAIN (17), service_role's TRUNCATE or column REFERENCES.
-Until #66 is aligned with this SQL, this step is the one that covers all of
-it, and `scripts/f58/README.md` says so.
+The lasting fix is migration `20261127110000` in PR #66. Both are idempotent,
+so running this step and later that migration is fine.
+
+Aligned with this SQL after #67 merged (`ed00dd2`). The migration's F-58 block
+now takes the same: every table privilege but the four, discovered from the
+ACLs (MAINTAIN on 17, service_role's TRUNCATE, column REFERENCES). It refuses
+an empty bob, and it compares SELECT, INSERT, UPDATE and DELETE before and
+after the block; F-52 and F-53, which revoke DML on purpose, come after it.
+
+It is written as one DO block with no temporary objects, since it runs as a
+migration. Its test plants TRUNCATE for `authenticated` and `service_role`, a
+column REFERENCES for `bob_app`, and MAINTAIN on 17. It then re-runs the
+migration's own block, read from the file, in a rolled-back transaction:
+nothing is left and the four are unchanged.
+
+A second test plants grants, runs `scripts/f58/revocar.sql` and then the
+migration's block, and requires every ACL of bob, table and column, to be
+identical after the block: on Febor the migration after the step is a no-op.
+
+Seen red under four sabotages: the block leaves TRUNCATE, skips the column
+REFERENCES, revokes SELECT, or grants anything at all after the step. Its own check catches the last one even with
+the test's comparison off. Run by hand on `supabase/postgres:17.6.1.136` as
+`bob_migrador`: `arwdDxtm` became `arwd`, and the column REFERENCES went.
 
 ## Slice 4 · Sentiment, the part that does not wait for D55 — spec (27 Nov)
 
@@ -4848,28 +4864,3 @@ Findings proposed, none of them confirmed by a test yet:
 
 Read: the chain, the contract and the D55 thread through the Federico reply of
 23 Nov. The highest F-NN in `main` and in the open branches was F-59.
-=======
-The lasting fix is migration `20261127110000` in PR #66. Both are idempotent,
-so running this step and later that migration is fine.
-
-Aligned with this SQL after #67 merged (`ed00dd2`). The migration's F-58 block
-now takes the same: every table privilege but the four, discovered from the
-ACLs (MAINTAIN on 17, service_role's TRUNCATE, column REFERENCES). It refuses
-an empty bob, and it compares SELECT, INSERT, UPDATE and DELETE before and
-after the block; F-52 and F-53, which revoke DML on purpose, come after it.
-
-It is written as one DO block with no temporary objects, since it runs as a
-migration. Its test plants TRUNCATE for `authenticated` and `service_role`, a
-column REFERENCES for `bob_app`, and MAINTAIN on 17. It then re-runs the
-migration's own block, read from the file, in a rolled-back transaction:
-nothing is left and the four are unchanged.
-
-A second test plants grants, runs `scripts/f58/revocar.sql` and then the
-migration's block, and requires every ACL of bob, table and column, to be
-identical after the block: on Febor the migration after the step is a no-op.
-
-Seen red under four sabotages: the block leaves TRUNCATE, skips the column
-REFERENCES, revokes SELECT, or grants anything at all after the step. Its own check catches the last one even with
-the test's comparison off. Run by hand on `supabase/postgres:17.6.1.136` as
-`bob_migrador`: `arwdDxtm` became `arwd`, and the column REFERENCES went.
->>>>>>> origin/main
