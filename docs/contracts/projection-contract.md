@@ -1386,6 +1386,14 @@ So 3.7 delivers things that do not merge:
      ventanas de un día: unos 20 minutos para 90 días, con el tope de 600
      peticiones por minuto. No se midió el servicio completo (mTLS, auditoría y
      20 s por petición), ni se midió con datos reales.
+   - **La marca de agua** (BZZ-19, 28 nov, Federico): es el mínimo entre las
+     fuentes de un canal. Comprueba que el lag declarado siga siendo cierto; no
+     decide el sellado, que sigue siendo la regla de §4.
+   - **La tenencia se lleva, nunca se infiere** (BZZ-19, 28 nov, Federico): lo
+     que llega por `v1/bob/eventos` para detecciones lleva una columna
+     `tenant`, y el feeder no la deduce de otra cosa. El check
+     `source_key` contra `source` lo hace Bzzz, no BOb. Solo texto: esta
+     versión no cambia el esquema de `proj_detections`.
 6. **Create the partition it writes into, and account for what it cannot map.**
    - Partitions go through the one function of §3: create, grant, RLS.
    - What it cannot map is emitted to the bus, as audit is under X-10. That
