@@ -4566,6 +4566,88 @@ Sabotaged once in CI: 6207ae2 put `bob_response_level_check` back in public.
 public` and the guard named the file; d118c98 restored it, a tree identical to
 5d06893, where O-3 had passed.
 
+### Security review of ee90c6b (27 Nov) · four fixes and the nits
+
+An independent review approved with nits. #63 was merged at `ee90c6b`
+before the fixes were written, so they come in a migration of their own,
+`20261127110000_slice5_review_fixes.sql`, after it (Febor's box has viewers
+on Monday). Each has a test in
+`tests/slice5-thresholds.test.mjs` («Review of 27 Nov»), seen red by sabotage
+on the local stack and green after restoring.
+
+- **F-52 · A viewer could fill the outbox without end (high).** A refusal is a
+  row that counts toward no limit (F-49), and `authenticated` still held
+  INSERT on `bob.outbound_queue` from Slice 6. Revoked. The
+  evaluator writes intentions; `bob_app` keeps the INSERT Slice 6 gave it.
+  Sabotage: GRANT it back, R1 red.
+- **F-53 · A forged alert could silence a real escalation (high).** The
+  evaluator reads `alert_log` for a breach's first alert and its escalation,
+  and `authenticated` and `bob_app` held INSERT (and `bob_app` UPDATE, which
+  forges the same). `alert_log` is now written only as the owner: by the
+  evaluator and by the RS-33 trigger (inside the definer that records a
+  verification). Nothing in this repository writes it as `bob_app`; the demo
+  seed does not touch it. Revoked from both, and `alert_log`
+  joins `evaluation_state` and `audit_log` in the Slice 2 read-only set.
+  Consumer check, outside this repository: anything in bob-web or Bob-New
+  that inserts or updates `alert_log` as `bob_app` or as a member. Sabotage:
+  INSERT to authenticated, and UPDATE to bob_app, each turns R2 red.
+- **F-54 · A malformed `peak_windows` broke the whole organization (medium).**
+  An object, `25:00` or a missing end made `bob_threshold_status` raise, and
+  with it the evaluator of every threshold of the organization. A CHECK,
+  `bob.bob_peak_windows_valid`: an array of objects whose `start` and `end`
+  are `HH:MM`, 00:00 to 23:59, validated (a malformed row stops the install). Sabotage: drop it, R3 red.
+- **F-55 · Two concurrent evaluations could pass the cooldown (medium).** Both
+  read the state before either wrote it. `bob_evaluate_at` takes
+  `pg_advisory_xact_lock` keyed on the organization when it enters (the
+  function is replaced whole); another organization is not held. Sabotage: the function without the
+  lock, R4 red (the second evaluation no longer waits).
+- **F-58 · A member could attach a trigger to any bob table (critical; review
+  of `8ab846e`).** `authenticated` held TRIGGER and REFERENCES on 28 tables in
+  bob. No BOb migration granted them: the tables were created in public, where
+  Supabase's default privileges for `postgres` give `authenticated` `arwdxt`,
+  then moved to bob with that ACL, and Slice 2 revoked the four DML rights
+  only. As tenant A, `CREATE TRIGGER … ON bob.alert_log` succeeded, and every
+  later insert of any tenant failed; only the owner can drop it. Revoked on
+  every relation in bob from PUBLIC, anon, authenticated, service_role and the
+  three bob roles; the migration itself raises if any is still held, since on
+  a box bob_migrador pushes it and a REVOKE it cannot perform only warns.
+  Schema bob has no default privileges, so a later table gets none. EXECUTE on
+  bob's trigger functions is also taken from PUBLIC (those owned by the
+  migration owner, discovered); the ones in public belong to the install
+  chain. Guards, discovering tables, functions and roles: no role but the owner
+  and superusers holds TRIGGER or REFERENCES on a bob relation, or EXECUTE on a
+  bob trigger function, and a member's `CREATE TRIGGER` on `alert_log` is
+  refused (with a trigger function it may execute, so the refusal is the
+  privilege's). In the signed commit `00f79b7` the grant is already there, and
+  the box is the Supabase image, where `authenticated` exists.
+- **F-59 · Moving a bound could leave a trigger_level inside it (minor).**
+  `bob_response_level_check` ran when the response was written. A trigger on
+  `threshold_configs` refuses an update of the bounds that would put a
+  response's level inside them.
+- **Nits.** `alert_log.threshold_id` and `response_id` are composite foreign
+  keys on `(org_id, …)`, so an alert cannot name another organization's
+  threshold or response (`threshold_configs` gains `UNIQUE (org_id, id)`;
+  `evaluation_state.threshold_id` goes composite too). The §9 test discovers
+  the roles (every role that is not a superuser, a `pg_` role or the owner)
+  instead of listing five. The two definers end their search_path with
+  `pg_temp`. The F-51 guard also refuses `CREATE INDEX … ON
+  public.`, GRANT or REVOKE on an object in public or on all of it, and a
+  CREATE with no schema; seen red on a planted file with one of each, and a
+  `bob.` object and a commented line did not trip it.
+- **Pending, not in this change.** `bob_app` can still insert intentions
+  over a limit as `suppressed` rows (spam within its own organization; it is
+  the server). The trigger functions in public keep EXECUTE for PUBLIC until
+  the install chain is next signed. `postgres`'s default privileges in public
+  still give `authenticated` everything on a new table there; the resto
+  creates none (F-51).
+- **Counts.** 575 → 590 on a fresh local stack: 588 pass, 2 `todo`. Fourteen
+  sabotages against `20261127110000`, each red and green again after
+  restoring; the in-migration F-58 check raises on a planted grant.
+- **Tests that changed with it.** Slice 6 writes its probe alerts as the
+  owner and its intentions as `bob_app` (it wrote some as `authenticated`).
+  The namespace guard refused the lock key `'bob.bob_evaluate:'`, now
+  `'bob_evaluate '`.
+
 ### F-49, built · Slice 6's tests now expect the row
 
 The seven Slice 6 tests that expected an error from a limit or an unverified,
@@ -4733,6 +4815,7 @@ seen red under its sabotage:
    refused. For a non-root run only, the list can be another file
    (`F58_HOSTS_PERMITIDOS`); as root it is always `/opt/bob/hosts-permitidos`.
 
+<<<<<<< HEAD
 The lasting fix is migration `20261127110000` in PR #66 (TRIGGER and
 REFERENCES); both are idempotent, so running this step and later that
 migration is fine. Open: #66 takes only table-level TRIGGER and REFERENCES; it
@@ -4765,3 +4848,28 @@ Findings proposed, none of them confirmed by a test yet:
 
 Read: the chain, the contract and the D55 thread through the Federico reply of
 23 Nov. The highest F-NN in `main` and in the open branches was F-59.
+=======
+The lasting fix is migration `20261127110000` in PR #66. Both are idempotent,
+so running this step and later that migration is fine.
+
+Aligned with this SQL after #67 merged (`ed00dd2`). The migration's F-58 block
+now takes the same: every table privilege but the four, discovered from the
+ACLs (MAINTAIN on 17, service_role's TRUNCATE, column REFERENCES). It refuses
+an empty bob, and it compares SELECT, INSERT, UPDATE and DELETE before and
+after the block; F-52 and F-53, which revoke DML on purpose, come after it.
+
+It is written as one DO block with no temporary objects, since it runs as a
+migration. Its test plants TRUNCATE for `authenticated` and `service_role`, a
+column REFERENCES for `bob_app`, and MAINTAIN on 17. It then re-runs the
+migration's own block, read from the file, in a rolled-back transaction:
+nothing is left and the four are unchanged.
+
+A second test plants grants, runs `scripts/f58/revocar.sql` and then the
+migration's block, and requires every ACL of bob, table and column, to be
+identical after the block: on Febor the migration after the step is a no-op.
+
+Seen red under four sabotages: the block leaves TRUNCATE, skips the column
+REFERENCES, revokes SELECT, or grants anything at all after the step. Its own check catches the last one even with
+the test's comparison off. Run by hand on `supabase/postgres:17.6.1.136` as
+`bob_migrador`: `arwdDxtm` became `arwd`, and the column REFERENCES went.
+>>>>>>> origin/main

@@ -99,6 +99,16 @@ async function verifyOk(binding, org = TENANT_A) {
   [binding, JSON.stringify({ org_id: org })])
 }
 
+// An alert, written as the owner: since the review of 27 Nov no application
+// role inserts into alert_log (the evaluator and the RS-33 trigger do, as the
+// owner). The role the transaction had is restored after, claims untouched.
+async function asOwner(sql, params) {
+  const { rows: [{ r }] } = await db.query('SELECT current_user AS r')
+  await db.query('RESET ROLE')
+  try { return (await db.query(sql, params)).rows[0] }
+  finally { await db.query(`SET LOCAL ROLE ${r}`) }
+}
+
 // An Action response attaching `binding`, and an alert to cause intentions.
 // The binding is verified afterwards, because an intention needs a binding
 // whose last verification passed and is fresh. Edits made before this call
@@ -107,7 +117,7 @@ async function actionFor(binding, org = TENANT_A, { verify = true } = {}) {
   const { rows: [r] } = await db.query(`
     INSERT INTO response_rules (org_id, type, name, autobotz_id)
     VALUES ($1, 'action', 'Slice 6 probe', $2) RETURNING id`, [org, binding])
-  const { rows: [a] } = await db.query(`
+  const a = await asOwner(`
     INSERT INTO alert_log (org_id, metric_id, metric_name, alert_type, value, threshold, severity)
     VALUES ($1, 'abandonment', 'Abandonment', 'upper', 12, 10, 'critical') RETURNING id`, [org])
   if (verify) await verifyOk(binding, org)
@@ -531,7 +541,7 @@ describe('A binding that changes the real world is attached only with a limit', 
 // ── The outbox ─────────────────────────────────────────────────────────────
 describe('The outbox · limits apply when the intention is written', () => {
   test('with a limit of ten an hour, the eleventh intention is refused, as a suppressed row', async () => {
-    await inTenantTx(async () => {
+    await inAppTx(async () => {
       await db.query('UPDATE autobotz SET rate_limit_per_hour = 10 WHERE id = $1', [AB1])
       const { rule, alert } = await actionFor(AB1)
       for (let i = 1; i <= 10; i++) await intend(TENANT_A, rule, alert, `k-${i}`)
@@ -544,7 +554,7 @@ describe('The outbox · limits apply when the intention is written', () => {
   })
 
   test('the daily cap and the concurrency limit refuse the same way', async () => {
-    await inTenantTx(async () => {
+    await inAppTx(async () => {
       await db.query('UPDATE autobotz SET invocation_cap_daily = 2 WHERE id = $1', [AB1])
       const { rule, alert } = await actionFor(AB1)
       await intend(TENANT_A, rule, alert, 'd-1'); await intend(TENANT_A, rule, alert, 'd-2')
@@ -557,7 +567,7 @@ describe('The outbox · limits apply when the intention is written', () => {
   })
 
   test('an intention cannot backdate itself out of the window', async () => {
-    await inTenantTx(async () => {
+    await inAppTx(async () => {
       await db.query('UPDATE autobotz SET rate_limit_per_hour = 1 WHERE id = $1', [AB1])
       const { rule, alert } = await actionFor(AB1)
       await intend(TENANT_A, rule, alert, 'b-1')
@@ -583,7 +593,7 @@ describe('The outbox · limits apply when the intention is written', () => {
   })
 
   test('a disabled binding, a duplicate key, and a binding the rule does not attach are refused', async () => {
-    await inTenantTx(async () => {
+    await inAppTx(async () => {
       await db.query('UPDATE autobotz SET rate_limit_per_hour = 10 WHERE id = $1', [AB1])
       const { rule, alert } = await actionFor(AB1)
       await intend(TENANT_A, rule, alert, 'dup')
@@ -600,7 +610,7 @@ describe('The outbox · limits apply when the intention is written', () => {
 
 describe('The outbox · approval, the causing alert, and what drains', () => {
   test('a binding that requires approval is written awaiting approval, and nothing drains it', async () => {
-    await inTenantTx(async () => {
+    await inAppTx(async () => {
       await db.query('UPDATE autobotz SET rate_limit_per_hour = 10 WHERE id = $1', [AB3])
       const { rule, alert } = await actionFor(AB3)
       const { rows: [q] } = await intend(TENANT_A, rule, alert, 'appr-1')
@@ -637,7 +647,7 @@ describe('The outbox · approval, the causing alert, and what drains', () => {
       const missing = await refusal(`INSERT INTO outbound_queue (org_id, response_rule_id, idempotency_key)
                                      VALUES ($1, $2, 'no-alert')`, [TENANT_A, rule])
       assert.equal(missing?.code, '23502')
-      const { rows: [b] } = await db.query(`
+      const b = await asOwner(`
         INSERT INTO alert_log (org_id, metric_id, metric_name, alert_type, severity)
         VALUES ($1, 'm', 'M', 'upper', 'info') RETURNING id`, [TENANT_B])
       const foreign = await refusal(`INSERT INTO outbound_queue (org_id, response_rule_id, alert_log_id, idempotency_key)
@@ -686,12 +696,15 @@ describe('The outbox · the trace from action to alert cannot be cut', () => {
   })
 
   test('as a tenant, deleting or draining an intention directly is refused', async () => {
-    await inTenantTx(async () => {
+    await inAppTx(async () => {
       await db.query('UPDATE autobotz SET rate_limit_per_hour = 1 WHERE id = $1', [AB1])
       const { rule, alert } = await actionFor(AB1)
+      // Written as bob_app: since the review of 27 Nov a tenant inserts none.
       const { rows: [q] } = await intend(TENANT_A, rule, alert, 'cut-1')
+      await becomeTenant(db, TENANT_A)
       assert.equal((await refusal('DELETE FROM outbound_queue WHERE id = $1', [q.id]))?.code, '42501')
       assert.equal((await refusal(`UPDATE outbound_queue SET state = 'drained' WHERE id = $1`, [q.id]))?.code, '42501')
+      await db.query('SET LOCAL ROLE bob_app')
       // And the limit still holds: the one written counts.
       suppressedAs(await written(`INSERT INTO outbound_queue (org_id, response_rule_id, alert_log_id, idempotency_key)
                                   VALUES ($1, $2, $3, 'cut-2')`, [TENANT_A, rule, alert]), 'rate_limit_per_hour')

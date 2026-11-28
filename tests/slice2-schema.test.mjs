@@ -229,7 +229,9 @@ const SIGN_IN = new Set(['bob.users'])
 // FOR SELECT only); bob_app reads it and writes nothing.
 // Slice 5: breach state is written by bob_evaluate alone, as the migration
 // owner (spec §6, §9); bob_app reads it.
-const READ_ONLY = new Set(['bob.audit_log', 'bob.evaluation_state'])
+// Review of 27 Nov: alerts are written by the evaluator and the RS-33
+// trigger, as the owner; a row bob_app wrote could silence an escalation.
+const READ_ONLY = new Set(['bob.audit_log', 'bob.evaluation_state', 'bob.alert_log'])
 
 describe('§10 · bob_app grants, found rather than listed', () => {
   // P5 Q6 (a): a feeder staging table, found by its grants, is the third

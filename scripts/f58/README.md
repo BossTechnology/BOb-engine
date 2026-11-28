@@ -16,12 +16,11 @@ de todos los tenants. Con MAINTAIN puede bloquear la tabla.
 
 **Qué no es.** No es una migración y no está en la cadena de instalación:
 `supabase/provision/install-chain.sha256` no cambia. No toca `00f79b7` ni su
-firma. No incluye nada del Slice 5. La migración `20261127110000` del PR #66,
-que entra cuando se firme la cadena siguiente, hoy quita solo TRIGGER y
-REFERENCES de tabla: no quita MAINTAIN, el TRUNCATE de `service_role` ni la
-REFERENCES de columna. Hasta que se alinee con este SQL, el que cubre todo es
-este paso. Correr este paso y después esa migración no es problema: los dos son
-idempotentes.
+firma. No incluye nada del Slice 5. El arreglo definitivo es la migración
+`20261127110000` del PR #66, que entra cuando se firme la cadena siguiente.
+Quita lo mismo que este paso (todo menos SELECT, INSERT, UPDATE y DELETE,
+descubierto del ACL). Correr este paso y después esa migración no es problema:
+los dos son idempotentes.
 
 **Quién lo corre.** Henry, en Febor. Los agentes, solo en los ensayos de
 lab-02 y model-01, que están en `00f79b7`.
