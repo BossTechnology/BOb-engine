@@ -465,10 +465,11 @@ async function writeTenant(db, t, { from, to, watermark, feederVersion }) {
 
 // Run (or rebuild) the window [from, to) for every tenant, or for `orgIds`.
 // In a customer box it runs with `boxTenant`, the box's `bzzz.tenant`.
+// `truth` is any store with watermark() and events({from, to}), sync or async.
 // Returns the two counts of §8.6, never one sum, and what it wrote.
 export async function runFeeder(db, truth, {
   from, to, orgIds = null, feederVersion = DEFAULT_FEEDER_VERSION,
-  contextSeconds = DEFAULT_CONTEXT_SECONDS, boxTenant = null,
+  contextSeconds = DEFAULT_CONTEXT_SECONDS, boxTenant = null, readAheadSeconds = null,
 } = {}) {
   for (const t of [from, to]) {
     if (new Date(t).getTime() % BUCKET_MS !== 0) {
@@ -476,10 +477,19 @@ export async function runFeeder(db, truth, {
     }
   }
   const maps = await readMaps(db)
-  const watermark = truth.watermark()
+  // The truth store of 3.7 answers over HTTPS: both calls are awaited. The
+  // in-memory store answers at once, and awaiting a plain value is harmless.
+  const watermark = await truth.watermark()
   const readFrom = new Date(new Date(from).getTime() - contextSeconds * 1000)
-  const readTo = new Date(Math.max(new Date(to).getTime(), watermark.getTime()))
-  const { counts, tenants } = project(truth.events({ from: readFrom, to: readTo }), maps,
+  // Past the window the feeder reads for labels that arrive after their turn.
+  // Unset, that is everything up to the watermark. `readAheadSeconds` stops it
+  // that far past `to`: a rebuild of an old day does not read every day since,
+  // and the label that arrives later than that is read as missing at seal.
+  const readUntil = readAheadSeconds === null
+    ? watermark.getTime()
+    : Math.min(watermark.getTime(), new Date(to).getTime() + readAheadSeconds * 1000)
+  const readTo = new Date(Math.max(new Date(to).getTime(), readUntil))
+  const { counts, tenants } = project(await truth.events({ from: readFrom, to: readTo }), maps,
     watermark, { from, to, boxTenant })
   const lo = new Date(from).getTime(); const hi = new Date(to).getTime()
   for (const t of tenants) {

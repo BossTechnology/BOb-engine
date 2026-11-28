@@ -40,6 +40,9 @@ Términos del proyecto y su significado exacto. Úsalos en código, commits, doc
 | Outbox | `bob.outbound_queue`. Estados: `queued` (se drena), `awaiting_approval` (nada lo drena) y `drained`. Los límites se aplican al escribir. | Slice 6 |
 | Vencida (*stale*) | Estado de verificación de un binding ok cuya verificación pasó de 30 días. Se calcula, no se guarda (RS-31). | `bob_autobotz_state()` |
 | Aprovisionamiento (*provisioning*) | Dar a una cuenta de GoTrue una fila en `bob.users`, con org y rol. La hace el operador con `scripts/provision-user.mjs` y la credencial de migración; registrarse no crea fila, y sin fila bob-web responde 403. | `20261121130000_users_bob_app_access.sql` |
+| `bzzz-vecinos` | El servicio de lectura de la caja para las aplicaciones vecinas: vistas con nombre y versión (`GET /v1/bob/eventos`) por HTTPS con mTLS, sin SQL, con cursor opaco. El alimentador de BOb lee por ahí, no de ClickHouse. | `feeder/README.md` |
+| Almacén de verdad (*truth store*) | Lo que el alimentador consulta: `watermark()` y `events({from, to})`. `MemoryTruthStore` en los tests; `VecinosTruthStore` en la caja. | `feeder/vecinos-truth-store.mjs` |
+| Marca de agua de un canal (adaptador 3.7) | El mínimo de `ingerido_hasta` entre las fuentes del canal, no el máximo: la fuente más lenta es la que completa un bucket. No decide cuándo sellar (lo decide el rezago declarado): sirve para ver que esa declaración sigue siendo cierta. | `feeder/README.md` |
 | A-11 / A-12 | Números del registro para lo que en Relevo se llamó A-07 (drill-through de miembros) y A-09 (conteo de abstenciones). | `contract-amendments.md` |
 
 ## Fuera de alcance
