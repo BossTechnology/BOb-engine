@@ -124,6 +124,12 @@ jobs:
         env:
           SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
         run: node --test --test-concurrency=1 tests/slice2-feeder.test.mjs
+      - name: Task 3.7 · the HTTPS truth store against a fake bzzz-vecinos (mTLS, paging, windows, 429, timeout, tenants), the entry point, the awaits
+        run: node --test --test-concurrency=1 tests/vecinos-truth-store.test.mjs tests/feeder-awaits.test.mjs tests/feeder-main.test.mjs
+      - name: Task 3.7 · the feeder through bzzz-vecinos writes the same projections as through memory
+        env:
+          SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+        run: node --test --test-concurrency=1 tests/vecinos-feeder.test.mjs
       - name: Slice 3 · the absent-not-zero cell, FR-32, UI-03, PR-10, SR-2, against one implementation; the feeder's zeros
         env:
           SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres

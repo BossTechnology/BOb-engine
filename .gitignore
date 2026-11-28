@@ -17,3 +17,6 @@ supabase/.temp/
 # must be tracked.
 Documentation/*
 !Documentation/contract-amendments.md
+
+# The documented environment of the feeder is tracked.
+!.env.example

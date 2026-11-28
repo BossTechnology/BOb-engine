@@ -4952,3 +4952,111 @@ Findings proposed, none of them confirmed by a test yet:
 
 Read: the chain, the contract and the D55 thread through the Federico reply of
 23 Nov. The highest F-NN in `main` and in the open branches was F-59.
+
+## Task 3.7 · The vecinos adapter (28 Nov)
+
+`feeder/vecinos-truth-store.mjs`, `feeder/main.mjs`, `feeder/README.md`,
+`.env.example`. Built test first. It changes no contract text and no migration:
+the interface was already implicit in `MemoryTruthStore`, and this is its second
+implementation, reading through `bzzz-vecinos` (Bzzz `vecinos/servicio/vistas.py`,
+`docs/OPERACION_vecinos.md` §5, read at `origin/main` on 28 Nov, #485).
+
+What it reads: `v1/bob/eventos` and `v1/bob/marca_de_agua`, the two views
+Wednesday needs (Federico, 28 Nov, 08:44; confirmed by Henry). Not
+`miembros_vistos`, `detecciones`, the evidence packages or `affected_members`.
+
+Decided, in the open:
+- **The watermark is the minimum of `ingerido_hasta` across the sources of the
+  box's channels** (Federico, 28 Nov, BZZ-19 point 2). The watermark does not
+  decide when to seal, the declared lag does; it checks that the declaration
+  holds. So `main.mjs` reports a channel whose `source_key` has no source, a
+  source in no channel, and a source whose newest arrival is older than its
+  channel's declared lag. SR-2 says `source_key` = `bzzz.source` and nothing
+  checked it. A missing expected source is reported and the minimum is taken over
+  the rest; with no expected source present the store throws instead of guessing.
+- **The window is configuration** (`BOB_VECINOS_WINDOW_SECONDS`, one day by
+  default, a multiple of 300). The service wants the five-minute grain and the
+  feeder's `to` is a watermark, so the store rounds out to the grain and drops
+  what falls outside `[from, to)`.
+- **Order is not trusted.** The response-time rule depends on event order, so the
+  store sorts by `(event_time, clave)`, counts a row the view repeated once, and
+  reports where the view broke its order. That is the empirical half of the open
+  question below.
+- **`memberRefsSeen` fails by name** (`MemberRefsNotAvailable`), and
+  `stageMemberRefs` reports it per tenant without stopping the run. An empty
+  answer would have read as "no member was seen".
+- **`runFeeder` awaits the store** (the two `await` that were missing) and takes
+  `readAheadSeconds`. Without it every run reads up to the watermark, so a rebuild
+  of a year by day reads every day since, for each day. Unset it is the old
+  behaviour; the entry point exposes it as `BOB_FEEDER_READ_AHEAD_SECONDS`, unset
+  by default. A label later than it reads as missing at seal. **Proposed, not
+  decided: the value for Febor's first rebuild is Henry's.**
+- **`main.mjs` always passes `boxTenant`** (the tenant is required configuration),
+  so an event of another tenant is counted as unmapped and never written.
+- **No new dependency**: `pg` moves from `devDependencies` to `dependencies`, since
+  the entry point connects as `bob_feeder` at runtime. The lockfile changes by that
+  one key.
+- `.env.example` is now tracked (`.gitignore` ignored every `.env*`).
+
+Federico's question, answered: **does an interrupted rebuild resume or start
+over?** Both. A cut inside a call that the retries cover resumes at the page (the
+retry carries the same cursor). Between calls the cursor is saved nowhere, and
+nothing persisted could be used: the service's cursor is signed for one window's
+parameters. A rebuild runs in steps, each one transaction per tenant; the steps
+before a failure are committed, the failed one starts over from its first page,
+and `step_failed` prints the `--from` to resume with. The replay is safe because
+the feeder deletes the window and refills it (§8.5). Tested with the real feeder
+on a database: a rebuild in two steps writes the rows of one run.
+
+Known limits, documented in `feeder/README.md` and tested where they can be:
+- **`value` arrives as 0 when it was missing**, and the view cannot tell the two
+  apart (Henry, 27 Nov; accepted as a known limit by Federico, 28 Nov). The store
+  passes it through and never reads it; the feeder does not read it; a test sees
+  the projection identical with `value` 0, 12345 or 999. First reader of a zero
+  there is looking at "0 or absent".
+- **Not measured:** the service as a whole through this path (mTLS, the audit
+  write, the 20 s per request), Febor's volume and attributes. The rebuild
+  guarantee "from what `bzzz-vecinos` exposes" (Federico, 28 Nov, 09:01) is
+  stated and **not verified through this path**: the test of record is owed, and
+  this store is what makes it possible. With the default context a day-step reads
+  about two days, so a thirteen-month rebuild should be expected to take about
+  twice the bench's ninety minutes. Not measured.
+- **Tested against a fake**, written from the service's source, not against a
+  running `bzzz-vecinos`. Two behaviours are assumed and not seen: `Retry-After`
+  on a 429 (the service may not send it; the store then backs off), and
+  ClickHouse's `DateTime64` as `YYYY-MM-DD hh:mm:ss.mmm` in `eventos`.
+- **No test marker.** Nothing says where a test event is marked or by whom
+  (Federico, 28 Nov: no test events in Febor's stream).
+
+Open for Federico, as asked:
+1. **Does `eventos` order by `event_time` across pages?** Its `clave` is the time
+   in milliseconds plus `event_id`, so within the key it should; the store does not
+   depend on it and `report.anomalies` counts the breaks on the first real run.
+2. **Does `miembro.id` travel in `attributes`?** `miembros_vistos` reads
+   `attributes['miembro.id']`, so the view says so; the store hands `attributes`
+   over whole and the feeder reads D47's key from there. Seen on no real row.
+
+Seen failing, each on purpose, before it was trusted (38 sabotages; the two
+that made the store hang now fail by a test timeout):
+
+| Guard | Sabotage | Caught by |
+|---|---|---|
+| runFeeder awaits the watermark and the events | each `await` removed | `feeder-awaits` (the first red, before the fix, was a `TypeError` reading a Promise as a Date) |
+| `readAheadSeconds` | ignored; allowed to read less than the window | `feeder-awaits` |
+| mutual TLS | the agent sends no client certificate | the store suite (31 tests) |
+| a tenant is never asked for | the store adds `tenant` | the fake answers 400, as the service does |
+| paging | cursor not sent; same cursor accepted twice; page limit fixed at 100 | the 1 200-event paging test; the loop guard; the 250-source watermark |
+| windows | window fixed at one day; no rounding out to the grain | the six-hour and the off-grain tests |
+| watermark | maximum instead of minimum; unexpected source counted; no row guessed | the watermark tests |
+| retries | none; 429 not retried; 400 retried; Retry-After ignored | the cut and 429 tests |
+| timeout | the timer removed | the timeout tests |
+| `value` | turned into null when 0 | the known-limit test |
+| order and repeats | no sort; no dedupe | the order tests |
+| shape | a missing column unchecked | the shape test |
+| member refs | answers empty instead of failing | `feeder-awaits` |
+| entry point | no `boxTenant`; keeps going after a failed step; wrong resume line; `readAhead` dropped; stages without the flag; logs the database URL; tenant optional; window unchecked; plain http accepted; store not given the channels' sources | `feeder-main` |
+| source checks | stale check off; source-in-no-channel off; NULL lag judged | `feeder-main` |
+| box tenant in the feeder | the `boxTenant` test in `project` off | `vecinos-feeder` (the other tenant's rows reach the tables) |
+
+`.env.example` names every variable `main.mjs` reads, found in the code: a test
+fails if one is not documented.

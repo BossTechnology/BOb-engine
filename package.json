@@ -8,7 +8,7 @@
     "test:availability": "node --test --test-concurrency=1 tests/availability.test.mjs tests/slice1-schema.test.mjs",
     "db:reset": "supabase db reset"
   },
-  "devDependencies": {
+  "dependencies": {
     "pg": "^8.13.1"
   },
   "packageManager": "pnpm@12.3.4"
