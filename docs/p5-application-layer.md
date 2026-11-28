@@ -179,9 +179,9 @@ own. They are not among the three, but §3.2 states what each may do here.
 ### 3.2 The grant matrix
 
 Every LOGIN role is `NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE`. The
-migration owner is the only role that owns objects or bypasses RLS. Desde
-BZZ-19 (28 nov) la matriz tiene un cuarto rol, `bob_migrador`, el dueño de las
-migraciones (ver abajo); los tres de §3.1 siguen siendo los tres.
+migration owner is the only role that owns objects or bypasses RLS. Since
+BZZ-19 (28 Nov) the matrix has a fourth role, `bob_migrador`, the migration
+owner (see below); the three of §3.1 are still the three.
 
 | Object | `bob_app` | `bob_feeder` | `bob_ai_ro` | `bob_migrador` | `authenticated` | `anon` / PUBLIC |
 |---|---|---|---|---|---|---|
@@ -208,28 +208,30 @@ Each entry and its source:
   read projections and cannot write them. `bob_grant_projection()` already
   applies this per table, revoking from `anon` and `authenticated` the write
   that Supabase's default privileges give them in `public`.
-  - **Lo que PR-4 entrega, reescrito** (BZZ-19, 28 nov, Federico): el feeder
-    es el único escritor entre los componentes que corren, por permiso. El
-    dueño (`bob_migrador`) puede escribir; lo que lo impide es que ningún
-    contenedor que corre tiene su credencial (`/opt/bob/secrets/migrador.env`).
-    Eso es un control de procedimiento, comprobado por un check de
-    `verify-deployment.sh` en Bzzz (PR aparte).
-  - **Nota sobre la instalación.** De los 33 ficheros de la cadena de
-    instalación, `bob_migrador` aplica 12 y los otros 21 corren una vez como
-    `postgres` en la instalación (decisión del 24 nov, «postgres una vez,
-    luego el migrador»; §6.2). La garantía de PR-4 no cubre ese camino, y eso
-    es aceptable: es una operación supervisada y de una vez.
-- **`bob_migrador`**, el cuarto rol (BZZ-19, 28 nov; D77 §2.8, §6.2): el dueño
-  de los objetos de `bob`, y la columna `bob_migrador` de la matriz de arriba.
-  Sus permisos son los de un dueño, no los de una aplicación. Atributos: LOGIN, NOSUPERUSER, NOBYPASSRLS, NOCREATEDB, NOCREATEROLE
-  (y NOREPLICATION, CONNECTION LIMIT 1; el alta de Bzzz lo crea NOLOGIN y
-  `supabase_admin` le pone LOGIN y la clave). Sin CREATE en la base: el alta de
-  Bzzz lo concede y lo revoca dentro de su transacción. Es dueño de `bob` y de
-  todo lo que hay en él. Fuera de `bob` tiene EXECUTE en
-  `public.bob_grant_projection(regclass)` (`bob.sql`) y USAGE en `auth`, que
-  da `supabase_admin` porque toda política de tenant llama a `auth.jwt()`. Más
-  CONNECT y TEMPORARY en la base y USAGE en `public`. Lo que no puede hacer lo
-  comprueba `scripts/owner-chain-check.mjs`.
+  - **What PR-4 delivers, rewritten** (BZZ-19, 28 Nov, Federico): the feeder
+    is the only writer among the components that run, by permission. The owner
+    (`bob_migrador`) can write; what stops it is that no running container
+    holds its credential (`/opt/bob/secrets/migrador.env`). That is a
+    procedural control, checked by a `verify-deployment.sh` check in Bzzz (a
+    separate PR).
+  - **Note on installation.** Of the 33 files in the install chain,
+    `bob_migrador` applies 12 and the other 21 run once as `postgres` at
+    install time (decision of 24 Nov, «postgres una vez, luego el migrador»;
+    §6.2). PR-4's guarantee does not cover that path, and that is acceptable:
+    it is a supervised, one-time operation.
+- **`bob_migrador`**, the fourth role (BZZ-19, 28 Nov; D77 §2.8, §6.2): the
+  owner of the objects in `bob`, and the `bob_migrador` column of the matrix
+  above. Its privileges are an owner's, not an application's. Attributes:
+  LOGIN, NOSUPERUSER, NOBYPASSRLS, NOCREATEDB, NOCREATEROLE (and
+  NOREPLICATION, CONNECTION LIMIT 1; Bzzz's alta creates it NOLOGIN and
+  `supabase_admin` sets LOGIN and the password). No CREATE on the database:
+  the alta grants it and revokes it inside its transaction. It owns `bob` and
+  everything in it. Outside `bob` it holds EXECUTE on
+  `public.bob_grant_projection(regclass)` (`bob.sql`) and USAGE on `auth`,
+  which `supabase_admin` grants because every tenant policy calls
+  `auth.jwt()`. Plus CONNECT and TEMPORARY on the database and USAGE on
+  `public`. What it must not be able to do is checked by
+  `scripts/owner-chain-check.mjs`.
 - **The feeder's reads** **[DECIDED]** (Handoff §4.3, contract §7.4): exactly
   two views, and anything more is a finding about the contract. It holds no
   grant on `channels`, `organizations` or `actors`.
@@ -1386,9 +1388,9 @@ Ordered from the most damaging to the least.
    - **Answered** (Henry, 2026-11-19): **(a) a shared database, with `bob`
      recovered on its own.** A separate Postgres for BOb was rejected. The
      answer rests on one property: the eight projections are derived from
-     ClickHouse, and the feeder rebuilds them (Slice 2). Desde BZZ-19 (28 nov)
-     esa propiedad es más estrecha: rebuildable desde lo que expone
-     bzzz-vecinos, y **NO VERIFICADA por ese camino** (contract §8.5). Only `bob`'s
+     ClickHouse, and the feeder rebuilds them (Slice 2). Since BZZ-19 (28 Nov)
+     that property is narrower: rebuildable from what bzzz-vecinos exposes,
+     and **NOT VERIFIED by that path** (contract §8.5). Only `bob`'s
      configuration and live state are BOb's alone: actors, refs and their
      history, channels and capabilities, thresholds.
      - **Backup.** `backup.sh` dumps `bob` on its own, with the data of the

@@ -258,15 +258,15 @@ on (decided by 0.4, as Relevo task 6 asked on 11 Nov; accepted 12 Nov). So:
 There is exactly one writer, `bob_feeder`. Whether the reference feeder or 3.7
 holds that credential, the contract is the same.
 
-**PR-4, lo que entrega** (BZZ-19, 28 nov, Federico): el feeder es el único
-escritor entre los componentes que corren, por permiso. El dueño
-(`bob_migrador`) puede escribir; lo que lo impide es que ningún contenedor que
-corre tiene su credencial (`/opt/bob/secrets/migrador.env`). Eso es un control
-de procedimiento, comprobado por un check de `verify-deployment.sh` en Bzzz (PR
-aparte). La garantía no cubre el camino de instalación: de los 33 ficheros de la
-cadena, `bob_migrador` aplica 12 y los otros 21 corren una vez como `postgres`
-(decisión del 24 nov, «postgres una vez, luego el migrador»; P5 §6.2). Es
-aceptable porque es una operación supervisada y de una vez.
+**PR-4, what it delivers** (BZZ-19, 28 Nov, Federico): the feeder is the only
+writer among the components that run, by permission. The owner
+(`bob_migrador`) can write; what stops it is that no running container holds
+its credential (`/opt/bob/secrets/migrador.env`). That is a procedural control,
+checked by a `verify-deployment.sh` check in Bzzz (a separate PR). The
+guarantee does not cover the install path: of the 33 files in the install
+chain, `bob_migrador` applies 12 and the other 21 run once as `postgres`
+(decision of 24 Nov, «postgres una vez, luego el migrador»; P5 §6.2). That is
+acceptable because it is a supervised, one-time operation.
 
 ## 2 · Tenant key
 
@@ -1362,38 +1362,37 @@ So 3.7 delivers things that do not merge:
    the application renders identically. One case of it has a linkage inside the
    window (§10).
 
-   **La garantía de rebuild, reescrita** (BZZ-19, 28 nov, Federico). Ya no es
-   «rebuildable desde el truth store». Es **rebuildable desde lo que expone
-   bzzz-vecinos**, y nada más que eso:
-   - las vistas `v1/bob/eventos` y, para la marca de agua,
+   **The rebuild guarantee, rewritten** (BZZ-19, 28 Nov, Federico). It is no
+   longer «rebuildable from the truth store». It is **rebuildable from what
+   bzzz-vecinos exposes**, and nothing more:
+   - the views `v1/bob/eventos` and, for the watermark,
      `v1/bob/marca_de_agua`;
-   - con las columnas de la lista `vecinos/columnas-permitidas.txt` de Bzzz.
-   - **NO VERIFICADA por ese camino.** El test de rebuild (arriba; sus casos
-     «the render is identical to a full rebuild», en
-     `tests/slice2-feeder.test.mjs`, y «the rebuild (clear, re-run) renders the
-     zero rows identically», en `tests/slice3-cell-state.test.mjs`) solo ha
-     corrido contra el feeder de referencia con
-     `feeder/memory-truth-store.mjs`. Ninguna corrida ha pasado por
-     bzzz-vecinos.
-   - **El test queda debido**: corre contra el feeder real (3.7) cuando
-     exista, y antes de que nadie dependa de esta garantía (el backup sin las
-     proyecciones, P5 §8 objeción 1, depende de ella).
-   - **Por qué se nombra la vista** (Federico): si alguien estrecha la lista de
-     columnas, el rebuild deja de ser completo. Con la vista nombrada aquí, ese
-     cambio es una ruptura visible de este contrato, y no un hueco que se
-     descubre cuando hace falta reconstruir.
-   - **Límites conocidos.** Medido con 3 millones de eventos sintéticos, en
-     ventanas de un día: unos 20 minutos para 90 días, con el tope de 600
-     peticiones por minuto. No se midió el servicio completo (mTLS, auditoría y
-     20 s por petición), ni se midió con datos reales.
-   - **La marca de agua** (BZZ-19, 28 nov, Federico): es el mínimo entre las
-     fuentes de un canal. Comprueba que el lag declarado siga siendo cierto; no
-     decide el sellado, que sigue siendo la regla de §4.
-   - **La tenencia se lleva, nunca se infiere** (BZZ-19, 28 nov, Federico): lo
-     que llega por `v1/bob/eventos` para detecciones lleva una columna
-     `tenant`, y el feeder no la deduce de otra cosa. El check
-     `source_key` contra `source` lo hace Bzzz, no BOb. Solo texto: esta
-     versión no cambia el esquema de `proj_detections`.
+   - with the columns of Bzzz's `vecinos/columnas-permitidas.txt` list.
+   - **NOT VERIFIED by that path.** The rebuild test (above; its cases «the
+     render is identical to a full rebuild», in
+     `tests/slice2-feeder.test.mjs`, and «the rebuild (clear, re-run) renders
+     the zero rows identically», in `tests/slice3-cell-state.test.mjs`) has
+     only run against the reference feeder with
+     `feeder/memory-truth-store.mjs`. No run has gone through bzzz-vecinos.
+   - **The test is owed**: it runs against the real feeder (3.7) once that
+     exists, and before anyone depends on this guarantee (the backup that
+     leaves out the projections, P5 §8 objection 1, depends on it).
+   - **Why the view is named** (Federico): if someone narrows the column list,
+     the rebuild stops being complete. With the view named here, that change is
+     a visible break of this contract, not a gap found when a rebuild is
+     needed.
+   - **Known limits.** Measured with 3 million synthetic events, in one-day
+     windows: about 20 minutes for 90 days, at the cap of 600 requests per
+     minute. The full service was not measured (mTLS, audit and 20 s per
+     request), and nothing was measured with real data.
+   - **The watermark** (BZZ-19, 28 Nov, Federico): it is the minimum across a
+     channel's sources. It checks that the declared lag is still true; it does
+     not decide sealing, which stays the rule of §4.
+   - **Tenancy is carried, never inferred** (BZZ-19, 28 Nov, Federico): what
+     arrives through `v1/bob/eventos` for detections carries a `tenant` column,
+     and the feeder does not deduce it from anything else. The `source_key`
+     against `source` check is Bzzz's, not BOb's. Text only: this version does
+     not change the schema of `proj_detections`.
 6. **Create the partition it writes into, and account for what it cannot map.**
    - Partitions go through the one function of §3: create, grant, RLS.
    - What it cannot map is emitted to the bus, as audit is under X-10. That
