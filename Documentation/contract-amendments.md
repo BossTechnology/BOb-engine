@@ -4647,3 +4647,95 @@ section: `bob_cell_state` itself would turn unvouched buckets `not_observed`
 `20261127100500` and its review fixes (`20261127110000`, F-52 to F-55). `bob_cell_alerts` reads Slice 5's `alert_log` columns, so
 Slice 7 is built after Slice 5 merges. Not part of the Febor window; nothing
 touches the O-3 chain or `/opt/bob`.
+
+---
+
+## F-58 · Table privileges beyond SELECT, INSERT, UPDATE and DELETE on bob, closed for Febor by a separate step
+
+The security review of `8ab846e` found that `authenticated` holds TRIGGER and
+REFERENCES on 28 tables in bob. They were created in public, where Supabase's
+default privileges for `postgres` give `anon`, `authenticated` and
+`service_role` `arwdDxtm` (measured on the box image, 17.6.1.136: TRUNCATE and
+MAINTAIN too), and moved to bob with that ACL. A member could attach a trigger
+to `bob.alert_log` and make every later insert fail, for every tenant, or lock
+a table with MAINTAIN. The grant is in the signed commit `00f79b7` that Febor
+installs on Monday; the box is the Supabase image, where `authenticated`
+exists (measured: 56 grants on a local stack installed from `00f79b7`).
+
+Henry, 27 Nov: «Paso REVOKE aparte», then «00f79b7 + REVOKE». The install
+chain is not changed and `00f79b7` is not signed again. `scripts/f58/revocar.sql`
+runs once after the install, through `scripts/f58/revocar.sh`, and takes from
+every application role (PUBLIC, `anon`, `authenticated`, `service_role`,
+`bob_app`, `bob_feeder`, `bob_ai_ro`, those the server has) every table
+privilege on bob but SELECT, INSERT, UPDATE and DELETE, table-wide and on
+columns. The relations and the privilege types are discovered (`pg_class`,
+`aclexplode`), so MAINTAIN on 17 is taken without being named. One
+transaction, idempotent. It raises, and changes nothing, if anything is left
+or if any SELECT, INSERT, UPDATE or DELETE changed (the viewer's reads); the
+wrapper then exits 3.
+
+It runs as `bob_migrador`, not `postgres`: after the alta `bob_migrador` owns
+bob and its tables and is the grantor in their ACL, and a REVOKE takes only
+the runner's own grants; `postgres` on the Supabase image is neither superuser
+nor a member of `bob_migrador`. The SQL refuses any role that does not own bob;
+the wrapper refuses the service role and every `bob_*` role, sends the password
+only to loopback or `/opt/bob/hosts-permitidos`, and SCRAM only. One command
+from `~/bob-engine`, which leaves the checkout and `/opt/bob` untouched
+(`git archive <commit> scripts/f58` into a temporary directory). Runbook in
+Spanish: `scripts/f58/README.md`. Henry runs it in Febor; agents only in the
+lab-02 and model-01 rehearsals.
+
+Tested in `tests/slice2-schema.test.mjs` («F-58 · the separate REVOKE step»),
+through the wrapper, on a stack installed from `00f79b7` and on `main`:
+- held before (TRIGGER, REFERENCES and TRUNCATE planted, a column REFERENCES,
+  and MAINTAIN on 17), none after, and a second run is a no-op;
+- the viewer keeps reading: every role's SELECT, INSERT, UPDATE and DELETE on
+  every relation, and what a member (authenticated, as admin and as viewer)
+  reads from every relation it may read, row counts included, are the same
+  after;
+- a grant by another grantor fails the step and nothing changes;
+- it refuses the service role.
+
+Each was seen red once under a sabotage of the SQL: it also revoked SELECT
+with its own check off, or it left TRUNCATE. Run by hand on
+`supabase/postgres:17.6.1.136` as `bob_migrador`: `arwdDxtm` became `arwd`, the
+column REFERENCES went, and a second run said `before: 0`. Nothing under
+`supabase/` changes: `install-chain.sha256` is the same, and the digest of
+`00f79b7` stays `544fe970…`.
+
+Independent review of #67 at `0483c09`, «aprobar con nits», fixed before
+Henry's OK, each with a test seen red under its sabotage:
+1. The wrapper sends the password only to loopback or a host in
+   `/opt/bob/hosts-permitidos`, and requires SCRAM on both paths (with and
+   without `MIGRADOR_RED`).
+2. The pgpass lives on tmpfs (`$XDG_RUNTIME_DIR` or `/dev/shm`), and the
+   wrapper stops when there is none, as `instalar-bob.sh` does.
+3. The runbook is one command from `~/bob-engine` at the commit, with no `scp`
+   and no `/tmp`. Root runs only root's copies (`install -o root` into
+   `/root/f58`, mode 700), and the wrapper refuses files or a directory that
+   anyone but the runner can write.
+4. A `bob` with no relation is a failure, not «0 grants left».
+5. The step reports, as a WARNING, any default privileges (`pg_default_acl`,
+   in bob or in every schema) of the owner of bob, or of the runner, that
+   would give an application role or PUBLIC more than SELECT, INSERT, UPDATE
+   and DELETE on future tables. It does not change them.
+
+Re-review of #67 at `2c737b0`, «aprobar con nits», fixed, each with a test
+seen red under its sabotage:
+1. The runbook command takes the full 40-character SHA in `C` and refuses
+   anything else, the placeholder included. It checks `git rev-parse HEAD`
+   against `C` before installing anything, and leaves `~/bob-engine` on the
+   branch or commit it was on, whether the step passes or fails (`trap …
+   EXIT`). The test runs the README's own line against a throwaway clone.
+2. `MIGRADOR_PUERTO` must be a number from 1 to 65535 before it reaches the
+   pgpass line.
+3. A host listed in hosts-permitidos is accepted, and an unlisted one is
+   refused. For a non-root run only, the list can be another file
+   (`F58_HOSTS_PERMITIDOS`); as root it is always `/opt/bob/hosts-permitidos`.
+
+The lasting fix is migration `20261127110000` in PR #66 (TRIGGER and
+REFERENCES); both are idempotent, so running this step and later that
+migration is fine. Open: #66 takes only table-level TRIGGER and REFERENCES; it
+does not take MAINTAIN (17), service_role's TRUNCATE or column REFERENCES.
+Until #66 is aligned with this SQL, this step is the one that covers all of
+it, and `scripts/f58/README.md` says so.
