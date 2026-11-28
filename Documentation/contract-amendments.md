@@ -4838,3 +4838,29 @@ Seen red under four sabotages: the block leaves TRUNCATE, skips the column
 REFERENCES, revokes SELECT, or grants anything at all after the step. Its own check catches the last one even with
 the test's comparison off. Run by hand on `supabase/postgres:17.6.1.136` as
 `bob_migrador`: `arwdDxtm` became `arwd`, and the column REFERENCES went.
+
+## Slice 4 · Sentiment, the part that does not wait for D55 — spec (27 Nov)
+
+`docs/slice-4-sentiment.md`. Spec only, proposed, nothing built. D55 («The AI
+drone», Relevo task 14) is unsigned; the spec separates what the reading side
+needs (the five states, the blend, the label failures, FR-35) from what D55
+decides (who produces the label, the switch, the auto-off, the consumer) and
+writes the second as an **Open** section with a recommended option each.
+
+Decided by Henry on 27 Nov, with the recommended option:
+- **U1.** The mechanical weight is one number per organization in
+  `bob.sentiment_config`; NULL means no blend.
+- **U2.** Deriving a MECA state from RUM signals is outside the slice. Until
+  Federico gives the rule, nothing writes `meca` rows.
+
+Findings proposed, none of them confirmed by a test yet:
+- **F-60.** The MECA branch of `bob_cell_state` emits a placeholder figure (`0`);
+  whether it collides with the `proj_sentiment` `meca` branch is for the first
+  build test to settle. A bug goes in a replacing migration.
+- **F-61.** The «configured mechanical weight» of §6.2 has no home in the
+  schema. Proposed for 0.6.
+- **F-62.** The contract gives no function from `proj_rum_signals` to a MECA
+  state.
+
+Read: the chain, the contract and the D55 thread through the Federico reply of
+23 Nov. The highest F-NN in `main` and in the open branches was F-59.
