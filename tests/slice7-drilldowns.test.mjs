@@ -184,6 +184,29 @@ describe('§2 · the per-actor zero, derived at read time', () => {
     })
   })
 
+  test('2e · the shift is judged at the bucket\'s instant, not at the instant of reading', async () => {
+    await inTx(async () => {
+      await channelRow(5)
+      // On shift at the bucket, and the shift over by the time anyone reads.
+      const was = await addActor('human', { shift: 'none' })
+      await db.query(`INSERT INTO bob.actor_shifts (org_id, actor_id, starts_at, ends_at, status)
+                      VALUES ($1, $2, $3, $4, 'scheduled')`, [TENANT_A, was, at(-1), at(1)])
+      assert.deepEqual([(await actorCell(was)).state, (await actorCell(was)).liveness_source],
+        ['observed', 'shift'])
+      // A shift that starts after the bucket, however current, does not cover it.
+      const later = await addActor('human', { shift: 'none' })
+      await db.query(`INSERT INTO bob.actor_shifts (org_id, actor_id, starts_at, ends_at, status)
+                      VALUES ($1, $2, now() - interval '1 hour', now() + interval '1 hour', 'scheduled')`,
+      [TENANT_A, later])
+      assert.equal((await actorCell(later)).state, 'off_shift')
+      // Moving the shift off the bucket moves the answer; the bucket's own
+      // instant is the only clock.
+      await db.query(`UPDATE bob.actor_shifts SET starts_at = $2, ends_at = $3 WHERE actor_id = $1`,
+        [was, at(5), at(9)])
+      assert.equal((await actorCell(was)).state, 'off_shift')
+    })
+  })
+
   test('2b · a human skilled with no shift at all is off_shift too', async () => {
     await inTx(async () => {
       const h = await addActor('human', { shift: 'none' })
@@ -778,7 +801,24 @@ describe('§8 · D-33, option (a): bob_cell_markers', () => {
     })
   })
 
-  test('D5 · with no source declaring coverage, no cell is unvouched', async () => {
+  test('D6 · a channel that declares coverage_records: its cells with counts are unvouched, its cells without are not, other channels never', async () => {
+    await inTx(async () => {
+      await channelRow(5)
+      await channelRow(7, { channel: VOICE, i: 0 })
+      const unv = async (channel, i) => (await marker(TENANT_A, channel, i))[0].unvouched
+      assert.deepEqual([await unv(WHATSAPP, 0), await unv(VOICE, 0)], [false, false])
+      await db.query(`INSERT INTO bob.channel_capabilities (org_id, channel_id, capability)
+                      VALUES ($1, $2, 'coverage_records')`, [TENANT_A, WHATSAPP])
+      assert.equal(await unv(WHATSAPP, 0), true, 'counts and no record')
+      assert.equal(await unv(WHATSAPP, 1), false, 'no counts: nothing to vouch for')
+      assert.equal(await unv(VOICE, 0), false, 'capability absent')
+      const [d] = await readAs(TENANT_A, `SELECT * FROM bob.bob_cell_detail($1, $2, $3, 'human', $4)`,
+        [TENANT_A, WHATSAPP, METRIC, at(0)])
+      assert.deepEqual([d.unvouched, d.state], [true, 'observed'])
+    })
+  })
+
+  test('D5 · with no channel declaring coverage_records, no cell is unvouched', async () => {
     await inTx(async () => {
       const rows = await readAs(TENANT_A, `
         SELECT unvouched FROM bob.bob_cell_markers($1, $2::uuid[], $3, $4)`,

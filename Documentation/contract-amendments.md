@@ -4913,8 +4913,19 @@ were the ones that describe what Slice 3 already does (a human off shift, an
 ASA with no row, the declared-absent zero, the permissions of the existing
 functions).
 
-D-33 stays with Federico (Relevo task 19). Option (a) is built for both
-questions and is the only thing that changes with his ruling.
+**D-33 ruled by Federico on 28 Nov (Relevo task 19), built.** Q1 (a): the marker, the
+cell stays `observed`, the six states of F-31 unchanged; his added reason is
+that a channel with many rebuilt cells has its lag declared too low, and the
+marker is what shows it. Q2 (a) with no new switch: the fourteenth capability
+`coverage_records` in `channel_capabilities` (the check constraint is widened in
+the markers migration). Absent: no marker; present with a record: nothing;
+present with no record: `unvouched`, for cells with counts. The record is D63
+and does not exist, so until it does every such cell is unvouched; no channel
+declares the capability, so none is. Derived per-actor zeros approved on one
+condition, the shift judged at the bucket's instant: test 2e moves shifts around
+the bucket and a shift current at reading time but not at the bucket gives
+`off_shift`. Sabotages: S14 (the shift read at `now()`) red on 1, 2e, 3, 7; S15
+(the capability ignored) red on D6. The tests are now 42.
 
 ## Slice 4 · Sentiment, the part that does not wait for D55 — spec (27 Nov)
 
