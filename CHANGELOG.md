@@ -3,6 +3,7 @@
 Una línea por cambio entregado, en lenguaje de usuario.
 
 ## Sin publicar
+- La migración de las correcciones del Slice 5 (F-58) quita lo mismo que el paso aparte de la caja: cualquier permiso sobre las tablas de BOb que no sea leer, insertar, actualizar o borrar, también el de bloquear o vaciar tablas.
 - Paso aparte para la caja (`scripts/f58/revocar.sh`, F-58): después de instalar, le quita a todo rol de la aplicación cualquier permiso sobre las tablas de BOb que no sea leer, insertar, actualizar o borrar (colgar triggers, llaves foráneas, vaciar o bloquear tablas), sin tocar la cadena firmada. Runbook en `scripts/f58/README.md`.
 - Para ensayar en model-01 la puesta de Febor desde cero: `scripts/ensayo/desinstalar-bob.sh` deja model-01 sin BOb, como antes de su primera puesta. Quita el esquema, los roles, la historia del CLI, lo que la cadena deja en `public`, `/opt/bob`, `/root/bob-install` y `bob-web`, y deja lo de Bzzz como está. Va en seco por defecto, solo corre en model-01 con la org `modelo`, y se para ante cualquier cosa que no esté en su mapa.
 - Spec del Slice 7 (`docs/slice-7-drilldowns.md`): drill-down canal → actor → bucket, ceros por agente solo cuando el canal observó y el agente estaba en turno, lo no atribuido a ningún agente a la vista, y desde la celda sus alertas con la cifra al disparar junto a la actual. D-33 queda abierto con Federico. Todavía no se construye nada.

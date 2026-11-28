@@ -310,9 +310,12 @@ are a broken configuration, not a limit doing its job.
   `trg_outbox_admit` points at the latter; the old public function stays,
   unreferenced, until the chain is next signed. Guarded by
   `tests/install-approval.test.mjs` («the resto (F-51)»).
-- **F-58 · TRIGGER and REFERENCES on bob tables (review of `8ab846e`).**
-  Inherited from public's default privileges; revoked from every role the
-  application runs as, checked inside the migration. **F-59:** a threshold's
+- **F-58 · table privileges on bob beyond SELECT, INSERT, UPDATE and DELETE
+  (review of `8ab846e`).** TRIGGER, REFERENCES (also on a column), TRUNCATE,
+  and MAINTAIN on 17, inherited from public's default privileges; revoked from
+  every role the application runs as, discovered from the ACLs as
+  `scripts/f58/revocar.sql` does (#67), and checked inside the migration, with
+  SELECT, INSERT, UPDATE and DELETE compared before and after. **F-59:** a threshold's
   bounds cannot move past a response's trigger_level.
 - **F-52 to F-55 · the security review of 27 Nov.** No INSERT on the outbox
   for `authenticated`; `alert_log` written only as the owner (no INSERT or

@@ -15,12 +15,14 @@
 --          value made bob_threshold_status raise, and with it the evaluator
 --          of the whole organization.
 --   F-55 · one evaluation of an organization at a time.
---   F-58 · no application role holds TRIGGER or REFERENCES on a bob table
---          (review of 8ab846e, critical). The tables were created in public,
---          where Supabase's default privileges give authenticated arwdxt, and
---          moved to bob with that ACL; Slice 2 revoked the four DML rights
---          only. A member could create a trigger on alert_log that stops the
---          evaluator for every tenant.
+--   F-58 · no application role holds a table privilege on bob beyond
+--          SELECT, INSERT, UPDATE and DELETE (review of 8ab846e, critical):
+--          TRIGGER, REFERENCES (also on a column), TRUNCATE, MAINTAIN on 17.
+--          The tables were created in public, where Supabase's default
+--          privileges give arwdxt (arwdDxtm on the box image), and moved to
+--          bob with that ACL; Slice 2 revoked the four DML rights only. A
+--          member could create a trigger on alert_log that stops the
+--          evaluator for every tenant. The same as scripts/f58 (#67).
 --   F-59 · a threshold's bounds cannot move past a response's trigger_level.
 --   Nits · the threshold and response an alert names, and the threshold of a
 --          breach state, are keyed with the organization; the definers end
@@ -34,31 +36,103 @@
 BEGIN;
 
 -- ── F-58 ───────────────────────────────────────────────────────────────────
--- Every relation in bob, whatever it is called. Schema bob holds no default
+-- Every table privilege but SELECT, INSERT, UPDATE and DELETE is taken from
+-- every application role, as scripts/f58/revocar.sql does after 00f79b7: on
+-- the box image (17.6) a table postgres made in public carries arwdDxtm for
+-- anon, authenticated and service_role, so TRUNCATE and MAINTAIN too, and a
+-- column may carry REFERENCES. The relations and the privilege types are read
+-- from the catalog (aclexplode), so MAINTAIN is taken without being named and
+-- a type nobody has named yet would be too. Schema bob holds no default
 -- privileges, so a table created later gets none of these; the default
 -- privileges of public are Supabase's, and the resto creates nothing there
 -- (F-51).
-REVOKE TRIGGER, REFERENCES ON ALL TABLES IN SCHEMA bob
-  FROM PUBLIC, anon, authenticated, service_role, bob_app, bob_feeder, bob_ai_ro;
-
+--
 -- Checked here, not only in the suite: on a box the grants were made by the
 -- chain's postgres and bob_migrador pushes this file, so a REVOKE that could
--- not take one away would warn and carry on. This refuses instead.
+-- not take one away would warn and carry on. This refuses instead. And the
+-- four this step must not touch are compared before and after (F-52 and F-53
+-- below take some of them on purpose, after this block).
 DO $$
-DECLARE left_over text;
+DECLARE
+  app  text[] := ARRAY['anon', 'authenticated', 'service_role', 'bob_app', 'bob_feeder', 'bob_ai_ro'];
+  extra text[] := ARRAY['TRUNCATE', 'REFERENCES', 'TRIGGER']
+    || CASE WHEN current_setting('server_version_num')::int >= 170000 THEN ARRAY['MAINTAIN'] ELSE ARRAY[]::text[] END;
+  g record; left_over text; dml_before text[]; dml_after text[]; rels int;
 BEGIN
-  SELECT string_agg(DISTINCT r.rolname || ' ' || p || ' ' || c.relname, ', ') INTO left_over
-    FROM pg_class c
+  SELECT count(*) INTO rels FROM pg_class c
     JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'bob'
-    CROSS JOIN unnest(ARRAY['anon', 'authenticated', 'service_role',
-                            'bob_app', 'bob_feeder', 'bob_ai_ro']) AS g(name)
-    JOIN pg_roles r ON r.rolname = g.name
-    CROSS JOIN unnest(ARRAY['TRIGGER', 'REFERENCES']) AS p
-   WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
-     AND has_table_privilege(r.oid, c.oid, p);
+   WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f');
+  IF rels = 0 THEN
+    RAISE EXCEPTION 'F-58: schema bob holds no relation: nothing was checked';
+  END IF;
+
+  dml_before := ARRAY(
+    SELECT r.rolname || ' ' || p || ' ' || c.oid::regclass::text || ' '
+           || has_table_privilege(r.oid, c.oid, p) || ' '
+           || CASE WHEN p <> 'DELETE' THEN has_any_column_privilege(r.oid, c.oid, p)::text ELSE '-' END
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'bob',
+           pg_roles r, unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE']) p
+     WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f') AND r.rolname = ANY (app)
+     ORDER BY 1);
+
+  -- Table-wide: each grant found in the ACL, to an application role or PUBLIC.
+  FOR g IN
+    SELECT DISTINCT c.oid::regclass::text AS rel, a.privilege_type AS priv,
+           CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE quote_ident(r.rolname) END AS rol
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'bob',
+           aclexplode(c.relacl) a LEFT JOIN pg_roles r ON r.oid = a.grantee
+     WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
+       AND (a.grantee = 0 OR r.rolname = ANY (app))
+       AND a.privilege_type NOT IN ('SELECT', 'INSERT', 'UPDATE', 'DELETE')
+  LOOP
+    EXECUTE format('REVOKE %s ON %s FROM %s', g.priv, g.rel, g.rol);
+  END LOOP;
+
+  -- On a column: REFERENCES, the one column privilege outside the four.
+  FOR g IN
+    SELECT DISTINCT c.oid::regclass::text AS rel, quote_ident(t.attname) AS col,
+           CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE quote_ident(r.rolname) END AS rol
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'bob'
+      JOIN pg_attribute t ON t.attrelid = c.oid AND t.attnum > 0 AND NOT t.attisdropped,
+           aclexplode(t.attacl) a LEFT JOIN pg_roles r ON r.oid = a.grantee
+     WHERE (a.grantee = 0 OR r.rolname = ANY (app)) AND a.privilege_type = 'REFERENCES'
+  LOOP
+    EXECUTE format('REVOKE REFERENCES (%s) ON %s FROM %s', g.col, g.rel, g.rol);
+  END LOOP;
+
+  -- Nothing left: by inheritance, in the ACL under any type, or on a column.
+  SELECT string_agg(x, ', ' ORDER BY x) INTO left_over FROM (
+    SELECT r.rolname || ' ' || e.p || ' ' || c.oid::regclass::text AS x
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'bob',
+           pg_roles r, unnest(extra) e(p)
+     WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f') AND r.rolname = ANY (app)
+       AND has_table_privilege(r.oid, c.oid, e.p)
+    UNION
+    SELECT coalesce(r.rolname, 'PUBLIC') || ' ' || a.privilege_type || ' ' || c.oid::regclass::text
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'bob',
+           aclexplode(c.relacl) a LEFT JOIN pg_roles r ON r.oid = a.grantee
+     WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f') AND (a.grantee = 0 OR r.rolname = ANY (app))
+       AND a.privilege_type NOT IN ('SELECT', 'INSERT', 'UPDATE', 'DELETE')
+    UNION
+    SELECT r.rolname || ' REFERENCES (column) ' || c.oid::regclass::text
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'bob', pg_roles r
+     WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f') AND r.rolname = ANY (app)
+       AND has_any_column_privilege(r.oid, c.oid, 'REFERENCES')) q;
   IF left_over IS NOT NULL THEN
     RAISE EXCEPTION 'F-58: still held after the revoke: %', left_over
       USING ERRCODE = 'insufficient_privilege';
+  END IF;
+
+  dml_after := ARRAY(
+    SELECT r.rolname || ' ' || p || ' ' || c.oid::regclass::text || ' '
+           || has_table_privilege(r.oid, c.oid, p) || ' '
+           || CASE WHEN p <> 'DELETE' THEN has_any_column_privilege(r.oid, c.oid, p)::text ELSE '-' END
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'bob',
+           pg_roles r, unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE']) p
+     WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f') AND r.rolname = ANY (app)
+     ORDER BY 1);
+  IF dml_after IS DISTINCT FROM dml_before THEN
+    RAISE EXCEPTION 'F-58: SELECT, INSERT, UPDATE or DELETE changed';
   END IF;
 END $$;
 
