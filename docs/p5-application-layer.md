@@ -179,26 +179,28 @@ own. They are not among the three, but §3.2 states what each may do here.
 ### 3.2 The grant matrix
 
 Every LOGIN role is `NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE`. The
-migration owner is the only role that owns objects or bypasses RLS.
+migration owner is the only role that owns objects or bypasses RLS. Desde
+BZZ-19 (28 nov) la matriz tiene un cuarto rol, `bob_migrador`, el dueño de las
+migraciones (ver abajo); los tres de §3.1 siguen siendo los tres.
 
-| Object | `bob_app` | `bob_feeder` | `bob_ai_ro` | `authenticated` | `anon` / PUBLIC |
-|---|---|---|---|---|---|
-| Configuration and live state (every `org_id` table that is not a projection) | SELECT, INSERT, UPDATE, DELETE | none | none | A-05b's choice (§3.3) | none |
-| The eight projections and every partition | SELECT | SELECT, INSERT, UPDATE, DELETE | none | SELECT | none |
-| `actors` | SELECT, INSERT, UPDATE, DELETE (ghost reconciliation) | none (reads through the view) | none | A-05b's choice | none |
-| `actor_external_refs`, `actor_ref_history` (Slice 2) | As built: SELECT, INSERT, UPDATE, DELETE. `actor_ref_history` is append-only by trigger, not by grant (see below) | none | none | As built: SELECT, INSERT, UPDATE, DELETE, under RLS (A-05b's choice) | none |
-| `channel_capabilities` (Slice 2, 0.5.3) | SELECT, INSERT, UPDATE, DELETE | none (reads the column on its view) | none | SELECT, INSERT, UPDATE, DELETE, under RLS | none |
-| `v_channel_declaration_gaps` (Slice 2) | SELECT | none | none | SELECT | none |
-| `member_refs_seen` (Q6 (a), F-41) | SELECT, DELETE (the ghost reconciliation consumes what was staged) | INSERT only, under the tenant's claim | none | none | none |
-| `member_refs_runs` (Q6 (a), F-41, review of PR #33) | SELECT, DELETE | INSERT only, one row per tenant per staging run | none | none | none |
-| `v_feeder_channel_map` (with `capabilities`, 0.5.3) | none | SELECT | none | none | none |
-| `v_feeder_actor_map` (Slice 2) | none | SELECT | none | none | none |
-| `v_ai_*` views (none exist yet) | none | none | SELECT | none | none |
-| `v_roster` | SELECT | none | none | none | none |
-| Partition function (contract §3) | none | EXECUTE | none | none | none |
-| `bob_grant_projection()` | none | none | none | none | none |
-| `bob_grant_feeder_staging()` (Q6 (a)) | none (EXECUTE revoked from PUBLIC, `anon`, `authenticated` and `service_role`; the migration owner alone) | none | none | none | none |
-| The truth store (ClickHouse) | only through `affected_members` and the evidence packages, never directly | ~~read-only ClickHouse role (task 3.6)~~ none (D77, 77.3): it reads through `bzzz-vecinos`, which holds `bob_lector` | its own ClickHouse access, per task 5.3 | none | none |
+| Object | `bob_app` | `bob_feeder` | `bob_ai_ro` | `bob_migrador` | `authenticated` | `anon` / PUBLIC |
+|---|---|---|---|---|---|---|
+| Configuration and live state (every `org_id` table that is not a projection) | SELECT, INSERT, UPDATE, DELETE | none | none | owner (`bob`) | A-05b's choice (§3.3) | none |
+| The eight projections and every partition | SELECT | SELECT, INSERT, UPDATE, DELETE | none | owner (`bob`) | SELECT | none |
+| `actors` | SELECT, INSERT, UPDATE, DELETE (ghost reconciliation) | none (reads through the view) | none | owner (`bob`) | A-05b's choice | none |
+| `actor_external_refs`, `actor_ref_history` (Slice 2) | As built: SELECT, INSERT, UPDATE, DELETE. `actor_ref_history` is append-only by trigger, not by grant (see below) | none | none | owner (`bob`) | As built: SELECT, INSERT, UPDATE, DELETE, under RLS (A-05b's choice) | none |
+| `channel_capabilities` (Slice 2, 0.5.3) | SELECT, INSERT, UPDATE, DELETE | none (reads the column on its view) | none | owner (`bob`) | SELECT, INSERT, UPDATE, DELETE, under RLS | none |
+| `v_channel_declaration_gaps` (Slice 2) | SELECT | none | none | owner (`bob`) | SELECT | none |
+| `member_refs_seen` (Q6 (a), F-41) | SELECT, DELETE (the ghost reconciliation consumes what was staged) | INSERT only, under the tenant's claim | none | owner (`bob`) | none | none |
+| `member_refs_runs` (Q6 (a), F-41, review of PR #33) | SELECT, DELETE | INSERT only, one row per tenant per staging run | none | owner (`bob`) | none | none |
+| `v_feeder_channel_map` (with `capabilities`, 0.5.3) | none | SELECT | none | owner (`bob`) | none | none |
+| `v_feeder_actor_map` (Slice 2) | none | SELECT | none | owner (`bob`) | none | none |
+| `v_ai_*` views (none exist yet) | none | none | SELECT | owner (`bob`) | none | none |
+| `v_roster` | SELECT | none | none | owner (`bob`) | none | none |
+| Partition function (contract §3) | none | EXECUTE | none | owner (`bob`) | none | none |
+| `bob_grant_projection()` | none | none | none | EXECUTE (`bob.sql`) | none | none |
+| `bob_grant_feeder_staging()` (Q6 (a)) | none (EXECUTE revoked from PUBLIC, `anon`, `authenticated` and `service_role`; the migration owner alone) | none | none | none (the function is `postgres`'s, in `public`) | none | none |
+| The truth store (ClickHouse) | only through `affected_members` and the evidence packages, never directly | ~~read-only ClickHouse role (task 3.6)~~ none (D77, 77.3): it reads through `bzzz-vecinos`, which holds `bob_lector` | its own ClickHouse access, per task 5.3 | none | none | none |
 
 Each entry and its source:
 
@@ -206,6 +208,28 @@ Each entry and its source:
   read projections and cannot write them. `bob_grant_projection()` already
   applies this per table, revoking from `anon` and `authenticated` the write
   that Supabase's default privileges give them in `public`.
+  - **Lo que PR-4 entrega, reescrito** (BZZ-19, 28 nov, Federico): el feeder
+    es el único escritor entre los componentes que corren, por permiso. El
+    dueño (`bob_migrador`) puede escribir; lo que lo impide es que ningún
+    contenedor que corre tiene su credencial (`/opt/bob/secrets/migrador.env`).
+    Eso es un control de procedimiento, comprobado por un check de
+    `verify-deployment.sh` en Bzzz (PR aparte).
+  - **Nota sobre la instalación.** De los 33 ficheros de la cadena de
+    instalación, `bob_migrador` aplica 12 y los otros 21 corren una vez como
+    `postgres` en la instalación (decisión del 24 nov, «postgres una vez,
+    luego el migrador»; §6.2). La garantía de PR-4 no cubre ese camino, y eso
+    es aceptable: es una operación supervisada y de una vez.
+- **`bob_migrador`**, el cuarto rol (BZZ-19, 28 nov; D77 §2.8, §6.2): el dueño
+  de los objetos de `bob`, y la columna `bob_migrador` de la matriz de arriba.
+  Sus permisos son los de un dueño, no los de una aplicación. Atributos: LOGIN, NOSUPERUSER, NOBYPASSRLS, NOCREATEDB, NOCREATEROLE
+  (y NOREPLICATION, CONNECTION LIMIT 1; el alta de Bzzz lo crea NOLOGIN y
+  `supabase_admin` le pone LOGIN y la clave). Sin CREATE en la base: el alta de
+  Bzzz lo concede y lo revoca dentro de su transacción. Es dueño de `bob` y de
+  todo lo que hay en él. Fuera de `bob` tiene EXECUTE en
+  `public.bob_grant_projection(regclass)` (`bob.sql`) y USAGE en `auth`, que
+  da `supabase_admin` porque toda política de tenant llama a `auth.jwt()`. Más
+  CONNECT y TEMPORARY en la base y USAGE en `public`. Lo que no puede hacer lo
+  comprueba `scripts/owner-chain-check.mjs`.
 - **The feeder's reads** **[DECIDED]** (Handoff §4.3, contract §7.4): exactly
   two views, and anything more is a finding about the contract. It holds no
   grant on `channels`, `organizations` or `actors`.
@@ -1362,7 +1386,9 @@ Ordered from the most damaging to the least.
    - **Answered** (Henry, 2026-11-19): **(a) a shared database, with `bob`
      recovered on its own.** A separate Postgres for BOb was rejected. The
      answer rests on one property: the eight projections are derived from
-     ClickHouse, and the feeder rebuilds them (Slice 2). Only `bob`'s
+     ClickHouse, and the feeder rebuilds them (Slice 2). Desde BZZ-19 (28 nov)
+     esa propiedad es más estrecha: rebuildable desde lo que expone
+     bzzz-vecinos, y **NO VERIFICADA por ese camino** (contract §8.5). Only `bob`'s
      configuration and live state are BOb's alone: actors, refs and their
      history, channels and capabilities, thresholds.
      - **Backup.** `backup.sh` dumps `bob` on its own, with the data of the

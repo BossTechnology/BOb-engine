@@ -3,6 +3,7 @@
 Una línea por cambio entregado, en lenguaje de usuario.
 
 ## Sin publicar
+- Contrato y P5 con lo que Federico dejó decidido el 28 nov en BZZ-19: el rebuild de las proyecciones es «rebuildable desde lo que expone bzzz-vecinos» y sigue sin verificarse por ese camino (el test debe correr con el feeder real antes de depender de él), `bob_migrador` entra como cuarto rol de la matriz de permisos, y PR-4 dice lo que entrega: el feeder es el único escritor entre los componentes que corren, y el dueño no escribe porque ningún contenedor tiene su credencial. Solo documentación.
 - Spec del Slice 4 (`docs/slice-4-sentiment.md`), solo la parte que no espera a D55: los cinco estados de sentimiento, la mezcla ORGA y MECA con un peso por organización que se aplica al leer, los fallos de etiqueta junto a la distribución y MECA ausente donde el canal no la declara. Quién produce la etiqueta, el interruptor y el apagado automático quedan abiertos hasta que se firme D55. Todavía no se construye nada.
 - La migración de las correcciones del Slice 5 (F-58) quita lo mismo que el paso aparte de la caja: cualquier permiso sobre las tablas de BOb que no sea leer, insertar, actualizar o borrar, también el de bloquear o vaciar tablas.
 - Paso aparte para la caja (`scripts/f58/revocar.sh`, F-58): después de instalar, le quita a todo rol de la aplicación cualquier permiso sobre las tablas de BOb que no sea leer, insertar, actualizar o borrar (colgar triggers, llaves foráneas, vaciar o bloquear tablas), sin tocar la cadena firmada. Runbook en `scripts/f58/README.md`.

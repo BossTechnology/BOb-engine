@@ -258,6 +258,16 @@ on (decided by 0.4, as Relevo task 6 asked on 11 Nov; accepted 12 Nov). So:
 There is exactly one writer, `bob_feeder`. Whether the reference feeder or 3.7
 holds that credential, the contract is the same.
 
+**PR-4, lo que entrega** (BZZ-19, 28 nov, Federico): el feeder es el único
+escritor entre los componentes que corren, por permiso. El dueño
+(`bob_migrador`) puede escribir; lo que lo impide es que ningún contenedor que
+corre tiene su credencial (`/opt/bob/secrets/migrador.env`). Eso es un control
+de procedimiento, comprobado por un check de `verify-deployment.sh` en Bzzz (PR
+aparte). La garantía no cubre el camino de instalación: de los 33 ficheros de la
+cadena, `bob_migrador` aplica 12 y los otros 21 corren una vez como `postgres`
+(decisión del 24 nov, «postgres una vez, luego el migrador»; P5 §6.2). Es
+aceptable porque es una operación supervisada y de una vez.
+
 ## 2 · Tenant key
 
 - Every projection row carries **`org_id UUID NOT NULL`**. **Never the slug.**
@@ -1351,6 +1361,31 @@ So 3.7 delivers things that do not merge:
    The rebuild test truncates every projection, re-runs the feeder, and asserts
    the application renders identically. One case of it has a linkage inside the
    window (§10).
+
+   **La garantía de rebuild, reescrita** (BZZ-19, 28 nov, Federico). Ya no es
+   «rebuildable desde el truth store». Es **rebuildable desde lo que expone
+   bzzz-vecinos**, y nada más que eso:
+   - las vistas `v1/bob/eventos` y, para la marca de agua,
+     `v1/bob/marca_de_agua`;
+   - con las columnas de la lista `vecinos/columnas-permitidas.txt` de Bzzz.
+   - **NO VERIFICADA por ese camino.** El test de rebuild (arriba; sus casos
+     «the render is identical to a full rebuild», en
+     `tests/slice2-feeder.test.mjs`, y «the rebuild (clear, re-run) renders the
+     zero rows identically», en `tests/slice3-cell-state.test.mjs`) solo ha
+     corrido contra el feeder de referencia con
+     `feeder/memory-truth-store.mjs`. Ninguna corrida ha pasado por
+     bzzz-vecinos.
+   - **El test queda debido**: corre contra el feeder real (3.7) cuando
+     exista, y antes de que nadie dependa de esta garantía (el backup sin las
+     proyecciones, P5 §8 objeción 1, depende de ella).
+   - **Por qué se nombra la vista** (Federico): si alguien estrecha la lista de
+     columnas, el rebuild deja de ser completo. Con la vista nombrada aquí, ese
+     cambio es una ruptura visible de este contrato, y no un hueco que se
+     descubre cuando hace falta reconstruir.
+   - **Límites conocidos.** Medido con 3 millones de eventos sintéticos, en
+     ventanas de un día: unos 20 minutos para 90 días, con el tope de 600
+     peticiones por minuto. No se midió el servicio completo (mTLS, auditoría y
+     20 s por petición), ni se midió con datos reales.
 6. **Create the partition it writes into, and account for what it cannot map.**
    - Partitions go through the one function of §3: create, grant, RLS.
    - What it cannot map is emitted to the bus, as audit is under X-10. That
