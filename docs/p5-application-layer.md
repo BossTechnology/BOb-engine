@@ -90,8 +90,8 @@ not be read as permission to apply them to any box.
 | The reference feeder holds `bob_feeder` first; 3.7 takes the same credential later | **[DECIDED]** (Henry, BZZ-19, 18 Nov) | §3.1 |
 | `organizations` / `org_id` replace runbook §7.3's `tenants` / `app_entities` for BOb; `organizations.slug` = `bzzz.tenant` | **[DECIDED]** (Federico, Q2) | §5.1 |
 | Development runs on a local Supabase pinned to the box's images and CI's CLI; lab-02 is the integration and rehearsal target; the hosted project is the demo's again and never hosts BOb | **[DECIDED]** (Q3 in its 15 Nov form, accepted by Federico on BZZ-3) | §5.1, §6.2 |
-| PR-4: BOb never writes a projection, enforced by grant | **[DECIDED]** (Handoff §4.3; A-05) | §3.2 |
-| One writer, `bob_feeder`; it reads exactly two views from BOb | **[DECIDED]** (contract §1, §7.4) | §3.2 |
+| PR-4: BOb never writes a projection, enforced by grant among the components that run; for the owner (`bob_migrador`), by procedure (no running container holds its credential) | **[DECIDED]** (Handoff §4.3; A-05) | §3.2 |
+| One writer among the components that run, `bob_feeder` (the owner, `bob_migrador`, is held back by procedure, not by grant); it reads exactly two views from BOb | **[DECIDED]** (contract §1, §7.4) | §3.2 |
 | The feeder never creates an actor; ghosts are created by BOb as `bob_app` | **[DECIDED]** (Relevo task 6 Q13, 11 Nov) | §3.2 |
 | `bob_ai_ro` reads named `v_ai_*` views and nothing else | **[DECIDED]** (IR-1) | §3.2 |
 | One service holds the read-only role, and the MCP reads through that service | **[DECIDED]** (BZZ-3, Federico accepted it on 10 Nov) | §3.4 |
@@ -173,8 +173,9 @@ local Supabase (§5.1) before 3.7 exists. So F-21 and F-22 are exercised against
 a database, not only read, and 3.7 inherits a credential whose access has
 already been exercised.
 
-`anon`, `authenticated`, `service_role` and the migration owner are Supabase's
-own. They are not among the three, but §3.2 states what each may do here.
+`anon`, `authenticated` and `service_role` are Supabase's own. The migration
+owner, `bob_migrador`, is BOb's own and is a fourth role (BZZ-19, 28 Nov), not
+among the three. §3.2 states what each may do here.
 
 ### 3.2 The grant matrix
 
@@ -214,11 +215,13 @@ Each entry and its source:
     holds its credential (`/opt/bob/secrets/migrador.env`). That is a
     procedural control, checked by a `verify-deployment.sh` check in Bzzz (a
     separate PR).
-  - **Note on installation.** Of the 33 files in the install chain,
-    `bob_migrador` applies 12 and the other 21 run once as `postgres` at
-    install time (decision of 24 Nov, «postgres una vez, luego el migrador»;
-    §6.2). PR-4's guarantee does not cover that path, and that is acceptable:
-    it is a supervised, one-time operation.
+  - **Note on installation.** `postgres` applies the 33 files of the install
+    chain once, at installation (decision of 24 Nov, «postgres una vez, luego
+    el migrador»; §6.2, `scripts/instalar-bob.sh`, `scripts/owner-chain-check.mjs`).
+    The 12 and 21 are a measurement: `bob_migrador` could apply only 12 of
+    those 33 and stops at the other 21. PR-4's guarantee does not cover the
+    install path, and that is acceptable: it is a supervised, one-time
+    operation.
 - **`bob_migrador`**, the fourth role (BZZ-19, 28 Nov; D77 §2.8, §6.2): the
   owner of the objects in `bob`, and the `bob_migrador` column of the matrix
   above. Its privileges are an owner's, not an application's. Attributes:

@@ -255,7 +255,9 @@ on (decided by 0.4, as Relevo task 6 asked on 11 Nov; accepted 12 Nov). So:
 | **BOb** (Postgres, schema `bob`) | `org_id`, `channel_id`, `actor_id`, configuration (§9), live state, the shape of the eight tables, ghost reconciliation (§7.2) | Queries the truth store except through the named interfaces of §7.3 and §7.3a; writes a projection (PR-4) |
 | **The feeder** | Every row in the eight tables, and the partitions they live in (§3) | Reads BOb configuration beyond the two named views in §7.4; creates or writes an actor |
 
-There is exactly one writer, `bob_feeder`. Whether the reference feeder or 3.7
+There is exactly one writer among the components that run, `bob_feeder`, by
+permission; the owner (`bob_migrador`) is held back by procedure (see PR-4
+below). Whether the reference feeder or 3.7
 holds that credential, the contract is the same.
 
 **PR-4, what it delivers** (BZZ-19, 28 Nov, Federico): the feeder is the only
@@ -263,10 +265,12 @@ writer among the components that run, by permission. The owner
 (`bob_migrador`) can write; what stops it is that no running container holds
 its credential (`/opt/bob/secrets/migrador.env`). That is a procedural control,
 checked by a `verify-deployment.sh` check in Bzzz (a separate PR). The
-guarantee does not cover the install path: of the 33 files in the install
-chain, `bob_migrador` applies 12 and the other 21 run once as `postgres`
-(decision of 24 Nov, «postgres una vez, luego el migrador»; P5 §6.2). That is
-acceptable because it is a supervised, one-time operation.
+guarantee does not cover the install path: `postgres` applies the 33 files of
+the install chain once, at installation (decision of 24 Nov, «postgres una vez,
+luego el migrador»; P5 §6.2, `scripts/instalar-bob.sh`). The 12 and 21 are a
+measurement: `bob_migrador` could apply only 12 of those 33 and stops at the
+other 21. That is acceptable because installation is a supervised, one-time
+operation.
 
 ## 2 · Tenant key
 
@@ -1383,7 +1387,9 @@ So 3.7 delivers things that do not merge:
      needed.
    - **Known limits.** Measured with 3 million synthetic events, in one-day
      windows: about 20 minutes for 90 days, at the cap of 600 requests per
-     minute. The full service was not measured (mTLS, audit and 20 s per
+     minute. Source: the bench of BossTechnology/bzzz#485 (Bzzz's
+     `docs/OPERACION_vecinos.md` §5), run locally on synthetic data, not in
+     CI. The full service was not measured (mTLS, audit and 20 s per
      request), and nothing was measured with real data.
    - **The watermark** (BZZ-19, 28 Nov, Federico): it is the minimum across a
      channel's sources. It checks that the declared lag is still true; it does
