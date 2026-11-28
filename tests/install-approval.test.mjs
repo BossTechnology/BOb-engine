@@ -924,18 +924,31 @@ describe('the resto (F-51)', () => {
   const resto = readdirSync(MIG).filter((f) => f.endsWith('.sql') && !chain.has(f)).sort()
   // SQL comments out, so a comment that names public.x is not a hit.
   const code = (sql) => sql.replace(/--[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '')
-  const DDL = /\b(CREATE(\s+OR\s+REPLACE)?|ALTER|DROP)\s+(FUNCTION|PROCEDURE|TABLE|VIEW|MATERIALIZED\s+VIEW|SEQUENCE|TYPE|DOMAIN|TRIGGER\s+\w+\s+.*?\bON)\s+(IF\s+(NOT\s+)?EXISTS\s+)?"?public"?\./gis
+  const OBJ = String.raw`(FUNCTION|PROCEDURE|TABLE|VIEW|MATERIALIZED\s+VIEW|SEQUENCE|TYPE|DOMAIN)`
+  const PATTERNS = [
+    // public.x created, replaced, altered or dropped
+    new RegExp(String.raw`\b(CREATE(\s+OR\s+REPLACE)?|ALTER|DROP)\s+(${OBJ.slice(1, -1)}|TRIGGER\s+\w+\s+[^;]*?\bON)\s+(IF\s+(NOT\s+)?EXISTS\s+)?"?public"?\.`, 'gis'),
+    // an index on a table in public
+    /\bCREATE\s+(UNIQUE\s+)?INDEX\b[^;]*?\bON\s+(ONLY\s+)?"?public"?\./gis,
+    // a grant or revoke on an object in public, or on all of public
+    /\b(GRANT|REVOKE)\b[^;]*?\bON\s+((TABLE|FUNCTION|ROUTINE|PROCEDURE|SEQUENCE|TYPE|DOMAIN)\s+)?"?public"?\.[^;]*/gis,
+    /\b(GRANT|REVOKE)\b[^;]*?\bIN\s+SCHEMA\s+"?public"?\b[^;]*/gis,
+    // no schema at all: on a box it lands in the first schema of the
+    // search_path, which is not bob's to choose
+    new RegExp(String.raw`\bCREATE(\s+OR\s+REPLACE)?\s+${OBJ}\s+(IF\s+NOT\s+EXISTS\s+)?(?!"?\w+"?\.)"?\w+"?\s*[(\s]`, 'gis'),
+  ]
 
   test('the chain is found and the resto is not empty', () => {
     assert.ok(chain.size > 0)
     assert.ok(resto.length > 0)
   })
 
-  test('creates, replaces, alters or drops nothing in public', () => {
+  test('creates, replaces, alters, drops, indexes, grants or revokes nothing in public, and creates nothing without a schema', () => {
     const hits = []
     for (const f of resto) {
-      for (const m of code(readFileSync(join(MIG, f), 'utf8')).matchAll(DDL)) {
-        hits.push(`${f}: ${m[0].replace(/\s+/g, ' ').slice(0, 80)}`)
+      const sql = code(readFileSync(join(MIG, f), 'utf8'))
+      for (const re of PATTERNS) {
+        for (const m of sql.matchAll(re)) hits.push(`${f}: ${m[0].replace(/\s+/g, ' ').slice(0, 80)}`)
       }
     }
     assert.deepEqual(hits, [], 'bob_migrador cannot do these on a box:\n' + hits.join('\n'))

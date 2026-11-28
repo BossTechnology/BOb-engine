@@ -12,8 +12,11 @@ import { test, before, after, describe } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   connect, connectAs, loadFixture, loadRoster, loadFeederWorld, loadSlice3World, loadBr3Rulings,
-  tenantTables, TENANT_A, TENANT_B,
+  tenantTables, TENANT_A, TENANT_B, DB_URL, REPO_ROOT,
 } from './helpers/db.mjs'
+import pg from 'pg'
+import { readFileSync, readdirSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 const WHATSAPP = 'aaaaaaaa-2222-4000-8000-000000000001'  // lag 0
 const VOICE = 'aaaaaaaa-2222-4000-8000-00000000000a'     // lag 900
@@ -599,19 +602,23 @@ describe('§9 · the tenant is explicit, and no application role runs it', () =>
     })
   })
 
-  test('no application role and not PUBLIC can execute any bob_evaluate* (discovered)', async () => {
+  test('no role but the owner and superusers can execute any bob_evaluate* (functions and roles discovered)', async () => {
+    // Every role that is not a superuser, not a pg_ built-in and does not own
+    // the function, PUBLIC included through has_function_privilege.
     const { rows } = await db.query(`
       SELECT p.oid::regprocedure::text AS fn, p.prosecdef,
-             array_remove(ARRAY[
-               CASE WHEN has_function_privilege('bob_app', p.oid, 'EXECUTE') THEN 'bob_app' END,
-               CASE WHEN has_function_privilege('bob_feeder', p.oid, 'EXECUTE') THEN 'bob_feeder' END,
-               CASE WHEN has_function_privilege('bob_ai_ro', p.oid, 'EXECUTE') THEN 'bob_ai_ro' END,
-               CASE WHEN has_function_privilege('authenticated', p.oid, 'EXECUTE') THEN 'authenticated' END,
-               CASE WHEN has_function_privilege('anon', p.oid, 'EXECUTE') THEN 'anon' END], NULL) AS who
-        FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-       WHERE p.proname LIKE 'bob\\_evaluate%'`)
+             coalesce(array_agg(r.rolname::text ORDER BY r.rolname)
+               FILTER (WHERE has_function_privilege(r.oid, p.oid, 'EXECUTE')), '{}'::text[]) AS who,
+             count(r.oid)::int AS roles
+        FROM pg_proc p
+        JOIN pg_namespace n ON n.oid = p.pronamespace
+        LEFT JOIN pg_roles r ON NOT r.rolsuper AND r.rolname NOT LIKE 'pg\\_%' AND r.oid <> p.proowner
+                            AND NOT pg_has_role(r.oid, p.proowner, 'USAGE')
+       WHERE p.proname LIKE 'bob\\_evaluate%'
+       GROUP BY p.oid, p.prosecdef`)
     assert.ok(rows.length >= 2, `found ${rows.length}`)
-    assert.deepEqual(rows.filter((r) => r.who.length), [])
+    assert.ok(rows.every((r) => r.roles >= 6), `too few roles discovered: ${rows.map((r) => r.roles)}`)
+    assert.deepEqual(rows.filter((r) => r.who.length).map((r) => `${r.fn}: ${r.who}`), [])
     assert.ok(rows.every((r) => r.prosecdef), 'not a definer')
   })
 
@@ -638,5 +645,259 @@ describe('§9 · the tenant is explicit, and no application role runs it', () =>
         FROM pg_attribute a WHERE a.attrelid = 'bob.alert_log'::regclass AND a.attname = 'acknowledged_at'`)
     assert.equal(rows.length, 1)
     assert.match(rows[0].d ?? '', /deliberate/i)
+  })
+})
+
+// ── Review of 27 Nov (security review of ee90c6b) ──────────────────────────
+// Febor's box has viewers. Each test below was seen failing before its fix.
+describe('Review of 27 Nov · what a viewer can write', () => {
+  async function asViewer(fn) {
+    await db.query('BEGIN')
+    try {
+      await db.query('SELECT set_config($1, $2, true)', ['request.jwt.claims',
+        JSON.stringify({ org_id: TENANT_A, role: 'authenticated', app_role: 'viewer' })])
+      await db.query('SET LOCAL ROLE authenticated')
+      return await fn()
+    } finally { await db.query('ROLLBACK') }
+  }
+
+  test('R1 · authenticated holds no INSERT on the outbox, and a viewer\'s insert is refused', async () => {
+    const { rows: [g] } = await db.query(`SELECT has_table_privilege('authenticated', 'bob.outbound_queue', 'INSERT') AS i`)
+    assert.equal(g.i, false)
+    await asViewer(async () => {
+      const e = await refusal(`INSERT INTO bob.outbound_queue (org_id, response_rule_id, alert_log_id, idempotency_key)
+        VALUES ($1, gen_random_uuid(), gen_random_uuid(), 'viewer-flood')`, [TENANT_A])
+      assert.equal(e?.code, '42501', e?.message)
+    })
+  })
+
+  test('R2 · no application role inserts or updates alert_log; a viewer cannot forge an escalation', async () => {
+    const { rows } = await db.query(`
+      SELECT r || ' ' || p AS g FROM unnest(ARRAY['authenticated', 'bob_app', 'bob_feeder', 'bob_ai_ro', 'anon', 'service_role']) r,
+             unnest(ARRAY['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE']) p
+       WHERE has_table_privilege(r, 'bob.alert_log', p) ORDER BY 1`)
+    assert.deepEqual(rows.map((r) => r.g), [])
+    await asViewer(async () => {
+      const e = await refusal(`INSERT INTO bob.alert_log (org_id, metric_id, metric_name, alert_type, subject_key,
+        escalates_alert_id, bucket_start) VALUES ($1, 'x', 'x', 'escalation', 'forged', gen_random_uuid(), now())`, [TENANT_A])
+      assert.equal(e?.code, '42501', e?.message)
+    })
+  })
+
+  const PEAK_BAD = [
+    ['an object, not an array', { start: '09:00', end: '10:00' }],
+    ['an hour of 25', [{ start: '25:00', end: '01:00' }]],
+    ['a missing end', [{ start: '09:00' }]],
+    ['a number for a time', [{ start: 9, end: 10 }]],
+    ['a string element', ['09:00-10:00']],
+    ['seconds in the time', [{ start: '09:00:00', end: '10:00' }]],
+  ]
+  for (const [what, w] of PEAK_BAD) {
+    test(`R3 · peak_windows refuses ${what}`, async () => {
+      await inTx(async () => {
+        const e = await refusal(`INSERT INTO bob.threshold_configs (org_id, metric_id, upper_bound, scope_kind,
+          scope_ref, peak_windows) VALUES ($1, $2, 10, 'entity', $3, $4::jsonb)`, [TENANT_A, METRIC, WHATSAPP, JSON.stringify(w)])
+        assert.equal(e?.code, '23514', e?.message ?? 'accepted')
+      })
+    })
+  }
+
+  test('R3 · peak_windows accepts [], and windows that cross midnight; the status still reads', async () => {
+    await inTx(async () => {
+      await threshold({ peak_windows: JSON.stringify([]) })
+      await threshold({ scope_ref: VOICE, peak_mode: 'manual',
+        peak_windows: JSON.stringify([{ start: '23:00', end: '01:00' }, { start: '09:30', end: '10:00' }]) })
+      await series([50])
+      assert.ok((await db.query('SELECT * FROM bob.bob_threshold_status($1, $2::uuid[], $3, $4)',
+        [TENANT_A, [WHATSAPP, VOICE], at(0), at(1)])).rows.length > 0)
+    })
+  })
+})
+
+describe('Review of 27 Nov · one evaluation of an organization at a time', () => {
+  test('R4 · a second evaluation of the same organization waits; another organization does not', async () => {
+    // Plain clients: connect() takes the suite's own advisory lock, which this
+    // file's connection already holds.
+    const raw = async () => { const c = new pg.Client({ connectionString: DB_URL }); await c.connect(); return c }
+    const c1 = await raw(); const c2 = await raw()
+    try {
+      await c1.query('BEGIN')
+      await c1.query('SELECT * FROM bob.bob_evaluate_at($1, $2)', [TENANT_A, at(0)])
+      const { rows: [l] } = await db.query(`SELECT count(*)::int AS n FROM pg_locks
+        WHERE locktype = 'advisory' AND granted AND pid = $1`, [c1.processID])
+      assert.ok(l.n >= 1, 'the first evaluation holds no advisory lock')
+      await c2.query("SET lock_timeout = '300ms'")
+      await c2.query('BEGIN')
+      const e = await c2.query('SELECT * FROM bob.bob_evaluate_at($1, $2)', [TENANT_A, at(0)]).then(() => null, (x) => x)
+      assert.equal(e?.code, '55P03', e?.message ?? 'the second evaluation did not wait')
+      await c2.query('ROLLBACK')
+      await c2.query('BEGIN')
+      await c2.query('SELECT * FROM bob.bob_evaluate_at($1, $2)', [TENANT_B, at(0)])
+      await c2.query('ROLLBACK')
+    } finally {
+      await c1.query('ROLLBACK').catch(() => {})
+      await c1.end(); await c2.end()
+    }
+  })
+})
+
+describe('Review of 27 Nov · nits', () => {
+  test('an alert cannot name another organization\'s threshold or response', async () => {
+    await inTx(async () => {
+      const t = await threshold()
+      const r = await response(t)
+      const e1 = await refusal(`INSERT INTO bob.alert_log (org_id, metric_id, metric_name, alert_type, threshold_id)
+        VALUES ($1, 'x', 'x', 'upper', $2)`, [TENANT_B, t])
+      assert.equal(e1?.code, '23503', e1?.message ?? 'accepted')
+      const e2 = await refusal(`INSERT INTO bob.alert_log (org_id, metric_id, metric_name, alert_type, response_id)
+        VALUES ($1, 'x', 'x', 'upper', $2)`, [TENANT_B, r])
+      assert.equal(e2?.code, '23503', e2?.message ?? 'accepted')
+      const e3 = await refusal(`INSERT INTO bob.alert_log (org_id, metric_id, metric_name, alert_type, response_id)
+        VALUES ($1, 'x', 'x', 'upper', gen_random_uuid())`, [TENANT_A])
+      assert.equal(e3?.code, '23503', e3?.message ?? 'a response that does not exist was accepted')
+    })
+  })
+})
+
+describe('Review of 8ab846e · triggers and references, and bounds that move', () => {
+  test('F-58 · no role but the owner and superusers holds a table privilege on bob beyond SELECT, INSERT, UPDATE and DELETE (discovered)', async () => {
+    // By inheritance (TRUNCATE, REFERENCES, TRIGGER, and MAINTAIN on 17), in
+    // the ACL under any type, and REFERENCES on a column.
+    const { rows } = await db.query(`
+      WITH rels AS (SELECT c.oid, c.relname, c.relacl, c.relowner FROM pg_class c
+                      JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'bob'
+                     WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')),
+           extra AS (SELECT p FROM unnest(ARRAY['TRUNCATE', 'REFERENCES', 'TRIGGER']) p
+                     UNION ALL SELECT 'MAINTAIN' WHERE current_setting('server_version_num')::int >= 170000),
+           others AS (SELECT x.oid AS rel, r.oid AS role, r.rolname FROM rels x
+                        JOIN pg_roles r ON NOT r.rolsuper AND r.rolname NOT LIKE 'pg\\_%' AND r.oid <> x.relowner
+                                       AND NOT pg_has_role(r.oid, x.relowner, 'USAGE'))
+      SELECT o.rolname || ' ' || e.p || ' ' || x.relname AS g
+        FROM others o JOIN rels x ON x.oid = o.rel, extra e WHERE has_table_privilege(o.role, o.rel, e.p)
+      UNION
+      SELECT coalesce(r.rolname, 'PUBLIC') || ' ' || a.privilege_type || ' ' || x.relname
+        FROM rels x, aclexplode(x.relacl) a LEFT JOIN pg_roles r ON r.oid = a.grantee
+       WHERE a.privilege_type NOT IN ('SELECT', 'INSERT', 'UPDATE', 'DELETE')
+         AND (a.grantee = 0 OR (NOT r.rolsuper AND a.grantee <> x.relowner AND NOT pg_has_role(a.grantee, x.relowner, 'USAGE')))
+      UNION
+      SELECT o.rolname || ' REFERENCES (column) ' || x.relname
+        FROM others o JOIN rels x ON x.oid = o.rel WHERE has_any_column_privilege(o.role, o.rel, 'REFERENCES')
+       ORDER BY 1`)
+    assert.deepEqual(rows.map((r) => r.g), [])
+    const { rows: [k] } = await db.query(`SELECT count(*)::int AS n FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'bob' AND c.relkind IN ('r', 'p')`)
+    assert.ok(k.n > 20, `only ${k.n} tables found in bob`)
+  })
+
+  // What a box may still carry that a local stack from 00f79b7 does not:
+  // TRUNCATE, a column REFERENCES, and MAINTAIN on 17. Planted, then the
+  // migration's own F-58 block (read from the file, not copied here) is run
+  // again, in a transaction that is rolled back.
+  test('F-58 · the migration takes TRUNCATE, MAINTAIN and a column REFERENCES too, and leaves the four as they were', async () => {
+    const dir = resolve(REPO_ROOT, 'supabase/migrations')
+    const file = readdirSync(dir).find((f) => /^\d+_slice5_review_fixes\.sql$/.test(f))
+    const text = readFileSync(resolve(dir, file), 'utf8')
+    const block = text.slice(text.indexOf('-- ── F-58 '), text.indexOf('-- With TRIGGER gone'))
+    assert.match(block, /^DO \$\$/m, 'the F-58 block of the migration was not found')
+    const held = async () => (await db.query(`
+      SELECT coalesce(r.rolname, 'PUBLIC') || ' ' || a.privilege_type || ' ' || c.relname AS g
+        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'bob',
+             aclexplode(c.relacl) a LEFT JOIN pg_roles r ON r.oid = a.grantee
+       WHERE a.privilege_type NOT IN ('SELECT', 'INSERT', 'UPDATE', 'DELETE') AND a.grantee <> c.relowner
+      UNION
+      SELECT r.rolname || ' REFERENCES (' || t.attname || ') ' || c.relname
+        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'bob'
+        JOIN pg_attribute t ON t.attrelid = c.oid AND t.attnum > 0, aclexplode(t.attacl) a
+        JOIN pg_roles r ON r.oid = a.grantee
+       WHERE a.privilege_type = 'REFERENCES'
+       ORDER BY 1`)).rows.map((r) => r.g)
+    const dml = async () => (await db.query(`
+      SELECT r.rolname || ' ' || p || ' ' || c.relname || ' ' || has_table_privilege(r.oid, c.oid, p) AS g
+        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'bob',
+             pg_roles r, unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE']) p
+       WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
+         AND r.rolname IN ('anon', 'authenticated', 'service_role', 'bob_app', 'bob_feeder', 'bob_ai_ro')
+       ORDER BY 1`)).rows.map((r) => r.g)
+    await inTx(async () => {
+      await db.query('GRANT TRUNCATE, TRIGGER ON bob.alert_log TO authenticated')
+      await db.query('GRANT TRUNCATE ON bob.alert_log TO service_role')
+      await db.query('GRANT REFERENCES (id) ON bob.organizations TO bob_app')
+      const { rows: [v] } = await db.query(`SELECT current_setting('server_version_num')::int >= 170000 AS m`)
+      if (v.m) await db.query('GRANT MAINTAIN ON bob.alert_log TO anon')
+      const before = await held()
+      for (const g of ['authenticated TRUNCATE alert_log', 'service_role TRUNCATE alert_log',
+        'bob_app REFERENCES (id) organizations', ...(v.m ? ['anon MAINTAIN alert_log'] : [])]) {
+        assert.ok(before.includes(g), `${g} not planted`)
+      }
+      const four = await dml()
+      await db.query(block)
+      assert.deepEqual(await held(), [])
+      assert.deepEqual(await dml(), four)
+    })
+  })
+
+  // Febor runs scripts/f58 after 00f79b7 (#67), and this migration later:
+  // after that script, the migration's F-58 block changes no ACL at all.
+  test('F-58 · after scripts/f58/revocar.sql, the migration\'s block changes nothing', async () => {
+    const dir = resolve(REPO_ROOT, 'supabase/migrations')
+    const file = readdirSync(dir).find((f) => /^\d+_slice5_review_fixes\.sql$/.test(f))
+    const text = readFileSync(resolve(dir, file), 'utf8')
+    const block = text.slice(text.indexOf('-- ── F-58 '), text.indexOf('-- With TRIGGER gone'))
+    const step = readFileSync(resolve(REPO_ROOT, 'scripts/f58/revocar.sql'), 'utf8')
+      .replace(/^BEGIN;$/m, '').replace(/^COMMIT;$/m, '')
+    // Every ACL of bob, table and column, as text.
+    const acls = async () => (await db.query(`
+      SELECT c.relname || ' ' || coalesce(c.relacl::text, '-') AS g
+        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'bob'
+      UNION ALL
+      SELECT c.relname || '.' || t.attname || ' ' || t.attacl::text
+        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'bob'
+        JOIN pg_attribute t ON t.attrelid = c.oid AND t.attacl IS NOT NULL
+       ORDER BY 1`)).rows.map((r) => r.g)
+    await inTx(async () => {
+      await db.query('GRANT TRUNCATE, TRIGGER, REFERENCES ON bob.alert_log TO authenticated')
+      await db.query('GRANT REFERENCES (id) ON bob.organizations TO bob_app')
+      const planted = await acls()
+      await db.query(step)
+      const afterStep = await acls()
+      assert.notDeepEqual(afterStep, planted, 'the step took nothing: the comparison would prove nothing')
+      await db.query(block)
+      assert.deepEqual(await acls(), afterStep)
+    })
+  })
+
+  test('F-58 · no role but the owner and superusers executes a trigger function in bob (discovered)', async () => {
+    const { rows } = await db.query(`
+      SELECT r.rolname || ' ' || p.proname AS g
+        FROM pg_proc p
+        JOIN pg_namespace n ON n.oid = p.pronamespace AND n.nspname = 'bob'
+        JOIN pg_roles r ON NOT r.rolsuper AND r.rolname NOT LIKE 'pg\\_%' AND r.oid <> p.proowner
+                       AND NOT pg_has_role(r.oid, p.proowner, 'USAGE')
+       WHERE p.prorettype = 'trigger'::regtype AND has_function_privilege(r.oid, p.oid, 'EXECUTE')
+       ORDER BY 1`)
+    assert.deepEqual(rows.map((r) => r.g), [])
+  })
+
+  test('F-58 · a member cannot create a trigger on alert_log', async () => {
+    await inTx(async () => {
+      await db.query('SELECT set_config($1, $2, true)', ['request.jwt.claims',
+        JSON.stringify({ org_id: TENANT_A, role: 'authenticated', app_role: 'admin' })])
+      await db.query('SET LOCAL ROLE authenticated')
+      // A trigger function authenticated can still execute (it is the install
+      // chain's, in public), so the refusal is the TRIGGER privilege's alone.
+      const e = await refusal(`CREATE TRIGGER evil BEFORE INSERT ON bob.alert_log
+        FOR EACH ROW EXECUTE FUNCTION public.update_updated_at()`)
+      assert.equal(e?.code, '42501', e?.message ?? 'the trigger was created')
+    })
+  })
+
+  test('F-59 · a threshold\'s bounds cannot move past a response\'s trigger_level', async () => {
+    await inTx(async () => {
+      const t = await threshold({ upper_bound: 10 })
+      await response(t, { trigger_level: 15 })
+      const e = await refusal('UPDATE bob.threshold_configs SET upper_bound = 20 WHERE id = $1', [t])
+      assert.equal(e?.code, '23514', e?.message ?? 'the bound moved past the level')
+      assert.equal(await refusal('UPDATE bob.threshold_configs SET upper_bound = 12 WHERE id = $1', [t]), null)
+    })
   })
 })
