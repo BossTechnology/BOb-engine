@@ -255,8 +255,23 @@ on (decided by 0.4, as Relevo task 6 asked on 11 Nov; accepted 12 Nov). So:
 | **BOb** (Postgres, schema `bob`) | `org_id`, `channel_id`, `actor_id`, configuration (§9), live state, the shape of the eight tables, ghost reconciliation (§7.2) | Queries the truth store except through the named interfaces of §7.3 and §7.3a; writes a projection (PR-4) |
 | **The feeder** | Every row in the eight tables, and the partitions they live in (§3) | Reads BOb configuration beyond the two named views in §7.4; creates or writes an actor |
 
-There is exactly one writer, `bob_feeder`. Whether the reference feeder or 3.7
+There is exactly one writer among the components that run, `bob_feeder`, by
+permission; the owner (`bob_migrador`) is held back by procedure (see PR-4
+below). Whether the reference feeder or 3.7
 holds that credential, the contract is the same.
+
+**PR-4, what it delivers** (BZZ-19, 28 Nov, Federico): the feeder is the only
+writer among the components that run, by permission. The owner
+(`bob_migrador`) can write; what stops it is that no running container holds
+its credential (`/opt/bob/secrets/migrador.env`). That is a procedural control,
+checked by a `verify-deployment.sh` check in Bzzz (a separate PR). The
+guarantee does not cover the install path: `postgres` applies the 33 files of
+the install chain once, at installation (decision of 24 Nov, «postgres una vez,
+luego el migrador»; P5 §6.2, `scripts/instalar-bob.sh`,
+`scripts/owner-chain-check.mjs`). The 12 and 21 are a
+measurement: `bob_migrador` could apply only 12 of those 33 and stops at the
+other 21. That is acceptable because installation is a supervised, one-time
+operation.
 
 ## 2 · Tenant key
 
@@ -1351,6 +1366,40 @@ So 3.7 delivers things that do not merge:
    The rebuild test truncates every projection, re-runs the feeder, and asserts
    the application renders identically. One case of it has a linkage inside the
    window (§10).
+
+   **The rebuild guarantee, rewritten** (BZZ-19, 28 Nov, Federico). It is no
+   longer «rebuildable from the truth store». It is **rebuildable from what
+   bzzz-vecinos exposes**, and nothing more:
+   - the views `v1/bob/eventos` and, for the watermark,
+     `v1/bob/marca_de_agua`;
+   - with the columns of Bzzz's `vecinos/columnas-permitidas.txt` list.
+   - **NOT VERIFIED by that path.** The rebuild test (above; its cases «the
+     render is identical to a full rebuild», in
+     `tests/slice2-feeder.test.mjs`, and «the rebuild (clear, re-run) renders
+     the zero rows identically», in `tests/slice3-cell-state.test.mjs`) has
+     only run against the reference feeder with
+     `feeder/memory-truth-store.mjs`. No run has gone through bzzz-vecinos.
+   - **The test is owed**: it runs against the real feeder (3.7) once that
+     exists, and before anyone depends on this guarantee (the backup that
+     leaves out the projections, P5 §8 objection 1, depends on it).
+   - **Why the view is named** (Federico): if someone narrows the column list,
+     the rebuild stops being complete. With the view named here, that change is
+     a visible break of this contract, not a gap found when a rebuild is
+     needed.
+   - **Known limits.** Measured with 3 million synthetic events, in one-day
+     windows: about 20 minutes for 90 days, at the cap of 600 requests per
+     minute. Source: the bench of BossTechnology/bzzz#485 (Bzzz's
+     `docs/OPERACION_vecinos.md` §5), run locally on synthetic data, not in
+     CI. The full service was not measured (mTLS, audit and 20 s per
+     request), and nothing was measured with real data.
+   - **The watermark** (BZZ-19, 28 Nov, Federico): it is the minimum across a
+     channel's sources. It checks that the declared lag is still true; it does
+     not decide sealing, which stays the rule of §4.
+   - **Tenancy is carried, never inferred** (BZZ-19, 28 Nov, Federico): what
+     arrives through `v1/bob/eventos` for detections carries a `tenant` column,
+     and the feeder does not deduce it from anything else. The `source_key`
+     against `source` check is Bzzz's, not BOb's. Text only: this version does
+     not change the schema of `proj_detections`.
 6. **Create the partition it writes into, and account for what it cannot map.**
    - Partitions go through the one function of §3: create, grant, RLS.
    - What it cannot map is emitted to the bus, as audit is under X-10. That
